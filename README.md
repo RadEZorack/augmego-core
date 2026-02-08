@@ -1,32 +1,56 @@
-# augmego-core
+# augmego
 
-Core service lives in `apps/core`.
+This repo contains two Bun apps:
+- `apps/core` — API only (Elysia + Prisma)
+- `apps/web` — UI server (Elysia) + Three.js client build
 
-To install dependencies:
+## Install
+
+Core:
 
 ```bash
 cd apps/core
 bun install
 ```
 
-Database setup (Postgres):
+Web:
 
 ```bash
+cd apps/web
+bun install
+```
+
+## Database (Postgres)
+
+```bash
+cd apps/core
 # Update DATABASE_URL in apps/core/.env if needed
 bun run db:migrate -- --name init
 bun run db:generate
 ```
 
-To run:
+## Run
+
+Core API:
 
 ```bash
+cd apps/core
 bun run dev
 ```
 
-Architecture overview:
-- `apps/core/src/index.ts` boots an Elysia HTTP server and wires routes.
-- Prisma handles database access via the generated client (`@prisma/client`).
-- `apps/core/prisma/schema.prisma` is the source of truth for models and migrations.
-- `apps/core/.env` provides the `DATABASE_URL` used by Prisma and the app.
+Web UI server:
+
+```bash
+cd apps/web
+bun run build
+bun run start
+```
+
+## Architecture
+
+- `apps/core/src/index.ts` boots the API server.
+- `apps/core/prisma/schema.prisma` is the schema and migration source of truth.
+- `apps/web/src/index.ts` serves `apps/web/dist` and exposes UI health.
+- `apps/web/client` contains the Vite + Three.js client source.
 
 This project was created using `bun init` in bun v1.3.8. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
