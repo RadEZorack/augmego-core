@@ -1,3 +1,4 @@
+import "./style.css";
 import * as THREE from "three";
 
 const app = document.getElementById("app");
@@ -8,6 +9,7 @@ if (!app) {
 
 const loginButton = document.getElementById("login-button");
 const userAvatar = document.getElementById("user-avatar");
+
 /** @typedef {{ id: string, name: string | null, email: string | null, avatarUrl: string | null }} CurrentUser */
 
 /** @type {CurrentUser | null} */

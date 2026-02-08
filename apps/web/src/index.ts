@@ -8,20 +8,21 @@ app.get("/health", () => ({ ok: true }));
 
 const isProd = process.env.NODE_ENV === "production";
 const appRoot = path.resolve(import.meta.dir, "..");
-const staticDir = path.join(appRoot, "src", "static");
+const distDir = path.join(appRoot, "dist");
+const indexHtml = path.join(distDir, "index.html");
 const coreBaseUrl = process.env.CORE_BASE_URL ?? "http://localhost:3000";
 
 console.log(`Using core API base URL: ${coreBaseUrl}`);
 console.log(`Starting server in ${isProd ? "production" : "development"} mode...`);
 
 // Serve main HTML file
-app.all("/", () => Bun.file(path.join(staticDir, "index.html")));
+app.all("/", () => Bun.file(indexHtml));
 
 // Serve static assets
 app.use(
   staticPlugin({
-    assets: staticDir,
-    prefix: "/static"
+    assets: distDir,
+    prefix: "/"
   })
 );
 
@@ -43,20 +44,14 @@ app.all("/api/v1/*", ({ request }) => {
   });
 });
 
-// Catch-all Node modules
-// app.all("*", ({ request }) => {
-//   const url = new URL(request.url);
-//   console.log(`Proxying request to core API: ${url}`);
-//   return fetch("node_modules" + url.pathname + url.search, {
-//     method: request.method,
-//     headers: request.headers,
-//     body:
-//       request.method === "GET" || request.method === "HEAD"
-//         ? undefined
-//         : request.body,
-//     redirect: "manual"
-//   });
-// });
+// SPA fallback for client-side routes (skip API + health)
+app.all("*", ({ request }) => {
+  const url = new URL(request.url);
+  if (url.pathname.startsWith("/api/v1/") || url.pathname === "/health") {
+    return;
+  }
+  return Bun.file(indexHtml);
+});
 
 app.listen(3001);
 
