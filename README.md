@@ -54,3 +54,7 @@ bun run start
 - `apps/web/client` contains the Vite + Three.js client source.
 
 This project was created using `bun init` in bun v1.3.8. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.
+
+## Extra Note
+
+- three.js r160 is vendored under apps/web/src/public/vendor

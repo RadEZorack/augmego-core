@@ -1,5 +1,4 @@
 import * as THREE from "three";
-import "./style.css";
 
 const app = document.getElementById("app");
 

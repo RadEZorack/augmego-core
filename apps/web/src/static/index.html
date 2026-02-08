@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Augmego</title>
+    <link rel="icon" href="/static/favicon.ico" />
+    <link rel="stylesheet" href="/static/style.css" />
+  </head>
+  <body>
+    <header class="overlay-header">
+      <div class="brand">
+        <img class="brand-logo" src="/static/assets/logo.png" alt="Augmego logo" />
+        <span>Augmego</span>
+      </div>
+      <button class="login-button" id="login-button" type="button">
+        Login with LinkedIn
+      </button>
+    </header>
+    <div id="app"></div>
+    
+    <!-- Giving a false negative, so we disable it until we fix it. -->
+    <!-- <script>
+      if (!("importMap" in HTMLScriptElement.prototype)) {
+        console.warn("Import maps are not supported in this browser.");
+      }
+    </script> -->
+
+    <!-- three.js r160 (vendored) -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "/static/vendor/three.module.js"
+      }
+    }
+    </script>
+
+    <script type="module" src="/static/main.ts"></script>
+  </body>
+</html>
