@@ -79,3 +79,20 @@ canvas {
   transform: translateY(0);
   box-shadow: none;
 }
+
+.auth-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  pointer-events: auto;
+}
+
+.user-avatar {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 1px solid rgba(44, 225, 255, 0.45);
+  box-shadow: 0 8px 18px rgba(12, 175, 210, 0.25);
+  display: none;
+}

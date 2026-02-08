@@ -7,6 +7,7 @@ if (!app) {
 }
 
 const loginButton = document.getElementById("login-button");
+const userAvatar = document.getElementById("user-avatar");
 /** @typedef {{ id: string, name: string | null, email: string | null, avatarUrl: string | null }} CurrentUser */
 
 /** @type {CurrentUser | null} */
@@ -21,8 +22,24 @@ function updateAuthButton() {
   if (!loginButton) return;
   if (currentUser) {
     loginButton.textContent = `Log out ${displayName(currentUser)}`;
+    if (userAvatar instanceof HTMLImageElement) {
+      if (currentUser.avatarUrl) {
+        userAvatar.src = currentUser.avatarUrl;
+        userAvatar.alt = `${displayName(currentUser)} avatar`;
+        userAvatar.style.display = "block";
+      } else {
+        userAvatar.removeAttribute("src");
+        userAvatar.alt = "";
+        userAvatar.style.display = "none";
+      }
+    }
   } else {
     loginButton.textContent = "Login with LinkedIn";
+    if (userAvatar instanceof HTMLImageElement) {
+      userAvatar.removeAttribute("src");
+      userAvatar.alt = "";
+      userAvatar.style.display = "none";
+    }
   }
 }
 
