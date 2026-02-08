@@ -1,24 +1,8 @@
 {
-  "name": "augmego-core",
-  "module": "src/index.ts",
-  "type": "module",
+  "name": "augmego",
   "private": true,
-  "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "start": "bun src/index.ts",
-    "prisma": "prisma",
-    "db:generate": "prisma generate",
-    "db:migrate": "prisma migrate dev"
-  },
-  "dependencies": {
-    "@prisma/client": "^5.20.0",
-    "elysia": "^1.0.0"
-  },
-  "devDependencies": {
-    "@types/bun": "latest",
-    "prisma": "^5.20.0"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
-  }
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ]
 }
