@@ -24,3 +24,58 @@ body {
 canvas {
   display: block;
 }
+
+.overlay-header {
+  position: absolute;
+  inset: 0 0 auto 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 20px 28px;
+  z-index: 10;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(7, 9, 15, 0.75), rgba(7, 9, 15, 0));
+}
+
+.overlay-header .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #bcd5ff;
+}
+
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  background: #ffffff;
+  padding: 3px;
+  border-radius: 8px;
+  box-shadow: 0 6px 14px rgba(12, 175, 210, 0.2);
+}
+
+.login-button {
+  pointer-events: auto;
+  border: 1px solid rgba(44, 225, 255, 0.45);
+  background: rgba(8, 24, 40, 0.8);
+  color: #e6f7ff;
+  padding: 10px 16px;
+  border-radius: 999px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.login-button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(12, 175, 210, 0.25);
+  border-color: rgba(44, 225, 255, 0.75);
+}
+
+.login-button:active {
+  transform: translateY(0);
+  box-shadow: none;
+}
