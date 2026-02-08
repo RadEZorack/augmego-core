@@ -7,16 +7,12 @@ if (!app) {
   throw new Error("#app not found");
 }
 
-// AUTH LINKEDIN
-
 const loginButton = document.getElementById("login-button");
 if (loginButton) {
   loginButton.addEventListener("click", () => {
-    window.location.href = "/auth/linkedin";
+    window.location.href = "/api/v1/auth/linkedin";
   });
 }
-
-// THREE.JS SCENE SETUP
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
