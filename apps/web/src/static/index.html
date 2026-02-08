@@ -6,6 +6,16 @@
     <title>Augmego</title>
     <link rel="icon" href="/static/favicon.ico" />
     <link rel="stylesheet" href="/static/style.css" />
+    <!-- three.js r160 (vendored) -->
+    <script type="importmap">
+    {
+      "imports": {
+        "three": "/static/vendor/three.module.js"
+      }
+    }
+    </script>
+
+    <script type="module" src="/static/main.ts"></script>
   </head>
   <body>
     <header class="overlay-header">
@@ -26,15 +36,6 @@
       }
     </script> -->
 
-    <!-- three.js r160 (vendored) -->
-    <script type="importmap">
-    {
-      "imports": {
-        "three": "/static/vendor/three.module.js"
-      }
-    }
-    </script>
-
-    <script type="module" src="/static/main.ts"></script>
+    
   </body>
 </html>

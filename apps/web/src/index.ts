@@ -21,7 +21,7 @@ app.all("/", () => Bun.file(path.join(staticDir, "index.html")));
 app.use(
   staticPlugin({
     assets: staticDir,
-    prefix: "/static/"
+    prefix: "/static"
   })
 );
 
