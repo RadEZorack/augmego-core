@@ -3,15 +3,18 @@ import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
 
-const app = new Elysia()
-  .get("/", () => "Hello from Elysia + Bun!")
+const api = new Elysia({ prefix: "/api/v1" })
+  .get("/health", () => ({ ok: true }))
   .get("/examples", async () => {
     return prisma.example.findMany({
       orderBy: { id: "desc" },
       take: 20,
     });
-  })
-  .get("/health", () => ({ ok: true }))
+  });
+
+const app = new Elysia()
+  .get("/", () => "Augmego Core API")
+  .use(api)
   .listen(3000);
 
 console.log(
