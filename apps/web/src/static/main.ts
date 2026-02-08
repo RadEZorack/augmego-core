@@ -7,10 +7,63 @@ if (!app) {
 }
 
 const loginButton = document.getElementById("login-button");
+/** @typedef {{ id: string, name: string | null, email: string | null, avatarUrl: string | null }} CurrentUser */
+
+/** @type {CurrentUser | null} */
+let currentUser = null;
+
+/** @param {CurrentUser} user */
+function displayName(user) {
+  return user.name ?? user.email ?? "User";
+}
+
+function updateAuthButton() {
+  if (!loginButton) return;
+  if (currentUser) {
+    loginButton.textContent = `Log out ${displayName(currentUser)}`;
+  } else {
+    loginButton.textContent = "Login with LinkedIn";
+  }
+}
+
+async function loadCurrentUser() {
+  try {
+    const response = await fetch("/api/v1/auth/me", {
+      credentials: "include"
+    });
+    if (!response.ok) {
+      currentUser = null;
+      updateAuthButton();
+      return;
+    }
+    /** @type {{ user: CurrentUser | null }} */
+    const data = await response.json();
+    currentUser = data.user;
+  } catch {
+    currentUser = null;
+  }
+  updateAuthButton();
+}
+
 if (loginButton) {
-  loginButton.addEventListener("click", () => {
-    window.location.href = "/api/v1/auth/linkedin";
+  loginButton.addEventListener("click", async () => {
+    if (!currentUser) {
+      window.location.href = "/api/v1/auth/linkedin";
+      return;
+    }
+
+    try {
+      await fetch("/api/v1/auth/logout", {
+        method: "POST",
+        credentials: "include"
+      });
+    } finally {
+      currentUser = null;
+      updateAuthButton();
+    }
   });
+
+  void loadCurrentUser();
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });

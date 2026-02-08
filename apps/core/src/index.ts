@@ -54,6 +54,20 @@ function parseCookies(header: string | null) {
   return out;
 }
 
+function jsonResponse(
+  body: unknown,
+  options: { status?: number; headers?: Headers } = {}
+) {
+  const headers = options.headers ?? new Headers();
+  if (!headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+  return new Response(JSON.stringify(body), {
+    status: options.status ?? 200,
+    headers
+  });
+}
+
 const api = new Elysia({ prefix: "/api/v1" })
   .get("/health", () => ({ ok: true }))
   .get("/examples", async () => {
@@ -213,6 +227,70 @@ const api = new Elysia({ prefix: "/api/v1" })
     );
 
     return new Response(null, { status: 302, headers });
+  })
+  .get("/auth/me", async ({ request }) => {
+    const cookies = parseCookies(request.headers.get("cookie"));
+    const sessionId = cookies[SESSION_COOKIE_NAME];
+    if (!sessionId) {
+      return jsonResponse({ user: null });
+    }
+
+    const now = new Date();
+    const session = await prisma.session.findFirst({
+      where: {
+        id: sessionId,
+        revokedAt: null,
+        expiresAt: { gt: now }
+      },
+      include: { user: true }
+    });
+
+    if (!session) {
+      const headers = new Headers();
+      headers.append(
+        "Set-Cookie",
+        serializeCookie(SESSION_COOKIE_NAME, "", {
+          httpOnly: true,
+          sameSite: "Lax",
+          path: "/",
+          maxAge: 0
+        })
+      );
+      return jsonResponse({ user: null }, { headers });
+    }
+
+    const { user } = session;
+    return jsonResponse({
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        avatarUrl: user.avatarUrl
+      }
+    });
+  })
+  .post("/auth/logout", async ({ request }) => {
+    const cookies = parseCookies(request.headers.get("cookie"));
+    const sessionId = cookies[SESSION_COOKIE_NAME];
+    if (sessionId) {
+      await prisma.session.updateMany({
+        where: { id: sessionId, revokedAt: null },
+        data: { revokedAt: new Date() }
+      });
+    }
+
+    const headers = new Headers();
+    headers.append(
+      "Set-Cookie",
+      serializeCookie(SESSION_COOKIE_NAME, "", {
+        httpOnly: true,
+        sameSite: "Lax",
+        path: "/",
+        maxAge: 0
+      })
+    );
+
+    return jsonResponse({ ok: true }, { headers });
   });
 
 const app = new Elysia()
