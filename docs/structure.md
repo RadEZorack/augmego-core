@@ -11,16 +11,13 @@ augmego/
 │  │
 │  └─ web/
 │     ├─ src/
-│     │  └─ index.ts          # UI server (Elysia)
-│     ├─ client/
-│     │  ├─ index.html
-│     │  └─ src/
+│     │  ├─ index.ts          # UI server (Elysia)
+│     │  └─ public/
+│     │     ├─ index.html
 │     │     ├─ main.ts
 │     │     └─ style.css
-│     ├─ dist/                # Vite build output
 │     ├─ package.json
-│     ├─ tsconfig.json
-│     └─ vite.config.ts
+│     └─ tsconfig.json
 │
 ├─ packages/
 │  └─ shared/
