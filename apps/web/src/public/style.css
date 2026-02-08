@@ -1,0 +1,26 @@
+:root {
+  color-scheme: dark;
+  font-family: "Space Grotesk", "Avenir", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: radial-gradient(circle at 20% 20%, #1a2a4f, #0b0f1a 55%, #07090f 100%);
+  color: #e6edf6;
+  min-height: 100vh;
+  overflow: hidden;
+}
+
+#app {
+  width: 100vw;
+  height: 100vh;
+}
+
+canvas {
+  display: block;
+}
