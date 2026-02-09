@@ -15,7 +15,7 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     proxy: {
-      "/api/v1": "http://localhost:3001"
+      "/api/v1": "http://localhost:3000"
     }
   }
 });

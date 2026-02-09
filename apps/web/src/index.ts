@@ -16,18 +16,19 @@ console.log(`Using core API base URL: ${coreBaseUrl}`);
 console.log(`Starting server in ${isProd ? "production" : "development"} mode...`);
 
 // Serve main HTML file
-app.all("/", () => Bun.file(indexHtml));
+// app.all("/", () => Bun.file(indexHtml));
 
 // Serve static assets
-app.use(
-  staticPlugin({
-    assets: distDir,
-    prefix: "/"
-  })
-);
+// app.use(
+//   staticPlugin({
+//     assets: distDir,
+//     prefix: "/"
+//   })
+// );
 
 // Proxy API requests to the core server
 app.all("/api/v1/*", ({ request }) => {
+  console.log(`Proxying API request: ${request.method} ${request.url}`);
   const url = new URL(request.url);
   const target = new URL(url.pathname + url.search, coreBaseUrl);
   const headers = new Headers(request.headers);
@@ -45,13 +46,13 @@ app.all("/api/v1/*", ({ request }) => {
 });
 
 // SPA fallback for client-side routes (skip API + health)
-app.all("*", ({ request }) => {
-  const url = new URL(request.url);
-  if (url.pathname.startsWith("/api/v1/") || url.pathname === "/health") {
-    return;
-  }
-  return Bun.file(indexHtml);
-});
+// app.all("*", ({ request }) => {
+//   const url = new URL(request.url);
+//   if (url.pathname.startsWith("/api/v1/") || url.pathname === "/health") {
+//     return;
+//   }
+//   return Bun.file(indexHtml);
+// });
 
 app.listen(3001);
 
