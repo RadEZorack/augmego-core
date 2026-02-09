@@ -15,7 +15,8 @@ model Example {
 
 model User {
   id         String    @id @default(uuid()) @db.Uuid
-  linkedinId String    @unique
+  linkedinId String?   @unique
+  googleId   String?   @unique
   email      String?   @unique
   name       String?
   avatarUrl  String?

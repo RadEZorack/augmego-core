@@ -62,11 +62,22 @@ canvas {
   border: 1px solid rgba(44, 225, 255, 0.45);
   background: rgba(8, 24, 40, 0.8);
   color: #e6f7ff;
+  display: inline-flex;
   padding: 10px 16px;
   border-radius: 999px;
   font-size: 0.9rem;
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+
+.login-button.google {
+  border-color: rgba(255, 255, 255, 0.35);
+  background: rgba(18, 20, 26, 0.85);
+  color: #ffffff;
+}
+
+#logout-button {
+  display: none;
 }
 
 .login-button:hover {
@@ -84,6 +95,8 @@ canvas {
   display: flex;
   align-items: center;
   gap: 12px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
   pointer-events: auto;
 }
 

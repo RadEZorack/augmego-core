@@ -8,8 +8,14 @@ if (!app) {
   throw new Error("#app not found");
 }
 
-const loginButton = document.getElementById(
-  "login-button"
+const loginLinkedinButton = document.getElementById(
+  "login-linkedin"
+) as HTMLButtonElement | null;
+const loginGoogleButton = document.getElementById(
+  "login-google"
+) as HTMLButtonElement | null;
+const logoutButton = document.getElementById(
+  "logout-button"
 ) as HTMLButtonElement | null;
 const userAvatar = document.getElementById(
   "user-avatar"
@@ -34,10 +40,18 @@ function displayName(user: CurrentUser) {
   return user.name ?? user.email ?? "User";
 }
 
-function updateAuthButton() {
-  if (!loginButton) return;
+function updateAuthButtons() {
   if (currentUser) {
-    loginButton.textContent = `Log out ${displayName(currentUser)}`;
+    if (logoutButton) {
+      logoutButton.textContent = `Log out ${displayName(currentUser)}`;
+      logoutButton.style.display = "inline-flex";
+    }
+    if (loginLinkedinButton) {
+      loginLinkedinButton.style.display = "none";
+    }
+    if (loginGoogleButton) {
+      loginGoogleButton.style.display = "none";
+    }
     if (userAvatar) {
       userAvatar.src = currentUser.avatarUrl ?? "";
       userAvatar.alt = currentUser.avatarUrl
@@ -46,7 +60,15 @@ function updateAuthButton() {
       userAvatar.style.display = currentUser.avatarUrl ? "block" : "none";
     }
   } else {
-    loginButton.textContent = "Login with LinkedIn";
+    if (logoutButton) {
+      logoutButton.style.display = "none";
+    }
+    if (loginLinkedinButton) {
+      loginLinkedinButton.style.display = "inline-flex";
+    }
+    if (loginGoogleButton) {
+      loginGoogleButton.style.display = "inline-flex";
+    }
     if (userAvatar) {
       userAvatar.removeAttribute("src");
       userAvatar.alt = "";
@@ -62,7 +84,7 @@ async function loadCurrentUser() {
     });
     if (!response.ok) {
       currentUser = null;
-      updateAuthButton();
+      updateAuthButtons();
       return;
     }
     const data = (await response.json()) as { user: CurrentUser | null };
@@ -70,16 +92,23 @@ async function loadCurrentUser() {
   } catch {
     currentUser = null;
   }
-  updateAuthButton();
+  updateAuthButtons();
 }
 
-if (loginButton) {
-  loginButton.addEventListener("click", async () => {
-    if (!currentUser) {
-      window.location.href = apiUrl("/api/v1/auth/linkedin");
-      return;
-    }
+if (loginLinkedinButton) {
+  loginLinkedinButton.addEventListener("click", () => {
+    window.location.href = apiUrl("/api/v1/auth/linkedin");
+  });
+}
 
+if (loginGoogleButton) {
+  loginGoogleButton.addEventListener("click", () => {
+    window.location.href = apiUrl("/api/v1/auth/google");
+  });
+}
+
+if (logoutButton) {
+  logoutButton.addEventListener("click", async () => {
     try {
       await fetch(apiUrl("/api/v1/auth/logout"), {
         method: "POST",
@@ -87,12 +116,12 @@ if (loginButton) {
       });
     } finally {
       currentUser = null;
-      updateAuthButton();
+      updateAuthButtons();
     }
   });
-
-  void loadCurrentUser();
 }
+
+void loadCurrentUser();
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
