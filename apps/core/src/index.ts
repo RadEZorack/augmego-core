@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 
 const prisma = new PrismaClient();
@@ -18,9 +19,25 @@ const LINKEDIN_REDIRECT_URI = process.env.LINKEDIN_REDIRECT_URI ?? "";
 const LINKEDIN_SCOPE =
   process.env.LINKEDIN_SCOPE ?? "r_liteprofile r_emailaddress";
 
-const WEB_BASE_URL = process.env.WEB_BASE_URL ?? "http://localhost:3001";
+const WEB_BASE_URL = process.env.WEB_BASE_URL ?? "http://localhost:5173";
+const WEB_ORIGINS =
+  process.env.WEB_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "session_id";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? "168");
+
+const webOrigin = (() => {
+  try {
+    return new URL(WEB_BASE_URL).origin;
+  } catch {
+    return "http://localhost:5173";
+  }
+})();
+
+const sessionSameSite =
+  (process.env.COOKIE_SAMESITE as "Lax" | "Strict" | "None" | undefined) ??
+  (webOrigin.startsWith("https://") ? "None" : "Lax");
+const sessionSecure =
+  process.env.COOKIE_SECURE === "true" || webOrigin.startsWith("https://");
 
 function serializeCookie(
   name: string,
@@ -211,9 +228,10 @@ const api = new Elysia({ prefix: "/api/v1" })
       "Set-Cookie",
       serializeCookie(SESSION_COOKIE_NAME, sessionId, {
         httpOnly: true,
-        sameSite: "Lax",
+        sameSite: sessionSameSite,
         path: "/",
-        maxAge: SESSION_TTL_HOURS * 60 * 60
+        maxAge: SESSION_TTL_HOURS * 60 * 60,
+        secure: sessionSecure
       })
     );
     headers.append(
@@ -251,9 +269,10 @@ const api = new Elysia({ prefix: "/api/v1" })
         "Set-Cookie",
         serializeCookie(SESSION_COOKIE_NAME, "", {
           httpOnly: true,
-          sameSite: "Lax",
+          sameSite: sessionSameSite,
           path: "/",
-          maxAge: 0
+          maxAge: 0,
+          secure: sessionSecure
         })
       );
       return jsonResponse({ user: null }, { headers });
@@ -284,9 +303,10 @@ const api = new Elysia({ prefix: "/api/v1" })
       "Set-Cookie",
       serializeCookie(SESSION_COOKIE_NAME, "", {
         httpOnly: true,
-        sameSite: "Lax",
+        sameSite: sessionSameSite,
         path: "/",
-        maxAge: 0
+        maxAge: 0,
+        secure: sessionSecure
       })
     );
 
@@ -294,6 +314,12 @@ const api = new Elysia({ prefix: "/api/v1" })
   });
 
 const app = new Elysia()
+  .use(
+    cors({
+      origin: WEB_ORIGINS.length ? WEB_ORIGINS : [webOrigin],
+      credentials: true
+    })
+  )
   .get("/", () => "Augmego Core API")
   .use(api)
   .listen(3000);

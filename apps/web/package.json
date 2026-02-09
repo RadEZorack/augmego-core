@@ -1,25 +1,17 @@
 {
-  "name": "augmego-web",
+  "name": "augmego-web-client",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts",
-    "start": "NODE_ENV=production bun src/index.ts",
-    "dev:client": "cd client && bunx vite",
-    "dev:all": "bunx concurrently -k -n server,client -c blue,green \"bun --hot src/index.ts\" \"cd client && bunx vite\"",
-    "build:client": "cd client && bunx vite build",
-    "preview:client": "cd client && bunx vite preview",
-    "build": "bun run build:client",
-    "serve": "NODE_ENV=production bun src/index.ts"
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
   },
   "dependencies": {
-    "@elysiajs/static": "^1.0.2",
-    "elysia": "^1.0.0"
+    "three": "^0.182.0"
   },
   "devDependencies": {
-    "@types/bun": "latest",
-    "@types/three": "^0.182.0",
-    "concurrently": "^8.2.2",
-    "typescript": "^5.6.3"
+    "typescript": "^5.6.3",
+    "vite": "^5.4.10"
   }
 }

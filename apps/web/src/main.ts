@@ -1,3 +1,4 @@
+/// <reference types="vite/client" />
 import "./style.css";
 import * as THREE from "three";
 
@@ -7,16 +8,29 @@ if (!app) {
   throw new Error("#app not found");
 }
 
-const loginButton = document.getElementById("login-button");
-const userAvatar = document.getElementById("user-avatar");
+const loginButton = document.getElementById(
+  "login-button"
+) as HTMLButtonElement | null;
+const userAvatar = document.getElementById(
+  "user-avatar"
+) as HTMLImageElement | null;
+const apiBase = import.meta.env.VITE_API_BASE_URL;
 
-/** @typedef {{ id: string, name: string | null, email: string | null, avatarUrl: string | null }} CurrentUser */
+function apiUrl(path: string) {
+  const base = apiBase && apiBase.length > 0 ? apiBase : window.location.origin;
+  return new URL(path, base).toString();
+}
 
-/** @type {CurrentUser | null} */
-let currentUser = null;
+type CurrentUser = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+};
 
-/** @param {CurrentUser} user */
-function displayName(user) {
+let currentUser: CurrentUser | null = null;
+
+function displayName(user: CurrentUser) {
   return user.name ?? user.email ?? "User";
 }
 
@@ -24,20 +38,16 @@ function updateAuthButton() {
   if (!loginButton) return;
   if (currentUser) {
     loginButton.textContent = `Log out ${displayName(currentUser)}`;
-    if (userAvatar instanceof HTMLImageElement) {
-      if (currentUser.avatarUrl) {
-        userAvatar.src = currentUser.avatarUrl;
-        userAvatar.alt = `${displayName(currentUser)} avatar`;
-        userAvatar.style.display = "block";
-      } else {
-        userAvatar.removeAttribute("src");
-        userAvatar.alt = "";
-        userAvatar.style.display = "none";
-      }
+    if (userAvatar) {
+      userAvatar.src = currentUser.avatarUrl ?? "";
+      userAvatar.alt = currentUser.avatarUrl
+        ? `${displayName(currentUser)} avatar`
+        : "";
+      userAvatar.style.display = currentUser.avatarUrl ? "block" : "none";
     }
   } else {
     loginButton.textContent = "Login with LinkedIn";
-    if (userAvatar instanceof HTMLImageElement) {
+    if (userAvatar) {
       userAvatar.removeAttribute("src");
       userAvatar.alt = "";
       userAvatar.style.display = "none";
@@ -47,7 +57,7 @@ function updateAuthButton() {
 
 async function loadCurrentUser() {
   try {
-    const response = await fetch("/api/v1/auth/me", {
+    const response = await fetch(apiUrl("/api/v1/auth/me"), {
       credentials: "include"
     });
     if (!response.ok) {
@@ -55,8 +65,7 @@ async function loadCurrentUser() {
       updateAuthButton();
       return;
     }
-    /** @type {{ user: CurrentUser | null }} */
-    const data = await response.json();
+    const data = (await response.json()) as { user: CurrentUser | null };
     currentUser = data.user;
   } catch {
     currentUser = null;
@@ -67,12 +76,12 @@ async function loadCurrentUser() {
 if (loginButton) {
   loginButton.addEventListener("click", async () => {
     if (!currentUser) {
-      window.location.href = "/api/v1/auth/linkedin";
+      window.location.href = apiUrl("/api/v1/auth/linkedin");
       return;
     }
 
     try {
-      await fetch("/api/v1/auth/logout", {
+      await fetch(apiUrl("/api/v1/auth/logout"), {
         method: "POST",
         credentials: "include"
       });
