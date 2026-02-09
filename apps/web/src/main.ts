@@ -14,6 +14,9 @@ const loginLinkedinButton = document.getElementById(
 const loginGoogleButton = document.getElementById(
   "login-google"
 ) as HTMLButtonElement | null;
+const loginAppleButton = document.getElementById(
+  "login-apple"
+) as HTMLButtonElement | null;
 const logoutButton = document.getElementById(
   "logout-button"
 ) as HTMLButtonElement | null;
@@ -52,6 +55,9 @@ function updateAuthButtons() {
     if (loginGoogleButton) {
       loginGoogleButton.style.display = "none";
     }
+    if (loginAppleButton) {
+      loginAppleButton.style.display = "none";
+    }
     if (userAvatar) {
       userAvatar.src = currentUser.avatarUrl ?? "";
       userAvatar.alt = currentUser.avatarUrl
@@ -68,6 +74,9 @@ function updateAuthButtons() {
     }
     if (loginGoogleButton) {
       loginGoogleButton.style.display = "inline-flex";
+    }
+    if (loginAppleButton) {
+      loginAppleButton.style.display = "inline-flex";
     }
     if (userAvatar) {
       userAvatar.removeAttribute("src");
@@ -104,6 +113,12 @@ if (loginLinkedinButton) {
 if (loginGoogleButton) {
   loginGoogleButton.addEventListener("click", () => {
     window.location.href = apiUrl("/api/v1/auth/google");
+  });
+}
+
+if (loginAppleButton) {
+  loginAppleButton.addEventListener("click", () => {
+    window.location.href = apiUrl("/api/v1/auth/apple");
   });
 }
 

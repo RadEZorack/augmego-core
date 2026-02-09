@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
+import jwt from "jsonwebtoken";
 
 const prisma = new PrismaClient();
 
@@ -31,6 +32,18 @@ const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
 const GOOGLE_REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI ?? "";
 const GOOGLE_SCOPE = process.env.GOOGLE_SCOPE ?? "openid email profile";
+
+const APPLE_AUTH_URL =
+  process.env.APPLE_AUTH_URL ?? "https://appleid.apple.com/auth/authorize";
+const APPLE_TOKEN_URL =
+  process.env.APPLE_TOKEN_URL ?? "https://appleid.apple.com/auth/token";
+const APPLE_CLIENT_ID = process.env.APPLE_CLIENT_ID ?? "";
+const APPLE_CLIENT_SECRET = process.env.APPLE_CLIENT_SECRET ?? "";
+const APPLE_TEAM_ID = process.env.APPLE_TEAM_ID ?? "";
+const APPLE_KEY_ID = process.env.APPLE_KEY_ID ?? "";
+const APPLE_PRIVATE_KEY = process.env.APPLE_PRIVATE_KEY ?? "";
+const APPLE_REDIRECT_URI = process.env.APPLE_REDIRECT_URI ?? "";
+const APPLE_SCOPE = process.env.APPLE_SCOPE ?? "name email";
 
 const WEB_BASE_URL = process.env.WEB_BASE_URL ?? "http://localhost:5173";
 const WEB_ORIGINS =
@@ -84,6 +97,48 @@ function parseCookies(header: string | null) {
   return out;
 }
 
+function decodeJwtPayload(token: string) {
+  const parts = token.split(".");
+  if (parts.length < 2) return null;
+  const payload = parts[1]!.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = payload.padEnd(
+    payload.length + ((4 - (payload.length % 4)) % 4),
+    "="
+  );
+  try {
+    const json = Buffer.from(padded, "base64").toString("utf8");
+    return JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function createAppleClientSecret() {
+  if (!APPLE_TEAM_ID || !APPLE_KEY_ID || !APPLE_PRIVATE_KEY || !APPLE_CLIENT_ID) {
+    return "";
+  }
+  const now = Math.floor(Date.now() / 1000);
+  return jwt.sign(
+    {
+      iss: APPLE_TEAM_ID,
+      iat: now,
+      exp: now + 60 * 60 * 24 * 180,
+      aud: "https://appleid.apple.com",
+      sub: APPLE_CLIENT_ID
+    },
+    APPLE_PRIVATE_KEY.replace(/\\n/g, "\n"),
+    {
+      algorithm: "ES256",
+      keyid: APPLE_KEY_ID
+    }
+  );
+}
+
+function resolveAppleClientSecret() {
+  if (APPLE_CLIENT_SECRET) return APPLE_CLIENT_SECRET;
+  return createAppleClientSecret();
+}
+
 function jsonResponse(
   body: unknown,
   options: { status?: number; headers?: Headers } = {}
@@ -114,6 +169,7 @@ const api = new Elysia({ prefix: "/api/v1" })
     const state = crypto.randomUUID();
     const authUrl = new URL(LINKEDIN_AUTH_URL);
     authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("response_mode", "form_post");
     authUrl.searchParams.set("client_id", LINKEDIN_CLIENT_ID);
     authUrl.searchParams.set("redirect_uri", LINKEDIN_REDIRECT_URI);
     authUrl.searchParams.set("scope", LINKEDIN_SCOPE);
@@ -125,8 +181,9 @@ const api = new Elysia({ prefix: "/api/v1" })
       "Set-Cookie",
       serializeCookie("oauth_state_linkedin", state, {
         httpOnly: true,
-        sameSite: "Lax",
-        path: "/"
+        sameSite: "None",
+        path: "/",
+        secure: sessionSecure
       })
     );
 
@@ -277,9 +334,10 @@ const api = new Elysia({ prefix: "/api/v1" })
       "Set-Cookie",
       serializeCookie("oauth_state_linkedin", "", {
         httpOnly: true,
-        sameSite: "Lax",
+        sameSite: "None",
         path: "/",
-        maxAge: 0
+        maxAge: 0,
+        secure: sessionSecure
       })
     );
 
@@ -304,8 +362,9 @@ const api = new Elysia({ prefix: "/api/v1" })
       "Set-Cookie",
       serializeCookie("oauth_state_google", state, {
         httpOnly: true,
-        sameSite: "Lax",
-        path: "/"
+        sameSite: "None",
+        path: "/",
+        secure: sessionSecure
       })
     );
 
@@ -439,9 +498,184 @@ const api = new Elysia({ prefix: "/api/v1" })
       "Set-Cookie",
       serializeCookie("oauth_state_google", "", {
         httpOnly: true,
-        sameSite: "Lax",
+        sameSite: "None",
         path: "/",
-        maxAge: 0
+        maxAge: 0,
+        secure: sessionSecure
+      })
+    );
+
+    return new Response(null, { status: 302, headers });
+  })
+  .get("/auth/apple", async ({ request }) => {
+    if (!APPLE_CLIENT_ID || !APPLE_REDIRECT_URI) {
+      return new Response("Apple OAuth not configured", { status: 500 });
+    }
+
+    const state = crypto.randomUUID();
+    const authUrl = new URL(APPLE_AUTH_URL);
+    authUrl.searchParams.set("response_type", "code");
+    authUrl.searchParams.set("response_mode", "form_post");
+    authUrl.searchParams.set("client_id", APPLE_CLIENT_ID);
+    authUrl.searchParams.set("redirect_uri", APPLE_REDIRECT_URI);
+    authUrl.searchParams.set("scope", APPLE_SCOPE);
+    authUrl.searchParams.set("state", state);
+
+    const headers = new Headers();
+    headers.set("Location", authUrl.toString());
+    headers.append(
+      "Set-Cookie",
+      serializeCookie("oauth_state_apple", state, {
+        httpOnly: true,
+        sameSite: "None",
+        path: "/",
+        secure: sessionSecure
+      })
+    );
+
+    return new Response(null, { status: 302, headers });
+  })
+  .post("/auth/apple/callback", async ({ request }) => {
+    const form = await request.formData();
+    const code = form.get("code");
+    const state = form.get("state");
+    const userPayload = form.get("user");
+
+    if (typeof code !== "string" || typeof state !== "string") {
+      return new Response("Missing code or state", { status: 400 });
+    }
+
+    const cookies = parseCookies(request.headers.get("cookie"));
+    if (!cookies.oauth_state_apple || cookies.oauth_state_apple !== state) {
+      return new Response("Invalid state", { status: 400 });
+    }
+
+    const appleClientSecret = resolveAppleClientSecret();
+    if (!APPLE_CLIENT_ID || !appleClientSecret || !APPLE_REDIRECT_URI) {
+      return new Response("Apple OAuth not configured", { status: 500 });
+    }
+
+    const tokenRes = await fetch(APPLE_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({
+        grant_type: "authorization_code",
+        code,
+        redirect_uri: APPLE_REDIRECT_URI,
+        client_id: APPLE_CLIENT_ID,
+        client_secret: appleClientSecret
+      })
+    });
+
+    console.log("Apple token response status:", tokenRes);
+    if (!tokenRes.ok) {
+      const text = await tokenRes.text();
+      return new Response(`Token exchange failed: ${text}`, { status: 502 });
+    }
+
+    const tokenData = (await tokenRes.json()) as {
+      id_token?: string;
+    };
+
+    const idToken = tokenData.id_token;
+    if (!idToken) {
+      return new Response("Missing id token", { status: 502 });
+    }
+
+    const profile = decodeJwtPayload(idToken);
+    if (!profile) {
+      return new Response("Invalid id token", { status: 502 });
+    }
+
+    const appleId = String(profile.sub ?? "");
+    if (!appleId) {
+      return new Response("Apple user id missing", { status: 502 });
+    }
+
+    const email = (profile.email as string | undefined) ?? undefined;
+    let name = (profile.name as string | undefined) ?? undefined;
+
+    if (!name && typeof userPayload === "string") {
+      try {
+        const parsed = JSON.parse(userPayload) as {
+          name?: { firstName?: string; lastName?: string };
+        };
+        const first = parsed.name?.firstName ?? "";
+        const last = parsed.name?.lastName ?? "";
+        const combined = `${first} ${last}`.trim();
+        if (combined) {
+          name = combined;
+        }
+      } catch {
+        // ignore malformed user payload
+      }
+    }
+
+    const existingByEmail = email
+      ? await prisma.user.findFirst({ where: { email } })
+      : null;
+
+    if (existingByEmail?.appleId && existingByEmail.appleId !== appleId) {
+      return new Response("Email already linked to another Apple account", {
+        status: 409
+      });
+    }
+
+    const user = existingByEmail
+      ? await prisma.user.update({
+          where: { id: existingByEmail.id },
+          data: {
+            appleId,
+            email: email ?? null,
+            name: name ?? null
+          }
+        })
+      : await prisma.user.upsert({
+          where: { appleId },
+          create: {
+            appleId,
+            email: email ?? null,
+            name: name ?? null
+          },
+          update: {
+            email: email ?? null,
+            name: name ?? null
+          }
+        });
+
+    const sessionId = crypto.randomUUID();
+    const expiresAt = new Date(
+      Date.now() + SESSION_TTL_HOURS * 60 * 60 * 1000
+    );
+
+    await prisma.session.create({
+      data: {
+        id: sessionId,
+        userId: user.id,
+        expiresAt
+      }
+    });
+
+    const headers = new Headers();
+    headers.set("Location", WEB_BASE_URL);
+    headers.append(
+      "Set-Cookie",
+      serializeCookie(SESSION_COOKIE_NAME, sessionId, {
+        httpOnly: true,
+        sameSite: sessionSameSite,
+        path: "/",
+        maxAge: SESSION_TTL_HOURS * 60 * 60,
+        secure: sessionSecure
+      })
+    );
+    headers.append(
+      "Set-Cookie",
+      serializeCookie("oauth_state_apple", "", {
+        httpOnly: true,
+        sameSite: "None",
+        path: "/",
+        maxAge: 0,
+        secure: sessionSecure
       })
     );
 
