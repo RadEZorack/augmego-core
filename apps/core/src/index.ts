@@ -45,7 +45,7 @@ const APPLE_PRIVATE_KEY = process.env.APPLE_PRIVATE_KEY ?? "";
 const APPLE_REDIRECT_URI = process.env.APPLE_REDIRECT_URI ?? "";
 const APPLE_SCOPE = process.env.APPLE_SCOPE ?? "name email";
 
-const WEB_BASE_URL = process.env.WEB_BASE_URL ?? "http://localhost:5173";
+const WEB_BASE_URL = process.env.WEB_BASE_URL ?? "http://localhost:3001";
 const WEB_ORIGINS =
   process.env.WEB_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "session_id";
@@ -55,7 +55,7 @@ const webOrigin = (() => {
   try {
     return new URL(WEB_BASE_URL).origin;
   } catch {
-    return "http://localhost:5173";
+    return "http://localhost:3001";
   }
 })();
 
