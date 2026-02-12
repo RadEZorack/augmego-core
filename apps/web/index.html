@@ -29,6 +29,25 @@
       </div>
     </header>
     <div id="app"></div>
+    <aside class="media-panel" aria-label="Media controls">
+      <div class="media-header">Media</div>
+      <div class="media-actions">
+        <button id="mic-toggle" class="media-button" type="button">Mute Mic</button>
+        <button id="camera-toggle" class="media-button" type="button">Camera Off</button>
+      </div>
+      <div class="media-selectors">
+        <label class="media-label" for="audio-input-select">Mic Input</label>
+        <select id="audio-input-select" class="media-select"></select>
+        <label class="media-label" for="video-input-select">Camera Input</label>
+        <select id="video-input-select" class="media-select"></select>
+        <label class="media-label" for="audio-output-select">Audio Output</label>
+        <select id="audio-output-select" class="media-select"></select>
+      </div>
+      <div class="volume-section">
+        <div class="volume-title">Player Volumes</div>
+        <div id="remote-volume-list" class="volume-list"></div>
+      </div>
+    </aside>
     <aside class="chat-panel" aria-label="Global chat">
       <div class="chat-header">
         <span>Global Chat</span>
