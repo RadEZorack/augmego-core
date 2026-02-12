@@ -2,6 +2,8 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
+import { parseCookies, serializeCookie } from "./lib/cookies";
+import { registerRealtimeWs } from "./realtime/ws";
 
 const prisma = new PrismaClient();
 
@@ -50,6 +52,10 @@ const WEB_ORIGINS =
   process.env.WEB_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "session_id";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? "168");
+const MAX_CHAT_HISTORY = Number(process.env.MAX_CHAT_HISTORY ?? "100");
+const MAX_CHAT_MESSAGE_LENGTH = Number(
+  process.env.MAX_CHAT_MESSAGE_LENGTH ?? "500"
+);
 
 const webOrigin = (() => {
   try {
@@ -64,38 +70,6 @@ const sessionSameSite =
   (webOrigin.startsWith("https://") ? "None" : "Lax");
 const sessionSecure =
   process.env.COOKIE_SECURE === "true" || webOrigin.startsWith("https://");
-
-function serializeCookie(
-  name: string,
-  value: string,
-  options: {
-    httpOnly?: boolean;
-    secure?: boolean;
-    sameSite?: "Lax" | "Strict" | "None";
-    path?: string;
-    maxAge?: number;
-  } = {}
-) {
-  const parts = [`${name}=${encodeURIComponent(value)}`];
-  if (options.maxAge !== undefined) parts.push(`Max-Age=${options.maxAge}`);
-  if (options.path) parts.push(`Path=${options.path}`);
-  if (options.sameSite) parts.push(`SameSite=${options.sameSite}`);
-  if (options.httpOnly) parts.push("HttpOnly");
-  if (options.secure) parts.push("Secure");
-  return parts.join("; ");
-}
-
-function parseCookies(header: string | null) {
-  const out: Record<string, string> = {};
-  if (!header) return out;
-  const pairs = header.split(";");
-  for (const pair of pairs) {
-    const [rawKey, ...rest] = pair.trim().split("=");
-    if (!rawKey) continue;
-    out[rawKey] = decodeURIComponent(rest.join("=") ?? "");
-  }
-  return out;
-}
 
 function decodeJwtPayload(token: string) {
   const parts = token.split(".");
@@ -748,14 +722,22 @@ const api = new Elysia({ prefix: "/api/v1" })
     return jsonResponse({ ok: true }, { headers });
   });
 
-const app = new Elysia()
-  .use(
-    cors({
-      origin: WEB_ORIGINS.length ? WEB_ORIGINS : [webOrigin],
-      credentials: true
-    })
-  )
-  .get("/", () => "Augmego Core API")
+const app = registerRealtimeWs(
+  new Elysia()
+    .use(
+      cors({
+        origin: WEB_ORIGINS.length ? WEB_ORIGINS : [webOrigin],
+        credentials: true
+      })
+    )
+    .get("/", () => "Augmego Core API"),
+  {
+    prisma,
+    sessionCookieName: SESSION_COOKIE_NAME,
+    maxChatHistory: MAX_CHAT_HISTORY,
+    maxChatMessageLength: MAX_CHAT_MESSAGE_LENGTH
+  }
+)
   .use(api)
   .listen(3000);
 
