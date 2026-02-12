@@ -1,4 +1,9 @@
-import type { ChatMessage, PlayerPayload, PlayerState } from "../lib/types";
+import type {
+  ChatMessage,
+  PlayerMediaPayload,
+  PlayerPayload,
+  PlayerState
+} from "../lib/types";
 import type { RtcSignalPayload } from "./webrtc";
 
 type RealtimeEvents = {
@@ -8,6 +13,7 @@ type RealtimeEvents = {
   onChatMessage: (message: ChatMessage) => void;
   onPlayerSnapshot: (players: PlayerPayload[]) => void;
   onPlayerUpdate: (player: PlayerPayload) => void;
+  onPlayerMedia: (player: PlayerMediaPayload) => void;
   onPlayerLeave: (clientId: string) => void;
   onRtcSignal: (fromClientId: string, signal: RtcSignalPayload) => void;
   onAuthRequired: () => void;
@@ -51,7 +57,7 @@ export function createRealtimeClient(
         clientId?: string;
         message?: ChatMessage;
         messages?: ChatMessage[];
-        player?: PlayerPayload;
+        player?: unknown;
         players?: PlayerPayload[];
         fromClientId?: string;
         signal?: RtcSignalPayload;
@@ -78,7 +84,12 @@ export function createRealtimeClient(
       }
 
       if (data.type === "player:update" && data.player) {
-        events.onPlayerUpdate(data.player);
+        events.onPlayerUpdate(data.player as PlayerPayload);
+        return;
+      }
+
+      if (data.type === "player:media" && data.player) {
+        events.onPlayerMedia(data.player as PlayerMediaPayload);
         return;
       }
 
@@ -155,11 +166,26 @@ export function createRealtimeClient(
     return true;
   }
 
+  function sendPlayerMedia(micMuted: boolean, cameraEnabled: boolean) {
+    if (!isOpen() || !socket) return false;
+
+    socket.send(
+      JSON.stringify({
+        type: "player:media",
+        micMuted,
+        cameraEnabled
+      })
+    );
+
+    return true;
+  }
+
   return {
     connect,
     isOpen,
     sendChat,
     sendPlayerUpdate,
-    sendRtcSignal
+    sendRtcSignal,
+    sendPlayerMedia
   };
 }

@@ -28,5 +28,13 @@ export type PlayerPayload = {
   userId: string | null;
   name: string | null;
   avatarUrl: string | null;
+  micMuted?: boolean;
+  cameraEnabled?: boolean;
   state: PlayerState;
+};
+
+export type PlayerMediaPayload = {
+  clientId: string;
+  micMuted: boolean;
+  cameraEnabled: boolean;
 };

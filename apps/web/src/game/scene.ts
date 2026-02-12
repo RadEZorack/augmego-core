@@ -4,6 +4,7 @@ import type { PlayerPayload, PlayerState } from "../lib/types";
 type PlayerBadge = {
   sprite: any;
   setIdentity: (name: string | null, avatarUrl: string | null) => void;
+  setMediaState: (micMuted: boolean, cameraEnabled: boolean) => void;
   setMediaStream: (stream: MediaStream | null, muted: boolean) => void;
   renderFrame: () => void;
   dispose: () => void;
@@ -138,6 +139,8 @@ export function createGameScene(options: GameSceneOptions) {
     let identityAvatarUrl: string | null = null;
     let avatarImage: HTMLImageElement | null = null;
     let mediaVideo: HTMLVideoElement | null = null;
+    let micMuted = false;
+    let cameraEnabled = true;
     let drawVersion = 0;
     let dirty = true;
 
@@ -177,6 +180,18 @@ export function createGameScene(options: GameSceneOptions) {
       }
 
       ctx.restore();
+
+      if (micMuted) {
+        ctx.beginPath();
+        ctx.arc(72, 42, 10, 0, Math.PI * 2);
+        ctx.fillStyle = "#d9534f";
+        ctx.fill();
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 12px Space Grotesk, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("M", 72, 42);
+      }
 
       ctx.fillStyle = "#e9f5ff";
       ctx.textAlign = "left";
@@ -250,6 +265,12 @@ export function createGameScene(options: GameSceneOptions) {
       dirty = true;
     }
 
+    function setMediaState(nextMicMuted: boolean, nextCameraEnabled: boolean) {
+      micMuted = nextMicMuted;
+      cameraEnabled = nextCameraEnabled;
+      dirty = true;
+    }
+
     function renderFrame() {
       if (mediaVideo && mediaVideo.readyState >= 2) {
         draw();
@@ -276,6 +297,7 @@ export function createGameScene(options: GameSceneOptions) {
     return {
       sprite,
       setIdentity,
+      setMediaState,
       setMediaStream,
       renderFrame,
       dispose
@@ -388,6 +410,7 @@ export function createGameScene(options: GameSceneOptions) {
     );
     remote.targetRotationY = payload.state.rotation.y;
     remote.badge.setIdentity(payload.name, payload.avatarUrl);
+    remote.badge.setMediaState(payload.micMuted === true, payload.cameraEnabled !== false);
   }
 
   function applyRemoteSnapshot(players: PlayerPayload[]) {
@@ -484,6 +507,20 @@ export function createGameScene(options: GameSceneOptions) {
     localBadge.setIdentity(name, avatarUrl);
   }
 
+  function setLocalMediaState(micMuted: boolean, cameraEnabled: boolean) {
+    localBadge.setMediaState(micMuted, cameraEnabled);
+  }
+
+  function setRemoteMediaState(
+    clientId: string,
+    micMuted: boolean,
+    cameraEnabled: boolean
+  ) {
+    const remote = remotePlayers.get(clientId);
+    if (!remote) return;
+    remote.badge.setMediaState(micMuted, cameraEnabled);
+  }
+
   function setLocalMediaStream(stream: MediaStream | null) {
     localBadge.setMediaStream(stream, true);
   }
@@ -509,7 +546,9 @@ export function createGameScene(options: GameSceneOptions) {
     start,
     setSelfClientId,
     setLocalIdentity,
+    setLocalMediaState,
     setLocalMediaStream,
+    setRemoteMediaState,
     setRemoteMediaStream,
     forceSyncLocalState,
     applyRemoteSnapshot,

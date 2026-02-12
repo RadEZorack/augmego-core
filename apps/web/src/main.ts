@@ -81,9 +81,13 @@ const media = createMediaController({
   remoteVolumeList: document.getElementById("remote-volume-list") as HTMLDivElement | null,
   onMicToggle(muted) {
     webrtc.setMicMuted(muted);
+    game.setLocalMediaState(muted, webrtc.getCameraEnabled());
+    realtime.sendPlayerMedia(muted, webrtc.getCameraEnabled());
   },
   onCameraToggle(enabled) {
     webrtc.setCameraEnabled(enabled);
+    game.setLocalMediaState(webrtc.getMicMuted(), enabled);
+    realtime.sendPlayerMedia(webrtc.getMicMuted(), enabled);
   },
   onAudioInputChange(deviceId) {
     void webrtc.setAudioInputDevice(deviceId);
@@ -152,6 +156,13 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
       webrtc.getRemoteVolume(player.clientId)
     );
   },
+  onPlayerMedia(player) {
+    game.setRemoteMediaState(
+      player.clientId,
+      player.micMuted,
+      player.cameraEnabled
+    );
+  },
   onPlayerLeave(clientId) {
     game.removeRemotePlayer(clientId);
     webrtc.removePeer(clientId);
@@ -175,7 +186,13 @@ auth.setup();
 media.setup();
 media.setMicMuted(webrtc.getMicMuted());
 media.setCameraEnabled(webrtc.getCameraEnabled());
+game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 void auth.loadCurrentUser();
 realtime.connect();
-void webrtc.startLocalMedia().then(() => webrtc.refreshDevices());
+void webrtc
+  .startLocalMedia()
+  .then(() => {
+    webrtc.refreshDevices();
+    realtime.sendPlayerMedia(webrtc.getMicMuted(), webrtc.getCameraEnabled());
+  });
 game.start();

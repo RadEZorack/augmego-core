@@ -15,6 +15,11 @@ type PlayerState = {
   updatedAt: string;
 };
 
+type PlayerMediaState = {
+  micMuted: boolean;
+  cameraEnabled: boolean;
+};
+
 export type RealtimeWsOptions = {
   prisma: PrismaClient;
   sessionCookieName: string;
@@ -28,6 +33,7 @@ const WS_TOPIC = "augmego:realtime";
 const socketUsers = new Map<string, SessionUser | null>();
 const sockets = new Map<string, any>();
 const players = new Map<string, PlayerState>();
+const playerMedia = new Map<string, PlayerMediaState>();
 const chatHistory: Array<{
   id: string;
   text: string;
@@ -120,6 +126,10 @@ export function registerRealtimeWs<
         options.sessionCookieName
       );
       socketUsers.set(ws.id, user);
+      playerMedia.set(ws.id, {
+        micMuted: false,
+        cameraEnabled: true
+      });
 
       sendJson(ws, {
         type: "session:info",
@@ -145,6 +155,8 @@ export function registerRealtimeWs<
             socketUsers.get(clientId)?.email ??
             null,
           avatarUrl: socketUsers.get(clientId)?.avatarUrl ?? null,
+          micMuted: playerMedia.get(clientId)?.micMuted ?? false,
+          cameraEnabled: playerMedia.get(clientId)?.cameraEnabled ?? true,
           state
         }))
       });
@@ -207,7 +219,27 @@ export function registerRealtimeWs<
             userId: user?.id ?? null,
             name: user?.name ?? user?.email ?? null,
             avatarUrl: user?.avatarUrl ?? null,
+            micMuted: playerMedia.get(ws.id)?.micMuted ?? false,
+            cameraEnabled: playerMedia.get(ws.id)?.cameraEnabled ?? true,
             state
+          }
+        });
+        return;
+      }
+
+      if (parsed.type === "player:media") {
+        const micMuted = parsed.micMuted === true;
+        const cameraEnabled = parsed.cameraEnabled !== false;
+        playerMedia.set(ws.id, {
+          micMuted,
+          cameraEnabled
+        });
+        broadcastJson(ws, {
+          type: "player:media",
+          player: {
+            clientId: ws.id,
+            micMuted,
+            cameraEnabled
           }
         });
         return;
@@ -243,6 +275,7 @@ export function registerRealtimeWs<
       sockets.delete(ws.id);
       socketUsers.delete(ws.id);
       players.delete(ws.id);
+      playerMedia.delete(ws.id);
       ws.publish(WS_TOPIC, JSON.stringify({ type: "player:leave", clientId: ws.id }));
     }
   });
