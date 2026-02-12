@@ -147,14 +147,14 @@ function resolveWsUrl() {
   if (apiBase && apiBase.length > 0) {
     const url = new URL(apiBase);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.pathname = "/ws";
+    url.pathname = "/api/v1/ws";
     url.search = "";
     return url.toString();
   }
 
   const url = new URL(window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.pathname = "/ws";
+  url.pathname = "/api/v1/ws";
   url.search = "";
   return url.toString();
 }

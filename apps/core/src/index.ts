@@ -861,7 +861,7 @@ const app = new Elysia()
     })
   )
   .get("/", () => "Augmego Core API")
-  .ws("/ws", {
+  .ws("/api/v1/ws", {
     async open(ws) {
       ws.subscribe(WS_TOPIC);
       const user = await resolveSessionUser(ws.data.request);
