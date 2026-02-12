@@ -5,6 +5,7 @@ import { createGameScene } from "./game/scene";
 import { createApiUrlResolver, resolveWsUrl } from "./lib/urls";
 import type { CurrentUser } from "./lib/types";
 import { createRealtimeClient } from "./network/realtime";
+import { createWebRtcController } from "./network/webrtc";
 import { createAuthController } from "./ui/auth";
 import { createChatController } from "./ui/chat";
 
@@ -53,12 +54,25 @@ const game = createGameScene({
   }
 });
 
+const webrtc = createWebRtcController({
+  sendSignal(toClientId, signal) {
+    realtime.sendRtcSignal(toClientId, signal);
+  },
+  onLocalStream(stream) {
+    game.setLocalMediaStream(stream);
+  },
+  onRemoteStream(clientId, stream) {
+    game.setRemoteMediaStream(clientId, stream);
+  }
+});
+
 const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onStatus(status) {
     chat.setStatus(status);
   },
   onSessionInfo(clientId) {
     game.setSelfClientId(clientId);
+    webrtc.setSelfClientId(clientId);
     if (clientId) {
       game.forceSyncLocalState();
     }
@@ -71,12 +85,18 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   },
   onPlayerSnapshot(players) {
     game.applyRemoteSnapshot(players);
+    webrtc.syncPeers(players.map((player) => player.clientId));
   },
   onPlayerUpdate(player) {
     game.applyRemoteUpdate(player);
+    webrtc.upsertPeer(player.clientId);
   },
   onPlayerLeave(clientId) {
     game.removeRemotePlayer(clientId);
+    webrtc.removePeer(clientId);
+  },
+  onRtcSignal(fromClientId, signal) {
+    void webrtc.handleSignal(fromClientId, signal);
   },
   onAuthRequired() {
     chat.setStatus("Sign in to send messages");
@@ -91,4 +111,5 @@ chat.onSubmit((text) => {
 auth.setup();
 void auth.loadCurrentUser();
 realtime.connect();
+void webrtc.startLocalMedia();
 game.start();

@@ -26,6 +26,7 @@ export type RealtimeWsOptions = {
 const WS_TOPIC = "augmego:realtime";
 
 const socketUsers = new Map<string, SessionUser | null>();
+const sockets = new Map<string, any>();
 const players = new Map<string, PlayerState>();
 const chatHistory: Array<{
   id: string;
@@ -112,6 +113,7 @@ export function registerRealtimeWs<
   return app.ws(options.path ?? "/api/v1/ws", {
     async open(ws: any) {
       ws.subscribe(WS_TOPIC);
+      sockets.set(ws.id, ws);
       const user = await resolveSessionUser(
         options.prisma,
         ws.data.request,
@@ -208,9 +210,37 @@ export function registerRealtimeWs<
             state
           }
         });
+        return;
+      }
+
+      if (parsed.type === "rtc:signal") {
+        const toClientId =
+          typeof parsed.toClientId === "string" ? parsed.toClientId : "";
+        const signal =
+          parsed.signal && typeof parsed.signal === "object"
+            ? parsed.signal
+            : null;
+
+        if (!toClientId || !signal) {
+          sendJson(ws, { type: "error", code: "INVALID_SIGNAL_PAYLOAD" });
+          return;
+        }
+
+        const targetSocket = sockets.get(toClientId);
+        if (!targetSocket) {
+          sendJson(ws, { type: "error", code: "SIGNAL_TARGET_NOT_FOUND" });
+          return;
+        }
+
+        sendJson(targetSocket, {
+          type: "rtc:signal",
+          fromClientId: ws.id,
+          signal
+        });
       }
     },
     close(ws: any) {
+      sockets.delete(ws.id);
       socketUsers.delete(ws.id);
       players.delete(ws.id);
       ws.publish(WS_TOPIC, JSON.stringify({ type: "player:leave", clientId: ws.id }));

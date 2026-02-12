@@ -4,6 +4,8 @@ import type { PlayerPayload, PlayerState } from "../lib/types";
 type PlayerBadge = {
   sprite: any;
   setIdentity: (name: string | null, avatarUrl: string | null) => void;
+  setMediaStream: (stream: MediaStream | null, muted: boolean) => void;
+  renderFrame: () => void;
   dispose: () => void;
 };
 
@@ -134,9 +136,12 @@ export function createGameScene(options: GameSceneOptions) {
 
     let identityName = "Player";
     let identityAvatarUrl: string | null = null;
+    let avatarImage: HTMLImageElement | null = null;
+    let mediaVideo: HTMLVideoElement | null = null;
     let drawVersion = 0;
+    let dirty = true;
 
-    const draw = (avatarImage?: HTMLImageElement) => {
+    const draw = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       drawRoundedRect(ctx, 12, 24, 232, 80, 20);
@@ -152,7 +157,14 @@ export function createGameScene(options: GameSceneOptions) {
       ctx.closePath();
       ctx.clip();
 
-      if (avatarImage) {
+      if (mediaVideo && mediaVideo.readyState >= 2) {
+        const srcWidth = mediaVideo.videoWidth || 48;
+        const srcHeight = mediaVideo.videoHeight || 48;
+        const side = Math.min(srcWidth, srcHeight);
+        const sx = Math.max(0, (srcWidth - side) / 2);
+        const sy = Math.max(0, (srcHeight - side) / 2);
+        ctx.drawImage(mediaVideo, sx, sy, side, side, 28, 40, 48, 48);
+      } else if (avatarImage) {
         ctx.drawImage(avatarImage, 28, 40, 48, 48);
       } else {
         ctx.fillStyle = `#${fallbackColor.getHexString()}`;
@@ -184,15 +196,17 @@ export function createGameScene(options: GameSceneOptions) {
       ctx.fillText(label, 88, 64);
 
       texture.needsUpdate = true;
+      dirty = false;
     };
 
     function setIdentity(name: string | null, avatarUrl: string | null) {
       identityName = name?.trim() || "Player";
       identityAvatarUrl = avatarUrl;
+      avatarImage = null;
 
       const version = ++drawVersion;
       if (!identityAvatarUrl) {
-        draw();
+        dirty = true;
         return;
       }
 
@@ -200,18 +214,59 @@ export function createGameScene(options: GameSceneOptions) {
       image.crossOrigin = "anonymous";
       image.onload = () => {
         if (version !== drawVersion) return;
-        draw(image);
+        avatarImage = image;
+        dirty = true;
       };
       image.onerror = () => {
         if (version !== drawVersion) return;
-        draw();
+        dirty = true;
       };
       image.src = identityAvatarUrl;
+      dirty = true;
+    }
 
-      draw();
+    function setMediaStream(stream: MediaStream | null, muted: boolean) {
+      if (!stream) {
+        if (mediaVideo) {
+          mediaVideo.pause();
+          mediaVideo.srcObject = null;
+        }
+        mediaVideo = null;
+        dirty = true;
+        return;
+      }
+
+      if (!mediaVideo) {
+        mediaVideo = document.createElement("video");
+        mediaVideo.autoplay = true;
+        mediaVideo.playsInline = true;
+      }
+
+      mediaVideo.muted = muted;
+      mediaVideo.srcObject = stream;
+      void mediaVideo.play().catch(() => {
+        // autoplay can fail until user interaction
+      });
+      dirty = true;
+    }
+
+    function renderFrame() {
+      if (mediaVideo && mediaVideo.readyState >= 2) {
+        draw();
+        return;
+      }
+
+      if (dirty) {
+        draw();
+      }
     }
 
     function dispose() {
+      if (mediaVideo) {
+        mediaVideo.pause();
+        mediaVideo.srcObject = null;
+        mediaVideo = null;
+      }
       texture.dispose();
       material.dispose();
     }
@@ -221,6 +276,8 @@ export function createGameScene(options: GameSceneOptions) {
     return {
       sprite,
       setIdentity,
+      setMediaStream,
+      renderFrame,
       dispose
     };
   }
@@ -354,6 +411,7 @@ export function createGameScene(options: GameSceneOptions) {
       remote.mesh.position.lerp(remote.targetPosition, blend);
       remote.mesh.rotation.y +=
         (remote.targetRotationY - remote.mesh.rotation.y) * blend;
+      remote.badge.renderFrame();
     }
   }
 
@@ -401,6 +459,7 @@ export function createGameScene(options: GameSceneOptions) {
   function animate() {
     const deltaSeconds = clock.getDelta();
     moveLocalPlayer(deltaSeconds);
+    localBadge.renderFrame();
     updateRemotePlayers(deltaSeconds);
 
     camera.position.x = localPlayer.position.x;
@@ -425,6 +484,23 @@ export function createGameScene(options: GameSceneOptions) {
     localBadge.setIdentity(name, avatarUrl);
   }
 
+  function setLocalMediaStream(stream: MediaStream | null) {
+    localBadge.setMediaStream(stream, true);
+  }
+
+  function setRemoteMediaStream(clientId: string, stream: MediaStream | null) {
+    if (!stream) {
+      const existing = remotePlayers.get(clientId);
+      if (existing) {
+        existing.badge.setMediaStream(null, false);
+      }
+      return;
+    }
+
+    const remote = ensureRemotePlayer(clientId);
+    remote.badge.setMediaStream(stream, false);
+  }
+
   function forceSyncLocalState() {
     maybeSendLocalState(true);
   }
@@ -433,6 +509,8 @@ export function createGameScene(options: GameSceneOptions) {
     start,
     setSelfClientId,
     setLocalIdentity,
+    setLocalMediaStream,
+    setRemoteMediaStream,
     forceSyncLocalState,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,

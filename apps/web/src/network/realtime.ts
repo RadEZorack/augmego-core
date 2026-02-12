@@ -1,4 +1,5 @@
 import type { ChatMessage, PlayerPayload, PlayerState } from "../lib/types";
+import type { RtcSignalPayload } from "./webrtc";
 
 type RealtimeEvents = {
   onStatus: (status: string) => void;
@@ -8,6 +9,7 @@ type RealtimeEvents = {
   onPlayerSnapshot: (players: PlayerPayload[]) => void;
   onPlayerUpdate: (player: PlayerPayload) => void;
   onPlayerLeave: (clientId: string) => void;
+  onRtcSignal: (fromClientId: string, signal: RtcSignalPayload) => void;
   onAuthRequired: () => void;
 };
 
@@ -51,6 +53,8 @@ export function createRealtimeClient(
         messages?: ChatMessage[];
         player?: PlayerPayload;
         players?: PlayerPayload[];
+        fromClientId?: string;
+        signal?: RtcSignalPayload;
       };
 
       if (data.type === "session:info") {
@@ -80,6 +84,11 @@ export function createRealtimeClient(
 
       if (data.type === "player:leave" && data.clientId) {
         events.onPlayerLeave(data.clientId);
+        return;
+      }
+
+      if (data.type === "rtc:signal" && data.fromClientId && data.signal) {
+        events.onRtcSignal(data.fromClientId, data.signal);
         return;
       }
 
@@ -132,10 +141,25 @@ export function createRealtimeClient(
     return true;
   }
 
+  function sendRtcSignal(toClientId: string, signal: RtcSignalPayload) {
+    if (!isOpen() || !socket) return false;
+
+    socket.send(
+      JSON.stringify({
+        type: "rtc:signal",
+        toClientId,
+        signal
+      })
+    );
+
+    return true;
+  }
+
   return {
     connect,
     isOpen,
     sendChat,
-    sendPlayerUpdate
+    sendPlayerUpdate,
+    sendRtcSignal
   };
 }
