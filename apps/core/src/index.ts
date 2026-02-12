@@ -814,7 +814,17 @@ function sendJson(ws: { send: (payload: string) => unknown }, payload: unknown) 
   ws.send(JSON.stringify(payload));
 }
 
-function safeParseMessage(message: string) {
+function safeParseMessage(message: unknown) {
+  if (!message) return null;
+
+  if (typeof message === "object") {
+    return message as Record<string, unknown>;
+  }
+
+  if (typeof message !== "string") {
+    return null;
+  }
+
   try {
     return JSON.parse(message) as Record<string, unknown>;
   } catch {
@@ -889,10 +899,7 @@ const app = new Elysia()
       });
     },
     message(ws, rawMessage) {
-      const message =
-        typeof rawMessage === "string" ? rawMessage : String(rawMessage);
-      const parsed = safeParseMessage(message);
-
+      const parsed = safeParseMessage(rawMessage);
       if (!parsed || typeof parsed.type !== "string") {
         sendJson(ws, { type: "error", code: "INVALID_PAYLOAD" });
         return;
