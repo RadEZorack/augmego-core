@@ -121,6 +121,7 @@ export function registerRealtimeWs<
 
       sendJson(ws, {
         type: "session:info",
+        clientId: ws.id,
         authenticated: Boolean(user),
         user: user
           ? {
@@ -136,6 +137,11 @@ export function registerRealtimeWs<
         type: "player:snapshot",
         players: [...players.entries()].map(([clientId, state]) => ({
           clientId,
+          userId: socketUsers.get(clientId)?.id ?? null,
+          name:
+            socketUsers.get(clientId)?.name ??
+            socketUsers.get(clientId)?.email ??
+            null,
           state
         }))
       });
