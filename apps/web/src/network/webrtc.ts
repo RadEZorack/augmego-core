@@ -34,8 +34,8 @@ type WebRtcControllerOptions = {
 export function createWebRtcController(options: WebRtcControllerOptions) {
   let selfClientId: string | null = null;
   let localStream: MediaStream | null = null;
-  let micMuted = false;
-  let cameraEnabled = true;
+  let micMuted = true;
+  let cameraEnabled = false;
 
   let selectedAudioInputId: string | null = null;
   let selectedVideoInputId: string | null = null;

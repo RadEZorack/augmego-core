@@ -127,8 +127,8 @@ export function registerRealtimeWs<
       );
       socketUsers.set(ws.id, user);
       playerMedia.set(ws.id, {
-        micMuted: false,
-        cameraEnabled: true
+        micMuted: true,
+        cameraEnabled: false
       });
 
       sendJson(ws, {
@@ -155,8 +155,8 @@ export function registerRealtimeWs<
             socketUsers.get(clientId)?.email ??
             null,
           avatarUrl: socketUsers.get(clientId)?.avatarUrl ?? null,
-          micMuted: playerMedia.get(clientId)?.micMuted ?? false,
-          cameraEnabled: playerMedia.get(clientId)?.cameraEnabled ?? true,
+          micMuted: playerMedia.get(clientId)?.micMuted ?? true,
+          cameraEnabled: playerMedia.get(clientId)?.cameraEnabled ?? false,
           state
         }))
       });
@@ -219,8 +219,8 @@ export function registerRealtimeWs<
             userId: user?.id ?? null,
             name: user?.name ?? user?.email ?? null,
             avatarUrl: user?.avatarUrl ?? null,
-            micMuted: playerMedia.get(ws.id)?.micMuted ?? false,
-            cameraEnabled: playerMedia.get(ws.id)?.cameraEnabled ?? true,
+            micMuted: playerMedia.get(ws.id)?.micMuted ?? true,
+            cameraEnabled: playerMedia.get(ws.id)?.cameraEnabled ?? false,
             state
           }
         });

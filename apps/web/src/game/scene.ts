@@ -160,7 +160,7 @@ export function createGameScene(options: GameSceneOptions) {
       ctx.closePath();
       ctx.clip();
 
-      if (mediaVideo && mediaVideo.readyState >= 2) {
+      if (cameraEnabled && mediaVideo && mediaVideo.readyState >= 2) {
         const srcWidth = mediaVideo.videoWidth || 48;
         const srcHeight = mediaVideo.videoHeight || 48;
         const side = Math.min(srcWidth, srcHeight);
