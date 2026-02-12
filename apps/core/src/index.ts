@@ -814,6 +814,18 @@ function sendJson(ws: { send: (payload: string) => unknown }, payload: unknown) 
   ws.send(JSON.stringify(payload));
 }
 
+function broadcastJson(
+  ws: {
+    send: (payload: string) => unknown;
+    publish: (topic: string, payload: string) => unknown;
+  },
+  payload: unknown
+) {
+  const json = JSON.stringify(payload);
+  ws.send(json);
+  ws.publish(WS_TOPIC, json);
+}
+
 function safeParseMessage(message: unknown) {
   if (!message) return null;
 
@@ -936,7 +948,7 @@ const app = new Elysia()
           chatHistory.splice(0, chatHistory.length - MAX_CHAT_HISTORY);
         }
 
-        ws.publish(WS_TOPIC, JSON.stringify({ type: "chat:new", message: chatMessage }));
+        broadcastJson(ws, { type: "chat:new", message: chatMessage });
         return;
       }
 
@@ -949,30 +961,21 @@ const app = new Elysia()
 
         const user = socketUsers.get(ws.id);
         players.set(ws.id, state);
-        ws.publish(
-          WS_TOPIC,
-          JSON.stringify({
-            type: "player:update",
-            player: {
-              clientId: ws.id,
-              userId: user?.id ?? null,
-              name: user?.name ?? user?.email ?? null,
-              state
-            }
-          })
-        );
+        broadcastJson(ws, {
+          type: "player:update",
+          player: {
+            clientId: ws.id,
+            userId: user?.id ?? null,
+            name: user?.name ?? user?.email ?? null,
+            state
+          }
+        });
       }
     },
     close(ws) {
       socketUsers.delete(ws.id);
       players.delete(ws.id);
-      ws.publish(
-        WS_TOPIC,
-        JSON.stringify({
-          type: "player:leave",
-          clientId: ws.id
-        })
-      );
+      ws.publish(WS_TOPIC, JSON.stringify({ type: "player:leave", clientId: ws.id }));
     }
   })
   .use(api)
