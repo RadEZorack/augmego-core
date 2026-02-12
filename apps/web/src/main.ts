@@ -73,12 +73,24 @@ const webrtc = createWebRtcController({
 });
 
 const media = createMediaController({
+  accessCard: document.getElementById("media-access-card") as HTMLDivElement | null,
+  accessStatus: document.getElementById("media-access-status") as HTMLDivElement | null,
+  enableButton: document.getElementById("media-enable-button") as HTMLButtonElement | null,
+  mutedButton: document.getElementById("media-muted-button") as HTMLButtonElement | null,
   micToggle: document.getElementById("mic-toggle") as HTMLButtonElement | null,
   cameraToggle: document.getElementById("camera-toggle") as HTMLButtonElement | null,
   audioInputSelect: document.getElementById("audio-input-select") as HTMLSelectElement | null,
   videoInputSelect: document.getElementById("video-input-select") as HTMLSelectElement | null,
   audioOutputSelect: document.getElementById("audio-output-select") as HTMLSelectElement | null,
   remoteVolumeList: document.getElementById("remote-volume-list") as HTMLDivElement | null,
+  async onRequestAccess() {
+    const granted = await webrtc.startLocalMedia();
+    if (granted) {
+      await webrtc.refreshDevices();
+      realtime.sendPlayerMedia(webrtc.getMicMuted(), webrtc.getCameraEnabled());
+    }
+    return granted;
+  },
   onMicToggle(muted) {
     webrtc.setMicMuted(muted);
     game.setLocalMediaState(muted, webrtc.getCameraEnabled());
@@ -187,12 +199,8 @@ media.setup();
 media.setMicMuted(webrtc.getMicMuted());
 media.setCameraEnabled(webrtc.getCameraEnabled());
 game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
+media.setPermissionState("not_requested");
 void auth.loadCurrentUser();
 realtime.connect();
-void webrtc
-  .startLocalMedia()
-  .then(() => {
-    webrtc.refreshDevices();
-    realtime.sendPlayerMedia(webrtc.getMicMuted(), webrtc.getCameraEnabled());
-  });
+void webrtc.refreshDevices();
 game.start();

@@ -329,7 +329,7 @@ export function createWebRtcController(options: WebRtcControllerOptions) {
   async function startLocalMedia() {
     await replaceLocalMedia();
 
-    if (!localStream) return;
+    if (!localStream) return false;
 
     for (const [remoteClientId, peer] of peers.entries()) {
       attachLocalTracks(peer);
@@ -339,6 +339,7 @@ export function createWebRtcController(options: WebRtcControllerOptions) {
         });
       }
     }
+    return true;
   }
 
   async function setAudioInputDevice(deviceId: string) {
@@ -402,6 +403,7 @@ export function createWebRtcController(options: WebRtcControllerOptions) {
     setRemoteVolume,
     getRemoteVolume,
     refreshDevices,
+    hasLocalMedia: () => Boolean(localStream),
     getMicMuted: () => micMuted,
     getCameraEnabled: () => cameraEnabled
   };
