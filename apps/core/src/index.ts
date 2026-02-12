@@ -2,7 +2,6 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
-import type { ServerWebSocket } from "bun";
 
 const prisma = new PrismaClient();
 
@@ -51,9 +50,6 @@ const WEB_ORIGINS =
   process.env.WEB_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "session_id";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? "168");
-const WS_PORT = Number(process.env.WS_PORT ?? "3002");
-const WS_ORIGINS =
-  process.env.WS_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
 const MAX_CHAT_HISTORY = Number(process.env.MAX_CHAT_HISTORY ?? "100");
 const MAX_CHAT_MESSAGE_LENGTH = Number(
   process.env.MAX_CHAT_MESSAGE_LENGTH ?? "500"
@@ -787,26 +783,6 @@ const api = new Elysia({ prefix: "/api/v1" })
     return jsonResponse({ ok: true }, { headers });
   });
 
-const app = new Elysia()
-  .use(
-    cors({
-      origin: WEB_ORIGINS.length ? WEB_ORIGINS : [webOrigin],
-      credentials: true
-    })
-  )
-  .get("/", () => "Augmego Core API")
-  .use(api)
-  .listen(3000);
-
-console.log(
-  `Elysia server running at http://${app.server?.hostname}:${app.server?.port}`
-);
-
-type ClientData = {
-  clientId: string;
-  user: SessionUser | null;
-};
-
 type PlayerStateInput = {
   position?: { x?: number; y?: number; z?: number };
   rotation?: { x?: number; y?: number; z?: number };
@@ -820,8 +796,8 @@ type PlayerState = {
   updatedAt: string;
 };
 
-const wsOrigins = new Set([webOrigin, ...WEB_ORIGINS, ...WS_ORIGINS]);
-const wsClients = new Set<ServerWebSocket<ClientData>>();
+const WS_TOPIC = "augmego:realtime";
+const socketUsers = new Map<string, SessionUser | null>();
 const players = new Map<string, PlayerState>();
 const chatHistory: Array<{
   id: string;
@@ -834,20 +810,8 @@ const chatHistory: Array<{
   };
 }> = [];
 
-function canUseOrigin(origin: string | null) {
-  if (!origin) return true;
-  return wsOrigins.has(origin);
-}
-
-function sendJson(ws: ServerWebSocket<ClientData>, payload: unknown) {
+function sendJson(ws: { send: (payload: string) => unknown }, payload: unknown) {
   ws.send(JSON.stringify(payload));
-}
-
-function broadcastJson(payload: unknown) {
-  const json = JSON.stringify(payload);
-  for (const client of wsClients) {
-    client.send(json);
-  }
 }
 
 function safeParseMessage(message: string) {
@@ -889,48 +853,28 @@ function sanitizePlayerState(state: unknown): PlayerState | null {
   };
 }
 
-Bun.serve<ClientData>({
-  port: WS_PORT,
-  fetch: async (request, server) => {
-    const url = new URL(request.url);
-    if (url.pathname !== "/ws") {
-      return new Response("Not Found", { status: 404 });
-    }
-
-    const upgradeHeader = request.headers.get("upgrade");
-    if (!upgradeHeader || upgradeHeader.toLowerCase() !== "websocket") {
-      return new Response("Expected websocket upgrade", { status: 426 });
-    }
-
-    if (!canUseOrigin(request.headers.get("origin"))) {
-      return new Response("Origin not allowed", { status: 403 });
-    }
-
-    const user = await resolveSessionUser(request);
-    const ok = server.upgrade(request, {
-      data: {
-        clientId: crypto.randomUUID(),
-        user
-      }
-    });
-
-    if (!ok) {
-      return new Response("WebSocket upgrade failed", { status: 400 });
-    }
-    return;
-  },
-  websocket: {
-    open(ws) {
-      wsClients.add(ws);
+const app = new Elysia()
+  .use(
+    cors({
+      origin: WEB_ORIGINS.length ? WEB_ORIGINS : [webOrigin],
+      credentials: true
+    })
+  )
+  .get("/", () => "Augmego Core API")
+  .ws("/ws", {
+    async open(ws) {
+      ws.subscribe(WS_TOPIC);
+      const user = await resolveSessionUser(ws.data.request);
+      socketUsers.set(ws.id, user);
 
       sendJson(ws, {
         type: "session:info",
-        authenticated: Boolean(ws.data.user),
-        user: ws.data.user
+        authenticated: Boolean(user),
+        user: user
           ? {
-              id: ws.data.user.id,
-              name: ws.data.user.name ?? ws.data.user.email ?? "User",
-              avatarUrl: ws.data.user.avatarUrl
+              id: user.id,
+              name: user.name ?? user.email ?? "User",
+              avatarUrl: user.avatarUrl
             }
           : null
       });
@@ -946,7 +890,7 @@ Bun.serve<ClientData>({
     },
     message(ws, rawMessage) {
       const message =
-        typeof rawMessage === "string" ? rawMessage : Buffer.from(rawMessage).toString("utf8");
+        typeof rawMessage === "string" ? rawMessage : String(rawMessage);
       const parsed = safeParseMessage(message);
 
       if (!parsed || typeof parsed.type !== "string") {
@@ -956,8 +900,9 @@ Bun.serve<ClientData>({
 
       if (parsed.type === "chat:send") {
         const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
+        const user = socketUsers.get(ws.id);
 
-        if (!ws.data.user) {
+        if (!user) {
           sendJson(ws, { type: "error", code: "AUTH_REQUIRED" });
           return;
         }
@@ -973,9 +918,9 @@ Bun.serve<ClientData>({
           text: limitedText,
           createdAt: new Date().toISOString(),
           user: {
-            id: ws.data.user.id,
-            name: ws.data.user.name ?? ws.data.user.email ?? "User",
-            avatarUrl: ws.data.user.avatarUrl
+            id: user.id,
+            name: user.name ?? user.email ?? "User",
+            avatarUrl: user.avatarUrl
           }
         };
 
@@ -984,7 +929,7 @@ Bun.serve<ClientData>({
           chatHistory.splice(0, chatHistory.length - MAX_CHAT_HISTORY);
         }
 
-        broadcastJson({ type: "chat:new", message: chatMessage });
+        ws.publish(WS_TOPIC, JSON.stringify({ type: "chat:new", message: chatMessage }));
         return;
       }
 
@@ -995,27 +940,37 @@ Bun.serve<ClientData>({
           return;
         }
 
-        players.set(ws.data.clientId, state);
-        broadcastJson({
-          type: "player:update",
-          player: {
-            clientId: ws.data.clientId,
-            userId: ws.data.user?.id ?? null,
-            name: ws.data.user?.name ?? ws.data.user?.email ?? null,
-            state
-          }
-        });
+        const user = socketUsers.get(ws.id);
+        players.set(ws.id, state);
+        ws.publish(
+          WS_TOPIC,
+          JSON.stringify({
+            type: "player:update",
+            player: {
+              clientId: ws.id,
+              userId: user?.id ?? null,
+              name: user?.name ?? user?.email ?? null,
+              state
+            }
+          })
+        );
       }
     },
     close(ws) {
-      wsClients.delete(ws);
-      players.delete(ws.data.clientId);
-      broadcastJson({
-        type: "player:leave",
-        clientId: ws.data.clientId
-      });
+      socketUsers.delete(ws.id);
+      players.delete(ws.id);
+      ws.publish(
+        WS_TOPIC,
+        JSON.stringify({
+          type: "player:leave",
+          clientId: ws.id
+        })
+      );
     }
-  }
-});
+  })
+  .use(api)
+  .listen(3000);
 
-console.log(`WebSocket server running at ws://localhost:${WS_PORT}/ws`);
+console.log(
+  `Elysia server running at http://${app.server?.hostname}:${app.server?.port}`
+);

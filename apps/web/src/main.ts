@@ -147,7 +147,6 @@ function resolveWsUrl() {
   if (apiBase && apiBase.length > 0) {
     const url = new URL(apiBase);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    url.port = "3002";
     url.pathname = "/ws";
     url.search = "";
     return url.toString();
@@ -155,7 +154,6 @@ function resolveWsUrl() {
 
   const url = new URL(window.location.href);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-  url.port = "3002";
   url.pathname = "/ws";
   url.search = "";
   return url.toString();
