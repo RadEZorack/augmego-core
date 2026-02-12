@@ -167,10 +167,20 @@ export function createGameScene(options: GameSceneOptions) {
       ctx.restore();
 
       ctx.fillStyle = "#e9f5ff";
-      ctx.font = "600 22px Space Grotesk, sans-serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "middle";
-      const label = identityName.length > 16 ? `${identityName.slice(0, 15)}…` : identityName;
+      const maxLabelWidth = 146;
+      let fontSize = 22;
+      const minFontSize = 12;
+      const label = identityName;
+      while (fontSize > minFontSize) {
+        ctx.font = `600 ${fontSize}px Space Grotesk, sans-serif`;
+        if (ctx.measureText(label).width <= maxLabelWidth) {
+          break;
+        }
+        fontSize -= 1;
+      }
+      ctx.font = `600 ${fontSize}px Space Grotesk, sans-serif`;
       ctx.fillText(label, 88, 64);
 
       texture.needsUpdate = true;
