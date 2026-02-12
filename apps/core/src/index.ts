@@ -2,6 +2,7 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
+import type { ServerWebSocket } from "bun";
 
 const prisma = new PrismaClient();
 
@@ -50,6 +51,13 @@ const WEB_ORIGINS =
   process.env.WEB_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "session_id";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? "168");
+const WS_PORT = Number(process.env.WS_PORT ?? "3002");
+const WS_ORIGINS =
+  process.env.WS_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
+const MAX_CHAT_HISTORY = Number(process.env.MAX_CHAT_HISTORY ?? "100");
+const MAX_CHAT_MESSAGE_LENGTH = Number(
+  process.env.MAX_CHAT_MESSAGE_LENGTH ?? "500"
+);
 
 const webOrigin = (() => {
   try {
@@ -95,6 +103,37 @@ function parseCookies(header: string | null) {
     out[rawKey] = decodeURIComponent(rest.join("=") ?? "");
   }
   return out;
+}
+
+type SessionUser = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+};
+
+async function resolveSessionUser(request: Request): Promise<SessionUser | null> {
+  const cookies = parseCookies(request.headers.get("cookie"));
+  const sessionId = cookies[SESSION_COOKIE_NAME];
+  if (!sessionId) return null;
+
+  const session = await prisma.session.findFirst({
+    where: {
+      id: sessionId,
+      revokedAt: null,
+      expiresAt: { gt: new Date() }
+    },
+    include: { user: true }
+  });
+
+  if (!session) return null;
+
+  return {
+    id: session.user.id,
+    name: session.user.name,
+    email: session.user.email,
+    avatarUrl: session.user.avatarUrl
+  };
 }
 
 function decodeJwtPayload(token: string) {
@@ -762,3 +801,221 @@ const app = new Elysia()
 console.log(
   `Elysia server running at http://${app.server?.hostname}:${app.server?.port}`
 );
+
+type ClientData = {
+  clientId: string;
+  user: SessionUser | null;
+};
+
+type PlayerStateInput = {
+  position?: { x?: number; y?: number; z?: number };
+  rotation?: { x?: number; y?: number; z?: number };
+  inventory?: string[];
+};
+
+type PlayerState = {
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  inventory: string[];
+  updatedAt: string;
+};
+
+const wsOrigins = new Set([webOrigin, ...WEB_ORIGINS, ...WS_ORIGINS]);
+const wsClients = new Set<ServerWebSocket<ClientData>>();
+const players = new Map<string, PlayerState>();
+const chatHistory: Array<{
+  id: string;
+  text: string;
+  createdAt: string;
+  user: {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+  };
+}> = [];
+
+function canUseOrigin(origin: string | null) {
+  if (!origin) return true;
+  return wsOrigins.has(origin);
+}
+
+function sendJson(ws: ServerWebSocket<ClientData>, payload: unknown) {
+  ws.send(JSON.stringify(payload));
+}
+
+function broadcastJson(payload: unknown) {
+  const json = JSON.stringify(payload);
+  for (const client of wsClients) {
+    client.send(json);
+  }
+}
+
+function safeParseMessage(message: string) {
+  try {
+    return JSON.parse(message) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function sanitizeVector(value: unknown) {
+  if (!value || typeof value !== "object") return null;
+  const vector = value as { x?: unknown; y?: unknown; z?: unknown };
+  if (
+    typeof vector.x !== "number" ||
+    typeof vector.y !== "number" ||
+    typeof vector.z !== "number"
+  ) {
+    return null;
+  }
+  return { x: vector.x, y: vector.y, z: vector.z };
+}
+
+function sanitizePlayerState(state: unknown): PlayerState | null {
+  if (!state || typeof state !== "object") return null;
+  const input = state as PlayerStateInput;
+  const position = sanitizeVector(input.position);
+  const rotation = sanitizeVector(input.rotation);
+  if (!position || !rotation) return null;
+  const inventory = Array.isArray(input.inventory)
+    ? input.inventory.filter((item): item is string => typeof item === "string")
+    : [];
+
+  return {
+    position,
+    rotation,
+    inventory,
+    updatedAt: new Date().toISOString()
+  };
+}
+
+Bun.serve<ClientData>({
+  port: WS_PORT,
+  fetch: async (request, server) => {
+    const url = new URL(request.url);
+    if (url.pathname !== "/ws") {
+      return new Response("Not Found", { status: 404 });
+    }
+
+    const upgradeHeader = request.headers.get("upgrade");
+    if (!upgradeHeader || upgradeHeader.toLowerCase() !== "websocket") {
+      return new Response("Expected websocket upgrade", { status: 426 });
+    }
+
+    if (!canUseOrigin(request.headers.get("origin"))) {
+      return new Response("Origin not allowed", { status: 403 });
+    }
+
+    const user = await resolveSessionUser(request);
+    const ok = server.upgrade(request, {
+      data: {
+        clientId: crypto.randomUUID(),
+        user
+      }
+    });
+
+    if (!ok) {
+      return new Response("WebSocket upgrade failed", { status: 400 });
+    }
+    return;
+  },
+  websocket: {
+    open(ws) {
+      wsClients.add(ws);
+
+      sendJson(ws, {
+        type: "session:info",
+        authenticated: Boolean(ws.data.user),
+        user: ws.data.user
+          ? {
+              id: ws.data.user.id,
+              name: ws.data.user.name ?? ws.data.user.email ?? "User",
+              avatarUrl: ws.data.user.avatarUrl
+            }
+          : null
+      });
+
+      sendJson(ws, { type: "chat:history", messages: chatHistory });
+      sendJson(ws, {
+        type: "player:snapshot",
+        players: [...players.entries()].map(([clientId, state]) => ({
+          clientId,
+          state
+        }))
+      });
+    },
+    message(ws, rawMessage) {
+      const message =
+        typeof rawMessage === "string" ? rawMessage : Buffer.from(rawMessage).toString("utf8");
+      const parsed = safeParseMessage(message);
+
+      if (!parsed || typeof parsed.type !== "string") {
+        sendJson(ws, { type: "error", code: "INVALID_PAYLOAD" });
+        return;
+      }
+
+      if (parsed.type === "chat:send") {
+        const text = typeof parsed.text === "string" ? parsed.text.trim() : "";
+
+        if (!ws.data.user) {
+          sendJson(ws, { type: "error", code: "AUTH_REQUIRED" });
+          return;
+        }
+
+        if (!text) {
+          sendJson(ws, { type: "error", code: "EMPTY_MESSAGE" });
+          return;
+        }
+
+        const limitedText = text.slice(0, MAX_CHAT_MESSAGE_LENGTH);
+        const chatMessage = {
+          id: crypto.randomUUID(),
+          text: limitedText,
+          createdAt: new Date().toISOString(),
+          user: {
+            id: ws.data.user.id,
+            name: ws.data.user.name ?? ws.data.user.email ?? "User",
+            avatarUrl: ws.data.user.avatarUrl
+          }
+        };
+
+        chatHistory.push(chatMessage);
+        if (chatHistory.length > MAX_CHAT_HISTORY) {
+          chatHistory.splice(0, chatHistory.length - MAX_CHAT_HISTORY);
+        }
+
+        broadcastJson({ type: "chat:new", message: chatMessage });
+        return;
+      }
+
+      if (parsed.type === "player:update") {
+        const state = sanitizePlayerState(parsed.state);
+        if (!state) {
+          sendJson(ws, { type: "error", code: "INVALID_PLAYER_STATE" });
+          return;
+        }
+
+        players.set(ws.data.clientId, state);
+        broadcastJson({
+          type: "player:update",
+          player: {
+            clientId: ws.data.clientId,
+            userId: ws.data.user?.id ?? null,
+            name: ws.data.user?.name ?? ws.data.user?.email ?? null,
+            state
+          }
+        });
+      }
+    },
+    close(ws) {
+      wsClients.delete(ws);
+      players.delete(ws.data.clientId);
+      broadcastJson({
+        type: "player:leave",
+        clientId: ws.data.clientId
+      });
+    }
+  }
+});
+
+console.log(`WebSocket server running at ws://localhost:${WS_PORT}/ws`);

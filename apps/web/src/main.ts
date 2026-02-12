@@ -23,7 +23,13 @@ const logoutButton = document.getElementById(
 const userAvatar = document.getElementById(
   "user-avatar"
 ) as HTMLImageElement | null;
+const chatLog = document.getElementById("chat-log") as HTMLDivElement | null;
+const chatStatus = document.getElementById("chat-status") as HTMLSpanElement | null;
+const chatForm = document.getElementById("chat-form") as HTMLFormElement | null;
+const chatInput = document.getElementById("chat-input") as HTMLInputElement | null;
+const chatSendButton = document.getElementById("chat-send") as HTMLButtonElement | null;
 const apiBase = import.meta.env.VITE_API_BASE_URL;
+const wsBase = import.meta.env.VITE_WS_URL;
 
 function apiUrl(path: string) {
   const base = apiBase && apiBase.length > 0 ? apiBase : window.location.origin;
@@ -38,6 +44,19 @@ type CurrentUser = {
 };
 
 let currentUser: CurrentUser | null = null;
+let chatSocket: WebSocket | null = null;
+let chatReconnectTimer: number | null = null;
+
+type ChatMessage = {
+  id: string;
+  text: string;
+  createdAt: string;
+  user: {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+  };
+};
 
 function displayName(user: CurrentUser) {
   return user.name ?? user.email ?? "User";
@@ -86,6 +105,124 @@ function updateAuthButtons() {
   }
 }
 
+function updateChatComposerState() {
+  const canPost = Boolean(currentUser);
+
+  if (chatInput) {
+    chatInput.disabled = !canPost;
+    chatInput.placeholder = canPost ? "Type a message" : "Sign in to chat";
+  }
+  if (chatSendButton) {
+    chatSendButton.disabled = !canPost;
+  }
+}
+
+function setChatStatus(text: string) {
+  if (chatStatus) {
+    chatStatus.textContent = text;
+  }
+}
+
+function appendChatMessage(message: ChatMessage) {
+  if (!chatLog) return;
+
+  const row = document.createElement("div");
+  row.className = "chat-row";
+  const timestamp = new Date(message.createdAt).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  row.textContent = `[${timestamp}] ${message.user.name}: ${message.text}`;
+  chatLog.appendChild(row);
+  chatLog.scrollTop = chatLog.scrollHeight;
+
+  while (chatLog.childElementCount > 150) {
+    chatLog.removeChild(chatLog.firstElementChild as Node);
+  }
+}
+
+function resolveWsUrl() {
+  if (wsBase && wsBase.length > 0) return wsBase;
+
+  if (apiBase && apiBase.length > 0) {
+    const url = new URL(apiBase);
+    url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+    url.port = "3002";
+    url.pathname = "/ws";
+    url.search = "";
+    return url.toString();
+  }
+
+  const url = new URL(window.location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+  url.port = "3002";
+  url.pathname = "/ws";
+  url.search = "";
+  return url.toString();
+}
+
+function connectChatSocket() {
+  if (chatSocket && chatSocket.readyState === WebSocket.OPEN) return;
+  if (chatSocket && chatSocket.readyState === WebSocket.CONNECTING) return;
+
+  setChatStatus("Connecting...");
+  const socket = new WebSocket(resolveWsUrl());
+  chatSocket = socket;
+
+  socket.addEventListener("open", () => {
+    setChatStatus("Connected");
+  });
+
+  socket.addEventListener("message", (event) => {
+    let payload: unknown;
+    try {
+      payload = JSON.parse(String(event.data));
+    } catch {
+      return;
+    }
+
+    if (!payload || typeof payload !== "object") return;
+
+    const data = payload as {
+      type?: string;
+      message?: ChatMessage;
+      messages?: ChatMessage[];
+      code?: string;
+    };
+
+    if (data.type === "chat:history" && Array.isArray(data.messages)) {
+      if (chatLog) chatLog.innerHTML = "";
+      for (const message of data.messages) {
+        appendChatMessage(message);
+      }
+      return;
+    }
+
+    if (data.type === "chat:new" && data.message) {
+      appendChatMessage(data.message);
+      return;
+    }
+
+    if (data.type === "error" && data.code === "AUTH_REQUIRED") {
+      setChatStatus("Sign in to send messages");
+    }
+  });
+
+  socket.addEventListener("close", () => {
+    setChatStatus("Disconnected");
+    if (chatReconnectTimer !== null) {
+      window.clearTimeout(chatReconnectTimer);
+    }
+    chatReconnectTimer = window.setTimeout(() => {
+      connectChatSocket();
+    }, 1500);
+  });
+
+  socket.addEventListener("error", () => {
+    setChatStatus("Connection error");
+  });
+}
+
 async function loadCurrentUser() {
   try {
     const response = await fetch(apiUrl("/api/v1/auth/me"), {
@@ -102,6 +239,7 @@ async function loadCurrentUser() {
     currentUser = null;
   }
   updateAuthButtons();
+  updateChatComposerState();
 }
 
 if (loginLinkedinButton) {
@@ -132,11 +270,33 @@ if (logoutButton) {
     } finally {
       currentUser = null;
       updateAuthButtons();
+      updateChatComposerState();
     }
   });
 }
 
 void loadCurrentUser();
+connectChatSocket();
+
+if (chatForm) {
+  chatForm.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!chatInput || !chatSocket || chatSocket.readyState !== WebSocket.OPEN) {
+      return;
+    }
+
+    const text = chatInput.value.trim();
+    if (!text || !currentUser) return;
+
+    chatSocket.send(
+      JSON.stringify({
+        type: "chat:send",
+        text
+      })
+    );
+    chatInput.value = "";
+  });
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
