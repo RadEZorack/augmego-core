@@ -34,6 +34,7 @@ const auth = createAuthController({
   apiUrl,
   onUserChange(user: CurrentUser | null) {
     chat.setCanPost(Boolean(user));
+    game.setLocalIdentity(user?.name ?? user?.email ?? "Guest", user?.avatarUrl ?? null);
   }
 });
 

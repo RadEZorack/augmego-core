@@ -27,5 +27,6 @@ export type PlayerPayload = {
   clientId: string;
   userId: string | null;
   name: string | null;
+  avatarUrl: string | null;
   state: PlayerState;
 };

@@ -142,6 +142,7 @@ export function registerRealtimeWs<
             socketUsers.get(clientId)?.name ??
             socketUsers.get(clientId)?.email ??
             null,
+          avatarUrl: socketUsers.get(clientId)?.avatarUrl ?? null,
           state
         }))
       });
@@ -203,6 +204,7 @@ export function registerRealtimeWs<
             clientId: ws.id,
             userId: user?.id ?? null,
             name: user?.name ?? user?.email ?? null,
+            avatarUrl: user?.avatarUrl ?? null,
             state
           }
         });

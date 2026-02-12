@@ -1,8 +1,15 @@
 import * as THREE from "three";
 import type { PlayerPayload, PlayerState } from "../lib/types";
 
+type PlayerBadge = {
+  sprite: any;
+  setIdentity: (name: string | null, avatarUrl: string | null) => void;
+  dispose: () => void;
+};
+
 type RemotePlayer = {
   mesh: any;
+  badge: PlayerBadge;
   targetPosition: any;
   targetRotationY: number;
 };
@@ -76,6 +83,141 @@ export function createGameScene(options: GameSceneOptions) {
 
   const targetPosition = localPlayer.position.clone();
 
+  function getInitials(name: string) {
+    const words = name.trim().split(/\s+/).filter(Boolean);
+    if (words.length === 0) return "?";
+    if (words.length === 1) return words[0]!.slice(0, 1).toUpperCase();
+    return (words[0]!.slice(0, 1) + words[1]!.slice(0, 1)).toUpperCase();
+  }
+
+  function drawRoundedRect(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    r: number
+  ) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  function createBadgeSprite(fallbackColor: any): PlayerBadge {
+    const canvas = document.createElement("canvas");
+    canvas.width = 256;
+    canvas.height = 128;
+
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Unable to create badge canvas context");
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(1.9, 0.95, 1);
+    sprite.position.set(0, playerRadius + 1.1, 0);
+    sprite.renderOrder = 10;
+
+    let identityName = "Player";
+    let identityAvatarUrl: string | null = null;
+    let drawVersion = 0;
+
+    const draw = (avatarImage?: HTMLImageElement) => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      drawRoundedRect(ctx, 12, 24, 232, 80, 20);
+      ctx.fillStyle = "rgba(8, 14, 24, 0.8)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(100, 186, 232, 0.5)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(52, 64, 24, 0, Math.PI * 2);
+      ctx.closePath();
+      ctx.clip();
+
+      if (avatarImage) {
+        ctx.drawImage(avatarImage, 28, 40, 48, 48);
+      } else {
+        ctx.fillStyle = `#${fallbackColor.getHexString()}`;
+        ctx.fillRect(28, 40, 48, 48);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = "bold 20px Space Grotesk, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(getInitials(identityName), 52, 64);
+      }
+
+      ctx.restore();
+
+      ctx.fillStyle = "#e9f5ff";
+      ctx.font = "600 22px Space Grotesk, sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      const label = identityName.length > 16 ? `${identityName.slice(0, 15)}…` : identityName;
+      ctx.fillText(label, 88, 64);
+
+      texture.needsUpdate = true;
+    };
+
+    function setIdentity(name: string | null, avatarUrl: string | null) {
+      identityName = name?.trim() || "Player";
+      identityAvatarUrl = avatarUrl;
+
+      const version = ++drawVersion;
+      if (!identityAvatarUrl) {
+        draw();
+        return;
+      }
+
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      image.onload = () => {
+        if (version !== drawVersion) return;
+        draw(image);
+      };
+      image.onerror = () => {
+        if (version !== drawVersion) return;
+        draw();
+      };
+      image.src = identityAvatarUrl;
+
+      draw();
+    }
+
+    function dispose() {
+      texture.dispose();
+      material.dispose();
+    }
+
+    setIdentity("Player", null);
+
+    return {
+      sprite,
+      setIdentity,
+      dispose
+    };
+  }
+
+  const localBadge = createBadgeSprite(new THREE.Color(0x2ce1ff));
+  localPlayer.add(localBadge.sprite);
+
   function getLocalState(): PlayerState {
     return {
       position: {
@@ -124,10 +266,11 @@ export function createGameScene(options: GameSceneOptions) {
     const existing = remotePlayers.get(clientId);
     if (existing) return existing;
 
+    const color = colorFromId(clientId);
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(playerRadius, 20, 20),
       new THREE.MeshStandardMaterial({
-        color: colorFromId(clientId),
+        color,
         roughness: 0.35,
         metalness: 0.05
       })
@@ -136,8 +279,12 @@ export function createGameScene(options: GameSceneOptions) {
     mesh.position.set(0, playerRadius, 0);
     scene.add(mesh);
 
+    const badge = createBadgeSprite(color);
+    mesh.add(badge.sprite);
+
     const player: RemotePlayer = {
       mesh,
+      badge,
       targetPosition: mesh.position.clone(),
       targetRotationY: 0
     };
@@ -159,6 +306,7 @@ export function createGameScene(options: GameSceneOptions) {
       material.dispose();
     }
 
+    player.badge.dispose();
     remotePlayers.delete(clientId);
   }
 
@@ -172,6 +320,7 @@ export function createGameScene(options: GameSceneOptions) {
       payload.state.position.z
     );
     remote.targetRotationY = payload.state.rotation.y;
+    remote.badge.setIdentity(payload.name, payload.avatarUrl);
   }
 
   function applyRemoteSnapshot(players: PlayerPayload[]) {
@@ -262,6 +411,10 @@ export function createGameScene(options: GameSceneOptions) {
     selfClientId = clientId;
   }
 
+  function setLocalIdentity(name: string | null, avatarUrl: string | null) {
+    localBadge.setIdentity(name, avatarUrl);
+  }
+
   function forceSyncLocalState() {
     maybeSendLocalState(true);
   }
@@ -269,6 +422,7 @@ export function createGameScene(options: GameSceneOptions) {
   return {
     start,
     setSelfClientId,
+    setLocalIdentity,
     forceSyncLocalState,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,
