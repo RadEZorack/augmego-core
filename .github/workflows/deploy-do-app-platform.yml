@@ -1,0 +1,123 @@
+name: Deploy to DigitalOcean App Platform
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "apps/core/**"
+      - "apps/web/**"
+      - ".github/workflows/deploy-do-app-platform.yml"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which app to deploy"
+        required: true
+        default: "both"
+        type: choice
+        options:
+          - both
+          - core
+          - web
+
+concurrency:
+  group: deploy-do-app-platform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.select.outputs.core }}
+      web: ${{ steps.select.outputs.web }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine changed apps (push)
+        if: github.event_name == 'push'
+        id: filter
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            core:
+              - 'apps/core/**'
+            web:
+              - 'apps/web/**'
+
+      - name: Determine selected apps (manual)
+        if: github.event_name == 'workflow_dispatch'
+        id: manual
+        run: |
+          if [ "${{ inputs.target }}" = "both" ] || [ "${{ inputs.target }}" = "core" ]; then
+            echo "core=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "core=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ "${{ inputs.target }}" = "both" ] || [ "${{ inputs.target }}" = "web" ]; then
+            echo "web=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "web=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Select outputs
+        id: select
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "core=${{ steps.filter.outputs.core }}" >> "$GITHUB_OUTPUT"
+            echo "web=${{ steps.filter.outputs.web }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "core=${{ steps.manual.outputs.core }}" >> "$GITHUB_OUTPUT"
+            echo "web=${{ steps.manual.outputs.web }}" >> "$GITHUB_OUTPUT"
+          fi
+
+  deploy-core:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: bun run --cwd apps/core db:generate
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_API_TOKEN }}
+
+      - name: Trigger core deployment
+        run: doctl apps create-deployment "${{ secrets.DO_CORE_APP_ID }}" --wait
+
+  deploy-web:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.web == 'true'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Build web app
+        run: bun run --cwd apps/web build
+
+      - name: Install doctl
+        uses: digitalocean/action-doctl@v2
+        with:
+          token: ${{ secrets.DO_API_TOKEN }}
+
+      - name: Trigger web deployment
+        run: doctl apps create-deployment "${{ secrets.DO_WEB_APP_ID }}" --wait
