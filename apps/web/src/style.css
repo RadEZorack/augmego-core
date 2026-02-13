@@ -396,11 +396,27 @@ canvas {
     max-height: 240px;
   }
 
+  .media-panel.minimized {
+    left: 10px;
+    right: auto;
+    bottom: 10px;
+    width: 140px;
+    max-height: none;
+  }
+
   .chat-panel {
     right: 10px;
     left: 10px;
     bottom: 10px;
     width: auto;
     height: min(300px, calc(100vh - 140px));
+  }
+
+  .chat-panel.minimized {
+    left: auto;
+    right: 10px;
+    bottom: 10px;
+    width: 170px;
+    height: auto;
   }
 }

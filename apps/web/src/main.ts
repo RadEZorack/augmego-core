@@ -43,6 +43,22 @@ function setupPanelToggle(
   });
 }
 
+function setPanelMinimized(
+  panel: HTMLElement | null,
+  button: HTMLButtonElement | null,
+  label: string,
+  minimized: boolean
+) {
+  if (!panel || !button) return;
+
+  panel.classList.toggle("minimized", minimized);
+  button.textContent = minimized ? "+" : "x";
+  button.setAttribute(
+    "aria-label",
+    minimized ? `Restore ${label}` : `Minimize ${label}`
+  );
+}
+
 const auth = createAuthController({
   elements: {
     loginLinkedinButton: document.getElementById(
@@ -218,6 +234,14 @@ chat.onSubmit((text) => {
 
 setupPanelToggle(mediaPanel, mediaMinimizeButton, "media");
 setupPanelToggle(chatPanel, chatMinimizeButton, "chat");
+
+const shouldMinimizeByDefault = window.matchMedia(
+  "(max-width: 700px) and (max-height: 850px)"
+).matches;
+if (shouldMinimizeByDefault) {
+  setPanelMinimized(mediaPanel, mediaMinimizeButton, "media", true);
+  setPanelMinimized(chatPanel, chatMinimizeButton, "chat", true);
+}
 
 auth.setup();
 media.setup();
