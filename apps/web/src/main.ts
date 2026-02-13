@@ -16,10 +16,32 @@ if (!app) {
   throw new Error("#app not found");
 }
 
+const mediaPanel = document.getElementById("media-panel") as HTMLElement | null;
+const chatPanel = document.getElementById("chat-panel") as HTMLElement | null;
+const mediaMinimizeButton = document.getElementById("media-minimize") as HTMLButtonElement | null;
+const chatMinimizeButton = document.getElementById("chat-minimize") as HTMLButtonElement | null;
+
 const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
 
 const apiUrl = createApiUrlResolver(apiBase);
+
+function setupPanelToggle(
+  panel: HTMLElement | null,
+  button: HTMLButtonElement | null,
+  label: string
+) {
+  if (!panel || !button) return;
+
+  button.addEventListener("click", () => {
+    const minimized = panel.classList.toggle("minimized");
+    button.textContent = minimized ? "+" : "x";
+    button.setAttribute(
+      "aria-label",
+      minimized ? `Restore ${label}` : `Minimize ${label}`
+    );
+  });
+}
 
 const auth = createAuthController({
   elements: {
@@ -193,6 +215,9 @@ chat.onSubmit((text) => {
   if (!auth.getCurrentUser()) return;
   realtime.sendChat(text);
 });
+
+setupPanelToggle(mediaPanel, mediaMinimizeButton, "media");
+setupPanelToggle(chatPanel, chatMinimizeButton, "chat");
 
 auth.setup();
 media.setup();

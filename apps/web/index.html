@@ -29,8 +29,11 @@
       </div>
     </header>
     <div id="app"></div>
-    <aside class="media-panel" aria-label="Media controls">
-      <div class="media-header">Media</div>
+    <aside class="media-panel" id="media-panel" aria-label="Media controls">
+      <div class="media-header">
+        <span>Media</span>
+        <button id="media-minimize" class="panel-close-button" type="button" aria-label="Minimize media">x</button>
+      </div>
       <div id="media-access-card" class="media-access-card">
         <div id="media-access-status" class="media-access-status">
           To join voice/video, grant camera and microphone access.
@@ -57,10 +60,11 @@
         <select id="audio-output-select" class="media-select"></select>
       </div>
     </aside>
-    <aside class="chat-panel" aria-label="Global chat">
+    <aside class="chat-panel" id="chat-panel" aria-label="Global chat">
       <div class="chat-header">
         <span>Global Chat</span>
         <span class="chat-status" id="chat-status">Connecting...</span>
+        <button id="chat-minimize" class="panel-close-button" type="button" aria-label="Minimize chat">x</button>
       </div>
       <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
       <form class="chat-form" id="chat-form">
