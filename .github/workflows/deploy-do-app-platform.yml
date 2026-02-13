@@ -77,17 +77,17 @@ jobs:
     needs: changes
     if: needs.changes.outputs.core == 'true'
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      # - name: Checkout
+      #   uses: actions/checkout@v4
 
-      - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+      # - name: Setup Bun
+      #   uses: oven-sh/setup-bun@v2
 
-      - name: Install dependencies
-        run: bun install --frozen-lockfile
+      # - name: Install dependencies
+      #   run: bun install --frozen-lockfile
 
-      - name: Generate Prisma Client
-        run: bun run --cwd apps/core db:generate
+      # - name: Generate Prisma Client
+      #   run: bun run --cwd apps/core db:generate
 
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
