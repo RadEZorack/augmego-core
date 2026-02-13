@@ -16,10 +16,12 @@ if (!app) {
   throw new Error("#app not found");
 }
 
-const mediaPanel = document.getElementById("media-panel") as HTMLElement | null;
-const chatPanel = document.getElementById("chat-panel") as HTMLElement | null;
-const mediaMinimizeButton = document.getElementById("media-minimize") as HTMLButtonElement | null;
-const chatMinimizeButton = document.getElementById("chat-minimize") as HTMLButtonElement | null;
+const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
+const dockMinimizeButton = document.getElementById("dock-minimize") as HTMLButtonElement | null;
+const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
+const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
+const chatPane = document.getElementById("pane-chat") as HTMLElement | null;
+const mediaPane = document.getElementById("pane-media") as HTMLElement | null;
 
 const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
@@ -41,6 +43,25 @@ function setupPanelToggle(
       minimized ? `Restore ${label}` : `Minimize ${label}`
     );
   });
+}
+
+function setupTabs() {
+  if (!chatTabButton || !mediaTabButton || !chatPane || !mediaPane) return;
+
+  const setActive = (tab: "chat" | "media") => {
+    const chatActive = tab === "chat";
+
+    chatTabButton.classList.toggle("active", chatActive);
+    mediaTabButton.classList.toggle("active", !chatActive);
+    chatTabButton.setAttribute("aria-selected", chatActive ? "true" : "false");
+    mediaTabButton.setAttribute("aria-selected", chatActive ? "false" : "true");
+
+    chatPane.classList.toggle("active", chatActive);
+    mediaPane.classList.toggle("active", !chatActive);
+  };
+
+  chatTabButton.addEventListener("click", () => setActive("chat"));
+  mediaTabButton.addEventListener("click", () => setActive("media"));
 }
 
 function setPanelMinimized(
@@ -232,15 +253,14 @@ chat.onSubmit((text) => {
   realtime.sendChat(text);
 });
 
-setupPanelToggle(mediaPanel, mediaMinimizeButton, "media");
-setupPanelToggle(chatPanel, chatMinimizeButton, "chat");
+setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
+setupTabs();
 
 const shouldMinimizeByDefault = window.matchMedia(
   "(max-width: 700px) and (max-height: 850px)"
 ).matches;
 if (shouldMinimizeByDefault) {
-  setPanelMinimized(mediaPanel, mediaMinimizeButton, "media", true);
-  setPanelMinimized(chatPanel, chatMinimizeButton, "chat", true);
+  setPanelMinimized(dockPanel, dockMinimizeButton, "panel", true);
 }
 
 auth.setup();

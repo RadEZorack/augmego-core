@@ -29,55 +29,66 @@
       </div>
     </header>
     <div id="app"></div>
-    <aside class="media-panel" id="media-panel" aria-label="Media controls">
-      <div class="media-header">
-        <span>Media</span>
-        <button id="media-minimize" class="panel-close-button" type="button" aria-label="Minimize media">x</button>
-      </div>
-      <div id="media-access-card" class="media-access-card">
-        <div id="media-access-status" class="media-access-status">
-          To join voice/video, grant camera and microphone access.
-        </div>
-        <div class="media-access-actions">
-          <button id="media-enable-button" class="media-button" type="button">
-            Enable Camera &amp; Mic
+    <aside class="dock-panel" id="dock-panel" aria-label="Communication panel">
+      <div class="dock-header">
+        <div class="dock-tabs" role="tablist" aria-label="Panel tabs">
+          <button id="tab-chat" class="dock-tab active" type="button" role="tab" aria-selected="true">
+            Global Chat
           </button>
-          <button id="media-muted-button" class="media-link-button" type="button">
-            Continue muted
+          <button id="tab-media" class="dock-tab" type="button" role="tab" aria-selected="false">
+            Media
           </button>
         </div>
+        <button id="dock-minimize" class="panel-close-button" type="button" aria-label="Minimize panel">x</button>
       </div>
-      <div class="media-actions">
-        <button id="mic-toggle" class="media-button" type="button">Mute Mic</button>
-        <button id="camera-toggle" class="media-button" type="button">Camera Off</button>
+
+      <div id="pane-chat" class="dock-pane active" role="tabpanel" aria-labelledby="tab-chat">
+        <div class="chat-header">
+          <span>Global Chat</span>
+          <span class="chat-status" id="chat-status">Connecting...</span>
+        </div>
+        <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
+        <form class="chat-form" id="chat-form">
+          <input
+            id="chat-input"
+            class="chat-input"
+            type="text"
+            maxlength="500"
+            placeholder="Sign in to chat"
+            autocomplete="off"
+          />
+          <button id="chat-send" class="chat-send" type="submit">Send</button>
+        </form>
       </div>
-      <div class="media-selectors">
-        <label class="media-label" for="audio-input-select">Mic Input</label>
-        <select id="audio-input-select" class="media-select"></select>
-        <label class="media-label" for="video-input-select">Camera Input</label>
-        <select id="video-input-select" class="media-select"></select>
-        <label class="media-label" for="audio-output-select">Audio Output</label>
-        <select id="audio-output-select" class="media-select"></select>
+
+      <div id="pane-media" class="dock-pane" role="tabpanel" aria-labelledby="tab-media">
+        <div class="media-header">Media</div>
+        <div id="media-access-card" class="media-access-card">
+          <div id="media-access-status" class="media-access-status">
+            To join voice/video, grant camera and microphone access.
+          </div>
+          <div class="media-access-actions">
+            <button id="media-enable-button" class="media-button" type="button">
+              Enable Camera &amp; Mic
+            </button>
+            <button id="media-muted-button" class="media-link-button" type="button">
+              Continue muted
+            </button>
+          </div>
+        </div>
+        <div class="media-actions">
+          <button id="mic-toggle" class="media-button" type="button">Mute Mic</button>
+          <button id="camera-toggle" class="media-button" type="button">Camera Off</button>
+        </div>
+        <div class="media-selectors">
+          <label class="media-label" for="audio-input-select">Mic Input</label>
+          <select id="audio-input-select" class="media-select"></select>
+          <label class="media-label" for="video-input-select">Camera Input</label>
+          <select id="video-input-select" class="media-select"></select>
+          <label class="media-label" for="audio-output-select">Audio Output</label>
+          <select id="audio-output-select" class="media-select"></select>
+        </div>
       </div>
-    </aside>
-    <aside class="chat-panel" id="chat-panel" aria-label="Global chat">
-      <div class="chat-header">
-        <span>Global Chat</span>
-        <span class="chat-status" id="chat-status">Connecting...</span>
-        <button id="chat-minimize" class="panel-close-button" type="button" aria-label="Minimize chat">x</button>
-      </div>
-      <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
-      <form class="chat-form" id="chat-form">
-        <input
-          id="chat-input"
-          class="chat-input"
-          type="text"
-          maxlength="500"
-          placeholder="Sign in to chat"
-          autocomplete="off"
-        />
-        <button id="chat-send" class="chat-send" type="submit">Send</button>
-      </form>
     </aside>
 
     <script type="module" src="/src/main.ts"></script>
