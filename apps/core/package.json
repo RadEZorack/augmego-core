@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "@elysiajs/cors": "^1.0.2",
+    "@elysiajs/node": "^1.4.4",
     "@prisma/client": "^5.20.0",
     "elysia": "^1.0.0",
     "jsonwebtoken": "^9.0.2"
