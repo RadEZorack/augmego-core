@@ -723,6 +723,8 @@ const api = new Elysia({ prefix: "/api/v1", adapter: node() })
     return jsonResponse({ ok: true }, { headers });
   });
 
+const port = Number(process.env.PORT) || 3000;
+
 const app = registerRealtimeWs(
   new Elysia({ adapter: node() })
     .use(
@@ -740,8 +742,6 @@ const app = registerRealtimeWs(
   }
 )
   .use(api)
-  .listen(3000);
+  .listen(port);
 
-console.log(
-  `Elysia server running at http://${app.server?.hostname}:${app.server?.port}`
-);
+console.log(`Elysia server running on port ${port}`);
