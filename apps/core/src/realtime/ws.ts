@@ -1,6 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { Elysia } from "elysia";
-import { resolveSessionUser, type SessionUser } from "../lib/session";
+import { resolveSessionUser, type SessionUser } from "../lib/session.js";
 
 type PlayerStateInput = {
   position?: { x?: number; y?: number; z?: number };

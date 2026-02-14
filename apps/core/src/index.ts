@@ -2,8 +2,8 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
-import { parseCookies, serializeCookie } from "./lib/cookies";
-import { registerRealtimeWs } from "./realtime/ws";
+import { parseCookies, serializeCookie } from "./lib/cookies.js";
+import { registerRealtimeWs } from "./realtime/ws.js";
 
 const prisma = new PrismaClient();
 

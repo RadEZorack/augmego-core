@@ -1,5 +1,5 @@
 import type { PrismaClient } from "@prisma/client";
-import { parseCookies } from "./cookies";
+import { parseCookies } from "./cookies.js";
 
 export type SessionUser = {
   id: string;
