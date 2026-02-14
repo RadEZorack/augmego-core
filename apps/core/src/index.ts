@@ -1,4 +1,5 @@
 import { Elysia } from "elysia";
+import { node } from '@elysiajs/node'
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
@@ -127,7 +128,7 @@ function jsonResponse(
   });
 }
 
-const api = new Elysia({ prefix: "/api/v1" })
+const api = new Elysia({ prefix: "/api/v1", adapter: node() })
   .get("/health", () => ({ ok: true }))
   .get("/examples", async () => {
     return prisma.example.findMany({
@@ -723,7 +724,7 @@ const api = new Elysia({ prefix: "/api/v1" })
   });
 
 const app = registerRealtimeWs(
-  new Elysia()
+  new Elysia({ adapter: node() })
     .use(
       cors({
         origin: WEB_ORIGINS.length ? WEB_ORIGINS : [webOrigin],
