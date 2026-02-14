@@ -9,6 +9,12 @@ COPY package.json bun.lock ./
 # Install dependencies
 RUN bun install --frozen-lockfile
 
+# Copy Prisma schema first (for layer caching)
+COPY prisma ./prisma
+
+# Generate Prisma client
+RUN bunx prisma generate
+
 # Copy source
 COPY . .
 
