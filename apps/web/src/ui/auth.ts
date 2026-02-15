@@ -55,7 +55,7 @@ export function createAuthController(options: AuthControllerOptions) {
       if (loginMenu) loginMenu.style.display = "none";
       if (loginToggleButton) loginToggleButton.style.display = "none";
       if (logoutButton) {
-        logoutButton.textContent = `Log out ${displayName(currentUser)}`;
+        logoutButton.textContent = "Log out";
         logoutButton.style.display = "inline-flex";
       }
       if (loginLinkedinButton) loginLinkedinButton.style.display = "none";
