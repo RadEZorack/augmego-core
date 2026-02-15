@@ -14,15 +14,32 @@
       </div>
       <div class="auth-actions">
         <img class="user-avatar" id="user-avatar" alt="" />
-        <button class="login-button" id="login-linkedin" type="button">
-          Login with LinkedIn
-        </button>
-        <button class="login-button google" id="login-google" type="button">
-          Login with Google
-        </button>
-        <button class="login-button apple" id="login-apple" type="button">
-          Login with Apple
-        </button>
+        <div class="login-menu" id="login-menu">
+          <button
+            class="login-button login-toggle"
+            id="login-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="login-options"
+          >
+            <span>Login</span>
+            <span class="login-chevron" aria-hidden="true">▾</span>
+          </button>
+          <div class="login-options" id="login-options">
+            <button class="login-button login-provider" id="login-linkedin" type="button">
+              <span class="provider-logo provider-logo-linkedin" aria-hidden="true">in</span>
+              <span>LinkedIn</span>
+            </button>
+            <button class="login-button google login-provider" id="login-google" type="button">
+              <span class="provider-logo provider-logo-google" aria-hidden="true">G</span>
+              <span>Google</span>
+            </button>
+            <button class="login-button apple login-provider" id="login-apple" type="button">
+              <span class="provider-logo provider-logo-apple" aria-hidden="true"></span>
+              <span>Apple</span>
+            </button>
+          </div>
+        </div>
         <button class="login-button" id="logout-button" type="button">
           Log out
         </button>

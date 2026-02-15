@@ -82,6 +82,85 @@ canvas {
   color: #ffffff;
 }
 
+.login-menu {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.login-toggle {
+  align-items: center;
+  gap: 8px;
+}
+
+.login-chevron {
+  display: inline-flex;
+  font-size: 0.75rem;
+  transition: transform 0.2s ease;
+}
+
+.login-options {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  opacity: 0;
+  transform: translateY(-6px);
+  pointer-events: none;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.login-provider {
+  align-items: center;
+  gap: 10px;
+  justify-content: flex-start;
+  min-width: 180px;
+}
+
+.provider-logo {
+  width: 18px;
+  height: 18px;
+  border-radius: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.provider-logo-linkedin {
+  background: #0a66c2;
+  color: #ffffff;
+  font-size: 0.62rem;
+  font-weight: 800;
+}
+
+.provider-logo-google {
+  background: #ffffff;
+  color: #4285f4;
+  border: 1px solid rgba(66, 133, 244, 0.3);
+}
+
+.provider-logo-apple {
+  background: #000000;
+  color: #ffffff;
+}
+
+.login-menu.expanded .login-options {
+  opacity: 1;
+  transform: translateY(0);
+  pointer-events: auto;
+}
+
+.login-menu.expanded .login-chevron {
+  transform: rotate(180deg);
+}
+
 #logout-button {
   display: none;
 }

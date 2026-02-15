@@ -1,6 +1,8 @@
 import type { CurrentUser } from "../lib/types";
 
 type AuthElements = {
+  loginMenu: HTMLElement | null;
+  loginToggleButton: HTMLButtonElement | null;
   loginLinkedinButton: HTMLButtonElement | null;
   loginGoogleButton: HTMLButtonElement | null;
   loginAppleButton: HTMLButtonElement | null;
@@ -16,6 +18,7 @@ type AuthControllerOptions = {
 
 export function createAuthController(options: AuthControllerOptions) {
   let currentUser: CurrentUser | null = null;
+  let menuExpanded = false;
 
   function displayName(user: CurrentUser) {
     return user.name ?? user.email ?? "User";
@@ -25,8 +28,21 @@ export function createAuthController(options: AuthControllerOptions) {
     options.onUserChange?.(currentUser);
   }
 
+  function setMenuExpanded(expanded: boolean) {
+    const { loginMenu, loginToggleButton } = options.elements;
+    menuExpanded = expanded;
+    if (loginMenu) {
+      loginMenu.classList.toggle("expanded", expanded);
+    }
+    if (loginToggleButton) {
+      loginToggleButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+  }
+
   function updateButtons() {
     const {
+      loginMenu,
+      loginToggleButton,
       loginLinkedinButton,
       loginGoogleButton,
       loginAppleButton,
@@ -35,6 +51,9 @@ export function createAuthController(options: AuthControllerOptions) {
     } = options.elements;
 
     if (currentUser) {
+      setMenuExpanded(false);
+      if (loginMenu) loginMenu.style.display = "none";
+      if (loginToggleButton) loginToggleButton.style.display = "none";
       if (logoutButton) {
         logoutButton.textContent = `Log out ${displayName(currentUser)}`;
         logoutButton.style.display = "inline-flex";
@@ -54,9 +73,12 @@ export function createAuthController(options: AuthControllerOptions) {
     }
 
     if (logoutButton) logoutButton.style.display = "none";
+    if (loginMenu) loginMenu.style.display = "flex";
+    if (loginToggleButton) loginToggleButton.style.display = "inline-flex";
     if (loginLinkedinButton) loginLinkedinButton.style.display = "inline-flex";
     if (loginGoogleButton) loginGoogleButton.style.display = "inline-flex";
     if (loginAppleButton) loginAppleButton.style.display = "inline-flex";
+    setMenuExpanded(false);
 
     if (userAvatar) {
       userAvatar.removeAttribute("src");
@@ -90,26 +112,48 @@ export function createAuthController(options: AuthControllerOptions) {
 
   function setup() {
     const {
+      loginMenu,
+      loginToggleButton,
       loginLinkedinButton,
       loginGoogleButton,
       loginAppleButton,
       logoutButton
     } = options.elements;
 
+    if (loginToggleButton) {
+      loginToggleButton.addEventListener("click", () => {
+        setMenuExpanded(!menuExpanded);
+      });
+    }
+
+    if (loginMenu) {
+      document.addEventListener("click", (event) => {
+        const target = event.target;
+        if (!(target instanceof Node)) return;
+        if (!menuExpanded) return;
+        if (!loginMenu.contains(target)) {
+          setMenuExpanded(false);
+        }
+      });
+    }
+
     if (loginLinkedinButton) {
       loginLinkedinButton.addEventListener("click", () => {
+        setMenuExpanded(false);
         window.location.href = options.apiUrl("/api/v1/auth/linkedin");
       });
     }
 
     if (loginGoogleButton) {
       loginGoogleButton.addEventListener("click", () => {
+        setMenuExpanded(false);
         window.location.href = options.apiUrl("/api/v1/auth/google");
       });
     }
 
     if (loginAppleButton) {
       loginAppleButton.addEventListener("click", () => {
+        setMenuExpanded(false);
         window.location.href = options.apiUrl("/api/v1/auth/apple");
       });
     }

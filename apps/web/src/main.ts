@@ -82,6 +82,8 @@ function setPanelMinimized(
 
 const auth = createAuthController({
   elements: {
+    loginMenu: document.getElementById("login-menu") as HTMLElement | null,
+    loginToggleButton: document.getElementById("login-toggle") as HTMLButtonElement | null,
     loginLinkedinButton: document.getElementById(
       "login-linkedin"
     ) as HTMLButtonElement | null,
