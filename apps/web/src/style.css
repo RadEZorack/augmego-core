@@ -249,13 +249,23 @@ canvas {
 }
 
 .dock-panel.minimized {
-  width: 190px;
   max-height: none;
   padding: 8px;
+  display: grid;
+  place-items: center;
 }
 
 .dock-panel.minimized .dock-pane {
   display: none;
+}
+
+.dock-panel.minimized .dock-tabs {
+  display: none;
+}
+
+.dock-panel.minimized .dock-header {
+  margin-bottom: 0;
+  justify-content: center;
 }
 
 .media-header {
@@ -690,7 +700,6 @@ canvas {
     left: auto;
     right: 10px;
     bottom: 10px;
-    width: 190px;
     max-height: none;
   }
 }
