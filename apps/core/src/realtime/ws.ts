@@ -231,6 +231,14 @@ function removeInvitesForUser(userId: string) {
   }
 }
 
+function hasPartyManagePermissions(membership: {
+  userId: string;
+  role: "MEMBER" | "MANAGER";
+  party: { leaderId: string };
+}) {
+  return membership.party.leaderId === membership.userId || membership.role === "MANAGER";
+}
+
 async function buildPartyStateForUser(prisma: PrismaClient, user: SessionUser) {
   cleanupExpiredInvites();
 
@@ -285,6 +293,7 @@ async function buildPartyStateForUser(prisma: PrismaClient, user: SessionUser) {
       leaderUserId: party.leaderId,
       members: party.members.map((member) => {
         const onlineClientId = getOnlineClientIdForUser(member.userId);
+        const isLeader = member.userId === party.leaderId;
         return {
           userId: member.user.id,
           name: member.user.name ?? member.user.email ?? "User",
@@ -292,7 +301,8 @@ async function buildPartyStateForUser(prisma: PrismaClient, user: SessionUser) {
           avatarUrl: member.user.avatarUrl,
           online: Boolean(onlineClientId),
           clientId: onlineClientId,
-          isLeader: member.userId === party.leaderId
+          isLeader,
+          role: isLeader ? "LEADER" : member.role
         };
       })
     },
@@ -354,7 +364,7 @@ function broadcastPartyPresenceForUsers(userIds: string[]) {
   }
 }
 
-async function ensureLeaderParty(prisma: PrismaClient, userId: string) {
+async function ensureManagerOrCreateLeaderParty(prisma: PrismaClient, userId: string) {
   const membership = await prisma.partyMember.findUnique({
     where: { userId },
     include: { party: true }
@@ -363,7 +373,7 @@ async function ensureLeaderParty(prisma: PrismaClient, userId: string) {
   if (membership) {
     return {
       partyId: membership.partyId,
-      isLeader: membership.party.leaderId === userId,
+      canManage: hasPartyManagePermissions(membership),
       created: false
     };
   }
@@ -387,7 +397,7 @@ async function ensureLeaderParty(prisma: PrismaClient, userId: string) {
 
   return {
     partyId: created.id,
-    isLeader: true,
+    canManage: true,
     created: true
   };
 }
@@ -650,9 +660,9 @@ export function registerRealtimeWs<
           return;
         }
 
-        const partyInfo = await ensureLeaderParty(options.prisma, user.id);
-        if (!partyInfo.isLeader) {
-          sendJson(ws, { type: "error", code: "NOT_PARTY_LEADER" });
+        const partyInfo = await ensureManagerOrCreateLeaderParty(options.prisma, user.id);
+        if (!partyInfo.canManage) {
+          sendJson(ws, { type: "error", code: "NOT_PARTY_MANAGER_OR_LEADER" });
           return;
         }
 
@@ -891,27 +901,32 @@ export function registerRealtimeWs<
           return;
         }
 
-        const leaderMembership = await options.prisma.partyMember.findUnique({
+        const actingMembership = await options.prisma.partyMember.findUnique({
           where: { userId: user.id },
           include: { party: true }
         });
-        if (!leaderMembership) {
+        if (!actingMembership) {
           sendJson(ws, { type: "error", code: "NOT_IN_PARTY" });
           return;
         }
 
-        if (leaderMembership.party.leaderId !== user.id) {
-          sendJson(ws, { type: "error", code: "NOT_PARTY_LEADER" });
+        if (!hasPartyManagePermissions(actingMembership)) {
+          sendJson(ws, { type: "error", code: "NOT_PARTY_MANAGER_OR_LEADER" });
           return;
         }
 
         const targetMembership = await options.prisma.partyMember.findUnique({
           where: { userId: targetUserId },
-          select: { partyId: true }
+          select: { partyId: true, role: true }
         });
 
-        if (!targetMembership || targetMembership.partyId !== leaderMembership.partyId) {
+        if (!targetMembership || targetMembership.partyId !== actingMembership.partyId) {
           sendJson(ws, { type: "error", code: "TARGET_NOT_IN_PARTY" });
+          return;
+        }
+
+        if (targetUserId === actingMembership.party.leaderId) {
+          sendJson(ws, { type: "error", code: "CANNOT_KICK_LEADER" });
           return;
         }
 
@@ -925,7 +940,7 @@ export function registerRealtimeWs<
                 targetUserId,
                 ...(
                   await options.prisma.partyMember.findMany({
-                    where: { partyId: leaderMembership.partyId },
+                    where: { partyId: actingMembership.partyId },
                     select: { userId: true }
                   })
                 ).map((member) => member.userId)
@@ -947,6 +962,80 @@ export function registerRealtimeWs<
         await sendPartyStateToUsers(options.prisma, affectedUsers);
         broadcastPartyPresenceForUsers(affectedUsers.map((item) => item.id));
 
+        return;
+      }
+
+      if (parsed.type === "party:promote") {
+        const user = socketUsers.get(ws.id);
+        if (!user) {
+          sendJson(ws, { type: "error", code: "AUTH_REQUIRED" });
+          return;
+        }
+
+        const targetUserId =
+          typeof parsed.targetUserId === "string" ? parsed.targetUserId : "";
+        if (!targetUserId || targetUserId === user.id) {
+          sendJson(ws, { type: "error", code: "INVALID_PROMOTION_TARGET" });
+          return;
+        }
+
+        const actingMembership = await options.prisma.partyMember.findUnique({
+          where: { userId: user.id },
+          include: { party: true }
+        });
+        if (!actingMembership) {
+          sendJson(ws, { type: "error", code: "NOT_IN_PARTY" });
+          return;
+        }
+
+        if (actingMembership.party.leaderId !== user.id) {
+          sendJson(ws, { type: "error", code: "NOT_PARTY_LEADER" });
+          return;
+        }
+
+        const targetMembership = await options.prisma.partyMember.findUnique({
+          where: { userId: targetUserId },
+          select: { userId: true, partyId: true, role: true }
+        });
+        if (!targetMembership || targetMembership.partyId !== actingMembership.partyId) {
+          sendJson(ws, { type: "error", code: "TARGET_NOT_IN_PARTY" });
+          return;
+        }
+
+        if (targetMembership.role === "MANAGER") {
+          sendJson(ws, { type: "error", code: "TARGET_ALREADY_MANAGER" });
+          return;
+        }
+
+        await options.prisma.partyMember.update({
+          where: { userId: targetUserId },
+          data: { role: "MANAGER" }
+        });
+
+        const affectedUsers = await options.prisma.user.findMany({
+          where: {
+            id: {
+              in: [
+                user.id,
+                targetUserId,
+                ...(
+                  await options.prisma.partyMember.findMany({
+                    where: { partyId: actingMembership.partyId },
+                    select: { userId: true }
+                  })
+                ).map((member) => member.userId)
+              ]
+            }
+          },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        });
+
+        await sendPartyStateToUsers(options.prisma, affectedUsers);
         return;
       }
 

@@ -27,6 +27,7 @@ type PartyControllerOptions = {
   onInviteResponse: (inviteId: string, accept: boolean) => void;
   onLeave: () => void;
   onKick: (userId: string) => void;
+  onPromote: (userId: string) => void;
 };
 
 export function createPartyController(options: PartyControllerOptions) {
@@ -39,6 +40,14 @@ export function createPartyController(options: PartyControllerOptions) {
   let inviteTimer: number | null = null;
 
   function canManageParty() {
+    if (!currentUser) return false;
+    if (!state.party) return false;
+    const me = state.party.members.find((member) => member.userId === currentUser.id);
+    if (!me) return false;
+    return me.role === "LEADER" || me.role === "MANAGER";
+  }
+
+  function isLeader() {
     if (!currentUser) return false;
     if (!state.party) return false;
     return state.party.leaderUserId === currentUser.id;
@@ -135,7 +144,7 @@ export function createPartyController(options: PartyControllerOptions) {
 
       const label = document.createElement("div");
       label.className = "party-member-label";
-      label.textContent = `${member.isLeader ? "Leader" : "Member"}: ${member.name}`;
+      label.textContent = `${member.role}: ${member.name}`;
 
       const meta = document.createElement("div");
       meta.className = "party-member-meta";
@@ -150,6 +159,17 @@ export function createPartyController(options: PartyControllerOptions) {
         !member.isLeader &&
         member.userId !== currentUser?.id
       ) {
+        if (isLeader() && member.role === "MEMBER") {
+          const promoteButton = document.createElement("button");
+          promoteButton.className = "party-secondary-button";
+          promoteButton.type = "button";
+          promoteButton.textContent = "Promote";
+          promoteButton.addEventListener("click", () => {
+            options.onPromote(member.userId);
+          });
+          row.appendChild(promoteButton);
+        }
+
         const kickButton = document.createElement("button");
         kickButton.className = "party-secondary-button";
         kickButton.type = "button";
@@ -207,7 +227,7 @@ export function createPartyController(options: PartyControllerOptions) {
         ? "Already in party"
         : canInvite()
           ? "Send invite"
-          : "Only the leader can invite";
+          : "Only leaders and managers can invite";
 
       inviteButton.addEventListener("click", () => {
         options.onInviteUser(result.id);
@@ -282,8 +302,10 @@ export function createPartyController(options: PartyControllerOptions) {
     state = nextState;
     if (!state.party) {
       setStatus("No party");
-    } else if (canManageParty()) {
+    } else if (isLeader()) {
       setStatus(`Party leader (${state.party.members.length} members)`);
+    } else if (canManageParty()) {
+      setStatus(`Party manager (${state.party.members.length} members)`);
     } else {
       setStatus(`In party (${state.party.members.length} members)`);
     }
@@ -312,6 +334,6 @@ export function createPartyController(options: PartyControllerOptions) {
     setNotice,
     canInvite,
     getPartyId: () => state.party?.id ?? null,
-    isLeader: () => canManageParty()
+    isLeader
   };
 }

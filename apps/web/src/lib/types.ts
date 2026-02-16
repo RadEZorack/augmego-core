@@ -48,6 +48,7 @@ export type PartyMember = {
   online: boolean;
   clientId: string | null;
   isLeader: boolean;
+  role: "LEADER" | "MANAGER" | "MEMBER";
 };
 
 export type PartyState = {

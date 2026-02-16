@@ -323,6 +323,9 @@ const party = createPartyController({
   },
   onKick(userId) {
     realtime.sendPartyKick(userId);
+  },
+  onPromote(userId) {
+    realtime.sendPartyPromote(userId);
   }
 });
 
@@ -408,12 +411,15 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onError(code, payload) {
     const partyErrorCodes = new Set([
       "NOT_PARTY_LEADER",
+      "NOT_PARTY_MANAGER_OR_LEADER",
       "TARGET_ALREADY_IN_PARTY",
+      "TARGET_ALREADY_MANAGER",
       "TARGET_OFFLINE",
       "INVITE_COOLDOWN",
       "NOT_IN_PARTY",
       "INVITE_EXPIRED",
-      "PARTY_MEDIA_RESTRICTED"
+      "PARTY_MEDIA_RESTRICTED",
+      "CANNOT_KICK_LEADER"
     ]);
 
     if (partyErrorCodes.has(code)) {

@@ -266,6 +266,17 @@ export function createRealtimeClient(
     return true;
   }
 
+  function sendPartyPromote(targetUserId: string) {
+    if (!isOpen() || !socket) return false;
+    socket.send(
+      JSON.stringify({
+        type: "party:promote",
+        targetUserId
+      })
+    );
+    return true;
+  }
+
   function sendPartyChat(text: string) {
     if (!isOpen() || !socket) return false;
     socket.send(
@@ -288,6 +299,7 @@ export function createRealtimeClient(
     sendPartyInviteResponse,
     sendPartyLeave,
     sendPartyKick,
+    sendPartyPromote,
     sendPartyChat
   };
 }
