@@ -3,6 +3,7 @@ import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
 import { parseCookies, serializeCookie } from "./lib/cookies.js";
+import { resolveSessionUser } from "./lib/session.js";
 import { registerRealtimeWs } from "./realtime/ws.js";
 
 const prisma = new PrismaClient();
@@ -696,6 +697,38 @@ const api = new Elysia({ prefix: "/api/v1" })
         avatarUrl: user.avatarUrl
       }
     });
+  })
+  .get("/party/search", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const url = new URL(request.url);
+    const query = url.searchParams.get("query")?.trim() ?? "";
+    if (query.length < 2) {
+      return jsonResponse({ results: [] });
+    }
+
+    const results = await prisma.user.findMany({
+      where: {
+        id: { not: user.id },
+        OR: [
+          { name: { contains: query, mode: "insensitive" } },
+          { email: { contains: query, mode: "insensitive" } }
+        ]
+      },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatarUrl: true
+      }
+    });
+
+    return jsonResponse({ results });
   })
   .post("/auth/logout", async ({ request }) => {
     const cookies = parseCookies(request.headers.get("cookie"));

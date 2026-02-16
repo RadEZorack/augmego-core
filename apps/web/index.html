@@ -67,6 +67,9 @@
           <button id="tab-chat" class="dock-tab active" type="button" role="tab" aria-selected="true">
             Global Chat
           </button>
+          <button id="tab-party" class="dock-tab" type="button" role="tab" aria-selected="false">
+            Party
+          </button>
           <button id="tab-media" class="dock-tab" type="button" role="tab" aria-selected="false">
             Media
           </button>
@@ -120,8 +123,62 @@
           <label class="media-label" for="audio-output-select">Audio Output</label>
           <select id="audio-output-select" class="media-select"></select>
         </div>
+        <div class="volume-section">
+          <div class="volume-title">Remote Volume</div>
+          <div id="remote-volume-list" class="volume-list"></div>
+        </div>
+      </div>
+
+      <div id="pane-party" class="dock-pane" role="tabpanel" aria-labelledby="tab-party">
+        <div class="party-status" id="party-status">No party</div>
+        <div class="party-search">
+          <input
+            id="party-search-input"
+            class="party-search-input"
+            type="text"
+            placeholder="Search name or email"
+            autocomplete="off"
+          />
+          <button id="party-search-button" class="party-search-button" type="button">Find</button>
+        </div>
+        <div class="party-search-results" id="party-search-results"></div>
+        <div class="party-members-title">Party Members</div>
+        <div class="party-members" id="party-members"></div>
+        <button id="party-leave-button" class="party-leave-button" type="button" disabled>
+          Leave Party
+        </button>
+
+        <div class="chat-header">
+          <span>Party Chat</span>
+          <span class="chat-status" id="party-chat-status">Join a party to chat</span>
+        </div>
+        <div class="chat-log" id="party-chat-log" role="log" aria-live="polite"></div>
+        <form class="chat-form" id="party-chat-form">
+          <input
+            id="party-chat-input"
+            class="chat-input"
+            type="text"
+            maxlength="500"
+            placeholder="Join a party to chat"
+            autocomplete="off"
+          />
+          <button id="party-chat-send" class="chat-send" type="submit">Send</button>
+        </form>
       </div>
     </aside>
+
+    <div id="party-invite-modal" class="party-invite-modal" role="dialog" aria-modal="true">
+      <div class="party-invite-card">
+        <div class="party-invite-title">Party Invite</div>
+        <div id="party-invite-text" class="party-invite-text"></div>
+        <div class="party-invite-actions">
+          <button id="party-invite-accept" class="party-search-button" type="button">Accept</button>
+          <button id="party-invite-decline" class="party-secondary-button" type="button">
+            Decline
+          </button>
+        </div>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

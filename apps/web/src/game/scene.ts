@@ -13,6 +13,7 @@ type PlayerBadge = {
 type RemotePlayer = {
   mesh: any;
   badge: PlayerBadge;
+  inviteButton: any;
   targetPosition: any;
   targetRotationY: number;
 };
@@ -22,6 +23,8 @@ type GameSceneOptions = {
   playerRadius?: number;
   playerSpeed?: number;
   onLocalStateChange?: (state: PlayerState, force: boolean) => void;
+  onRemoteInviteClick?: (clientId: string) => void;
+  canShowRemoteInvite?: (clientId: string) => boolean;
 };
 
 export function createGameScene(options: GameSceneOptions) {
@@ -304,6 +307,40 @@ export function createGameScene(options: GameSceneOptions) {
     };
   }
 
+  function createInviteButtonSprite() {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64;
+    canvas.height = 64;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Unable to create invite button canvas context");
+
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.beginPath();
+    ctx.arc(32, 32, 28, 0, Math.PI * 2);
+    ctx.fillStyle = "rgba(9, 43, 34, 0.9)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(92, 245, 174, 0.95)";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.fillStyle = "#dffff2";
+    ctx.font = "600 38px Space Grotesk, sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("+", 32, 34);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(material);
+    sprite.scale.set(0.38, 0.38, 1);
+    sprite.position.set(0.86, playerRadius + 1.35, 0);
+    sprite.renderOrder = 12;
+    return sprite;
+  }
+
   const localBadge = createBadgeSprite(new THREE.Color(0x2ce1ff));
   localPlayer.add(localBadge.sprite);
 
@@ -370,10 +407,18 @@ export function createGameScene(options: GameSceneOptions) {
 
     const badge = createBadgeSprite(color);
     mesh.add(badge.sprite);
+    const inviteButton = createInviteButtonSprite();
+    inviteButton.visible = false;
+    inviteButton.userData = {
+      type: "invite-button",
+      clientId
+    };
+    mesh.add(inviteButton);
 
     const player: RemotePlayer = {
       mesh,
       badge,
+      inviteButton,
       targetPosition: mesh.position.clone(),
       targetRotationY: 0
     };
@@ -396,6 +441,11 @@ export function createGameScene(options: GameSceneOptions) {
     }
 
     player.badge.dispose();
+
+    const inviteMaterial = player.inviteButton.material;
+    if (inviteMaterial.map) inviteMaterial.map.dispose();
+    inviteMaterial.dispose();
+
     remotePlayers.delete(clientId);
   }
 
@@ -434,6 +484,9 @@ export function createGameScene(options: GameSceneOptions) {
       remote.mesh.position.lerp(remote.targetPosition, blend);
       remote.mesh.rotation.y +=
         (remote.targetRotationY - remote.mesh.rotation.y) * blend;
+      remote.inviteButton.visible = options.canShowRemoteInvite?.(
+        remote.inviteButton.userData.clientId
+      ) ?? false;
       remote.badge.renderFrame();
     }
   }
@@ -462,6 +515,19 @@ export function createGameScene(options: GameSceneOptions) {
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 
     raycaster.setFromCamera(pointer, camera);
+    const inviteIntersections = raycaster.intersectObjects(
+      [...remotePlayers.values()].map((remote) => remote.inviteButton),
+      false
+    );
+    const inviteHit = inviteIntersections[0]?.object;
+    if (
+      inviteHit?.userData?.type === "invite-button" &&
+      typeof inviteHit.userData.clientId === "string"
+    ) {
+      options.onRemoteInviteClick?.(inviteHit.userData.clientId);
+      return;
+    }
+
     const intersections = raycaster.intersectObject(floor, false);
     if (intersections.length === 0) return;
 

@@ -1,5 +1,6 @@
 import type {
   ChatMessage,
+  PartyState,
   PlayerMediaPayload,
   PlayerPayload,
   PlayerState
@@ -15,8 +16,14 @@ type RealtimeEvents = {
   onPlayerUpdate: (player: PlayerPayload) => void;
   onPlayerMedia: (player: PlayerMediaPayload) => void;
   onPlayerLeave: (clientId: string) => void;
+  onPlayerParty: (clientId: string, partyId: string | null) => void;
+  onPartyState: (state: PartyState) => void;
+  onPartyInvite: (invite: PartyState["pendingInvites"][number]) => void;
+  onPartyChatHistory: (messages: ChatMessage[]) => void;
+  onPartyChatMessage: (message: ChatMessage) => void;
   onRtcSignal: (fromClientId: string, signal: RtcSignalPayload) => void;
   onAuthRequired: () => void;
+  onError: (code: string, payload: Record<string, unknown>) => void;
 };
 
 export function createRealtimeClient(
@@ -61,6 +68,10 @@ export function createRealtimeClient(
         players?: PlayerPayload[];
         fromClientId?: string;
         signal?: RtcSignalPayload;
+        party?: PartyState["party"];
+        pendingInvites?: PartyState["pendingInvites"];
+        invite?: PartyState["pendingInvites"][number];
+        partyId?: string | null;
       };
 
       if (data.type === "session:info") {
@@ -98,13 +109,44 @@ export function createRealtimeClient(
         return;
       }
 
+      if (data.type === "player:party" && data.clientId) {
+        events.onPlayerParty(data.clientId, data.partyId ?? null);
+        return;
+      }
+
+      if (data.type === "party:state") {
+        events.onPartyState({
+          party: data.party ?? null,
+          pendingInvites: Array.isArray(data.pendingInvites) ? data.pendingInvites : []
+        });
+        return;
+      }
+
+      if (data.type === "party:invite" && data.invite) {
+        events.onPartyInvite(data.invite);
+        return;
+      }
+
+      if (data.type === "party:chat:history" && Array.isArray(data.messages)) {
+        events.onPartyChatHistory(data.messages);
+        return;
+      }
+
+      if (data.type === "party:chat:new" && data.message) {
+        events.onPartyChatMessage(data.message);
+        return;
+      }
+
       if (data.type === "rtc:signal" && data.fromClientId && data.signal) {
         events.onRtcSignal(data.fromClientId, data.signal);
         return;
       }
 
-      if (data.type === "error" && data.code === "AUTH_REQUIRED") {
-        events.onAuthRequired();
+      if (data.type === "error" && typeof data.code === "string") {
+        if (data.code === "AUTH_REQUIRED") {
+          events.onAuthRequired();
+        }
+        events.onError(data.code, data as Record<string, unknown>);
       }
     });
 
@@ -180,12 +222,72 @@ export function createRealtimeClient(
     return true;
   }
 
+  function sendPartyInvite(target: { targetUserId?: string; targetClientId?: string }) {
+    if (!isOpen() || !socket) return false;
+    socket.send(
+      JSON.stringify({
+        type: "party:invite",
+        ...target
+      })
+    );
+    return true;
+  }
+
+  function sendPartyInviteResponse(inviteId: string, accept: boolean) {
+    if (!isOpen() || !socket) return false;
+    socket.send(
+      JSON.stringify({
+        type: "party:invite:respond",
+        inviteId,
+        accept
+      })
+    );
+    return true;
+  }
+
+  function sendPartyLeave() {
+    if (!isOpen() || !socket) return false;
+    socket.send(
+      JSON.stringify({
+        type: "party:leave"
+      })
+    );
+    return true;
+  }
+
+  function sendPartyKick(targetUserId: string) {
+    if (!isOpen() || !socket) return false;
+    socket.send(
+      JSON.stringify({
+        type: "party:kick",
+        targetUserId
+      })
+    );
+    return true;
+  }
+
+  function sendPartyChat(text: string) {
+    if (!isOpen() || !socket) return false;
+    socket.send(
+      JSON.stringify({
+        type: "party:chat:send",
+        text
+      })
+    );
+    return true;
+  }
+
   return {
     connect,
     isOpen,
     sendChat,
     sendPlayerUpdate,
     sendRtcSignal,
-    sendPlayerMedia
+    sendPlayerMedia,
+    sendPartyInvite,
+    sendPartyInviteResponse,
+    sendPartyLeave,
+    sendPartyKick,
+    sendPartyChat
   };
 }

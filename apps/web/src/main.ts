@@ -3,12 +3,13 @@ import "./style.css";
 
 import { createGameScene } from "./game/scene";
 import { createApiUrlResolver, resolveWsUrl } from "./lib/urls";
-import type { CurrentUser } from "./lib/types";
+import type { CurrentUser, PartyState, PlayerPayload } from "./lib/types";
 import { createRealtimeClient } from "./network/realtime";
 import { createWebRtcController } from "./network/webrtc";
 import { createAuthController } from "./ui/auth";
 import { createChatController } from "./ui/chat";
 import { createMediaController } from "./ui/media";
+import { createPartyController } from "./ui/party";
 
 const app = document.getElementById("app");
 
@@ -19,8 +20,10 @@ if (!app) {
 const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
 const dockMinimizeButton = document.getElementById("dock-minimize") as HTMLButtonElement | null;
 const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
+const partyTabButton = document.getElementById("tab-party") as HTMLButtonElement | null;
 const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
 const chatPane = document.getElementById("pane-chat") as HTMLElement | null;
+const partyPane = document.getElementById("pane-party") as HTMLElement | null;
 const mediaPane = document.getElementById("pane-media") as HTMLElement | null;
 
 const apiBase = import.meta.env.VITE_API_BASE_URL;
@@ -46,21 +49,31 @@ function setupPanelToggle(
 }
 
 function setupTabs() {
-  if (!chatTabButton || !mediaTabButton || !chatPane || !mediaPane) return;
+  if (
+    !chatTabButton ||
+    !partyTabButton ||
+    !mediaTabButton ||
+    !chatPane ||
+    !partyPane ||
+    !mediaPane
+  ) {
+    return;
+  }
 
-  const setActive = (tab: "chat" | "media") => {
-    const chatActive = tab === "chat";
+  const tabs = [chatTabButton, partyTabButton, mediaTabButton];
+  const panes = [chatPane, partyPane, mediaPane];
 
-    chatTabButton.classList.toggle("active", chatActive);
-    mediaTabButton.classList.toggle("active", !chatActive);
-    chatTabButton.setAttribute("aria-selected", chatActive ? "true" : "false");
-    mediaTabButton.setAttribute("aria-selected", chatActive ? "false" : "true");
-
-    chatPane.classList.toggle("active", chatActive);
-    mediaPane.classList.toggle("active", !chatActive);
+  const setActive = (tab: "chat" | "party" | "media") => {
+    const activeIndex = tab === "chat" ? 0 : tab === "party" ? 1 : 2;
+    for (let i = 0; i < tabs.length; i += 1) {
+      tabs[i]!.classList.toggle("active", i === activeIndex);
+      tabs[i]!.setAttribute("aria-selected", i === activeIndex ? "true" : "false");
+      panes[i]!.classList.toggle("active", i === activeIndex);
+    }
   };
 
   chatTabButton.addEventListener("click", () => setActive("chat"));
+  partyTabButton.addEventListener("click", () => setActive("party"));
   mediaTabButton.addEventListener("click", () => setActive("media"));
 }
 
@@ -80,6 +93,106 @@ function setPanelMinimized(
   );
 }
 
+const chat = createChatController({
+  chatLog: document.getElementById("chat-log") as HTMLDivElement | null,
+  chatStatus: document.getElementById("chat-status") as HTMLSpanElement | null,
+  chatInput: document.getElementById("chat-input") as HTMLInputElement | null,
+  chatSendButton: document.getElementById("chat-send") as HTMLButtonElement | null,
+  chatForm: document.getElementById("chat-form") as HTMLFormElement | null
+});
+
+const partyChat = createChatController({
+  chatLog: document.getElementById("party-chat-log") as HTMLDivElement | null,
+  chatStatus: document.getElementById("party-chat-status") as HTMLSpanElement | null,
+  chatInput: document.getElementById("party-chat-input") as HTMLInputElement | null,
+  chatSendButton: document.getElementById("party-chat-send") as HTMLButtonElement | null,
+  chatForm: document.getElementById("party-chat-form") as HTMLFormElement | null
+});
+
+let selfClientId: string | null = null;
+let partyState: PartyState = {
+  party: null,
+  pendingInvites: []
+};
+
+const playersByClientId = new Map<string, PlayerPayload>();
+const knownRemoteVolumeIds = new Set<string>();
+
+function canShareMediaWithParty(partyId: string | null | undefined) {
+  const ownPartyId = partyState.party?.id ?? null;
+  const remotePartyId = partyId ?? null;
+
+  if (!ownPartyId && !remotePartyId) return true;
+  return Boolean(ownPartyId && remotePartyId && ownPartyId === remotePartyId);
+}
+
+function resolvePlayerLabel(player: PlayerPayload) {
+  return player.name?.trim() || player.userId || `Player ${player.clientId.slice(0, 6)}`;
+}
+
+function syncMediaPeersAndVolumes() {
+  const allowedPeerIds: string[] = [];
+
+  for (const [clientId, player] of playersByClientId.entries()) {
+    if (clientId === selfClientId) continue;
+
+    if (canShareMediaWithParty(player.partyId)) {
+      allowedPeerIds.push(clientId);
+      knownRemoteVolumeIds.add(clientId);
+      media.upsertRemoteVolume(
+        clientId,
+        resolvePlayerLabel(player),
+        webrtc.getRemoteVolume(clientId)
+      );
+    } else {
+      knownRemoteVolumeIds.delete(clientId);
+      media.removeRemoteVolume(clientId);
+    }
+  }
+
+  webrtc.syncPeers(allowedPeerIds);
+
+  for (const clientId of [...knownRemoteVolumeIds]) {
+    if (!playersByClientId.has(clientId)) {
+      knownRemoteVolumeIds.delete(clientId);
+      media.removeRemoteVolume(clientId);
+    }
+  }
+}
+
+function canInviteClient(clientId: string) {
+  const user = auth.getCurrentUser();
+  const player = playersByClientId.get(clientId);
+  if (!user || !player?.userId) return false;
+  if (clientId === selfClientId) return false;
+
+  if (!party.canInvite()) return false;
+
+  const existingMemberIds = new Set(
+    partyState.party?.members.map((member) => member.userId) ?? []
+  );
+
+  return !existingMemberIds.has(player.userId);
+}
+
+function inviteClient(clientId: string) {
+  if (!canInviteClient(clientId)) return;
+  realtime.sendPartyInvite({ targetClientId: clientId });
+}
+
+const game = createGameScene({
+  mount: app,
+  onLocalStateChange(state) {
+    realtime.sendPlayerUpdate(state);
+  },
+  onRemoteInviteClick(clientId) {
+    inviteClient(clientId);
+  },
+  canShowRemoteInvite(clientId) {
+    return canInviteClient(clientId);
+  }
+});
+
 const auth = createAuthController({
   elements: {
     loginMenu: document.getElementById("login-menu") as HTMLElement | null,
@@ -98,25 +211,12 @@ const auth = createAuthController({
   onUserChange(user: CurrentUser | null) {
     chat.setCanPost(Boolean(user));
     game.setLocalIdentity(user?.name ?? user?.email ?? "Guest", user?.avatarUrl ?? null);
+    party.setCurrentUser(user);
+
+    const canPartyChat = Boolean(user) && Boolean(partyState.party);
+    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a party to chat");
   }
 });
-
-const chat = createChatController({
-  chatLog: document.getElementById("chat-log") as HTMLDivElement | null,
-  chatStatus: document.getElementById("chat-status") as HTMLSpanElement | null,
-  chatInput: document.getElementById("chat-input") as HTMLInputElement | null,
-  chatSendButton: document.getElementById("chat-send") as HTMLButtonElement | null,
-  chatForm: document.getElementById("chat-form") as HTMLFormElement | null
-});
-
-const game = createGameScene({
-  mount: app,
-  onLocalStateChange(state) {
-    realtime.sendPlayerUpdate(state);
-  }
-});
-
-const knownRemoteVolumeIds = new Set<string>();
 
 const webrtc = createWebRtcController({
   sendSignal(toClientId, signal) {
@@ -176,11 +276,62 @@ const media = createMediaController({
   }
 });
 
+const party = createPartyController({
+  elements: {
+    status: document.getElementById("party-status") as HTMLDivElement | null,
+    searchInput: document.getElementById("party-search-input") as HTMLInputElement | null,
+    searchButton: document.getElementById("party-search-button") as HTMLButtonElement | null,
+    searchResults: document.getElementById("party-search-results") as HTMLDivElement | null,
+    memberList: document.getElementById("party-members") as HTMLDivElement | null,
+    leaveButton: document.getElementById("party-leave-button") as HTMLButtonElement | null,
+    inviteModal: document.getElementById("party-invite-modal") as HTMLDivElement | null,
+    inviteModalText: document.getElementById("party-invite-text") as HTMLDivElement | null,
+    inviteAcceptButton: document.getElementById("party-invite-accept") as HTMLButtonElement | null,
+    inviteDeclineButton: document.getElementById("party-invite-decline") as HTMLButtonElement | null
+  },
+  async onSearch(query) {
+    const response = await fetch(
+      apiUrl(`/api/v1/party/search?query=${encodeURIComponent(query)}`),
+      {
+        credentials: "include"
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error("Party search failed");
+    }
+
+    const payload = (await response.json()) as {
+      results: Array<{
+        id: string;
+        name: string | null;
+        email: string | null;
+        avatarUrl: string | null;
+      }>;
+    };
+
+    return payload.results;
+  },
+  onInviteUser(userId) {
+    realtime.sendPartyInvite({ targetUserId: userId });
+  },
+  onInviteResponse(inviteId, accept) {
+    realtime.sendPartyInviteResponse(inviteId, accept);
+  },
+  onLeave() {
+    realtime.sendPartyLeave();
+  },
+  onKick(userId) {
+    realtime.sendPartyKick(userId);
+  }
+});
+
 const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onStatus(status) {
     chat.setStatus(status);
   },
   onSessionInfo(clientId) {
+    selfClientId = clientId;
     game.setSelfClientId(clientId);
     webrtc.setSelfClientId(clientId);
     if (clientId) {
@@ -194,40 +345,18 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     chat.appendMessage(message);
   },
   onPlayerSnapshot(players) {
-    game.applyRemoteSnapshot(players);
-    webrtc.syncPeers(players.map((player) => player.clientId));
-    const activeIds = new Set<string>();
+    playersByClientId.clear();
     for (const player of players) {
-      activeIds.add(player.clientId);
-      knownRemoteVolumeIds.add(player.clientId);
-      const label =
-        player.name?.trim() ||
-        player.userId ||
-        `Player ${player.clientId.slice(0, 6)}`;
-      media.upsertRemoteVolume(
-        player.clientId,
-        label,
-        webrtc.getRemoteVolume(player.clientId)
-      );
+      playersByClientId.set(player.clientId, player);
     }
-    for (const clientId of [...knownRemoteVolumeIds]) {
-      if (!activeIds.has(clientId)) {
-        knownRemoteVolumeIds.delete(clientId);
-        media.removeRemoteVolume(clientId);
-      }
-    }
+
+    game.applyRemoteSnapshot(players);
+    syncMediaPeersAndVolumes();
   },
   onPlayerUpdate(player) {
+    playersByClientId.set(player.clientId, player);
     game.applyRemoteUpdate(player);
-    webrtc.upsertPeer(player.clientId);
-    knownRemoteVolumeIds.add(player.clientId);
-    const label =
-      player.name?.trim() || player.userId || `Player ${player.clientId.slice(0, 6)}`;
-    media.upsertRemoteVolume(
-      player.clientId,
-      label,
-      webrtc.getRemoteVolume(player.clientId)
-    );
+    syncMediaPeersAndVolumes();
   },
   onPlayerMedia(player) {
     game.setRemoteMediaState(
@@ -237,22 +366,76 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     );
   },
   onPlayerLeave(clientId) {
+    playersByClientId.delete(clientId);
     game.removeRemotePlayer(clientId);
     webrtc.removePeer(clientId);
     knownRemoteVolumeIds.delete(clientId);
     media.removeRemoteVolume(clientId);
+  },
+  onPlayerParty(clientId, partyId) {
+    const player = playersByClientId.get(clientId);
+    if (!player) return;
+    player.partyId = partyId;
+    playersByClientId.set(clientId, player);
+    syncMediaPeersAndVolumes();
+  },
+  onPartyState(state) {
+    partyState = state;
+    party.setPartyState(state);
+
+    const canPartyChat = Boolean(auth.getCurrentUser()) && Boolean(state.party);
+    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a party to chat");
+    partyChat.setStatus(state.party ? "Connected" : "Join a party to chat");
+
+    syncMediaPeersAndVolumes();
+  },
+  onPartyInvite(invite) {
+    party.addIncomingInvite(invite);
+  },
+  onPartyChatHistory(messages) {
+    partyChat.replaceHistory(messages);
+  },
+  onPartyChatMessage(message) {
+    partyChat.appendMessage(message);
   },
   onRtcSignal(fromClientId, signal) {
     void webrtc.handleSignal(fromClientId, signal);
   },
   onAuthRequired() {
     chat.setStatus("Sign in to send messages");
+    party.setNotice("Sign in to use parties");
+  },
+  onError(code, payload) {
+    const partyErrorCodes = new Set([
+      "NOT_PARTY_LEADER",
+      "TARGET_ALREADY_IN_PARTY",
+      "TARGET_OFFLINE",
+      "INVITE_COOLDOWN",
+      "NOT_IN_PARTY",
+      "INVITE_EXPIRED",
+      "PARTY_MEDIA_RESTRICTED"
+    ]);
+
+    if (partyErrorCodes.has(code)) {
+      if (code === "INVITE_COOLDOWN") {
+        const retryMs = Number(payload.retryAfterMs ?? 0);
+        const retrySeconds = Math.max(1, Math.ceil(retryMs / 1000));
+        party.setNotice(`Invite cooldown (${retrySeconds}s)`);
+      } else {
+        party.setNotice(code.split("_").join(" "));
+      }
+    }
   }
 });
 
 chat.onSubmit((text) => {
   if (!auth.getCurrentUser()) return;
   realtime.sendChat(text);
+});
+
+partyChat.onSubmit((text) => {
+  if (!auth.getCurrentUser() || !partyState.party) return;
+  realtime.sendPartyChat(text);
 });
 
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
@@ -266,11 +449,13 @@ if (shouldMinimizeByDefault) {
 }
 
 auth.setup();
+party.setup();
 media.setup();
 media.setMicMuted(webrtc.getMicMuted());
 media.setCameraEnabled(webrtc.getCameraEnabled());
 game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 media.setPermissionState("not_requested");
+partyChat.setCanPost(false, "Join a party to chat");
 void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();

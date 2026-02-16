@@ -24,6 +24,8 @@ model User {
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
   sessions   Session[]
+  partyMembership PartyMember?
+  ledParties      Party[]      @relation("PartyLeader")
 }
 
 model Session {
@@ -33,4 +35,24 @@ model Session {
   createdAt DateTime @default(now())
   expiresAt DateTime
   revokedAt DateTime?
+}
+
+model Party {
+  id        String       @id @default(uuid()) @db.Uuid
+  leaderId  String       @db.Uuid
+  leader    User         @relation("PartyLeader", fields: [leaderId], references: [id], onDelete: Cascade)
+  members   PartyMember[]
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+}
+
+model PartyMember {
+  id        String   @id @default(uuid()) @db.Uuid
+  partyId   String   @db.Uuid
+  userId    String   @unique @db.Uuid
+  party     Party    @relation(fields: [partyId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@index([partyId])
 }

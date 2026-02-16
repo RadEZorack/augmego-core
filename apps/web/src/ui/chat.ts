@@ -9,10 +9,10 @@ type ChatElements = {
 };
 
 export function createChatController(elements: ChatElements) {
-  function setCanPost(canPost: boolean) {
+  function setCanPost(canPost: boolean, disabledPlaceholder = "Sign in to chat") {
     if (elements.chatInput) {
       elements.chatInput.disabled = !canPost;
-      elements.chatInput.placeholder = canPost ? "Type a message" : "Sign in to chat";
+      elements.chatInput.placeholder = canPost ? "Type a message" : disabledPlaceholder;
     }
 
     if (elements.chatSendButton) {
