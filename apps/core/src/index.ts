@@ -53,7 +53,9 @@ const APPLE_SCOPE = process.env.APPLE_SCOPE ?? "name email";
 
 const WEB_BASE_URL = process.env.WEB_BASE_URL ?? "http://localhost:3001";
 const WEB_ORIGINS =
-  process.env.WEB_ORIGINS?.split(",").map((origin) => origin.trim()) ?? [];
+  process.env.WEB_ORIGINS?.split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean) ?? [];
 const SESSION_COOKIE_NAME = process.env.SESSION_COOKIE_NAME ?? "session_id";
 const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? "168");
 const MAX_CHAT_HISTORY = Number(process.env.MAX_CHAT_HISTORY ?? "100");
