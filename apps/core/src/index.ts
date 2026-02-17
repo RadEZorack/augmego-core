@@ -1,6 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import jwt from "jsonwebtoken";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
@@ -65,6 +66,18 @@ const WORLD_STORAGE_ROOT = process.env.WORLD_STORAGE_ROOT
 const WORLD_STORAGE_NAMESPACE =
   process.env.WORLD_STORAGE_NAMESPACE ??
   (process.env.NODE_ENV === "production" ? "prod" : "dev");
+const WORLD_STORAGE_PROVIDER = (process.env.WORLD_STORAGE_PROVIDER ??
+  (process.env.DO_SPACES_KEY &&
+  process.env.DO_SPACES_SECRET &&
+  process.env.DO_SPACES_BUCKET
+    ? "spaces"
+    : "local")) as "local" | "spaces";
+const DO_SPACES_KEY = process.env.DO_SPACES_KEY ?? "";
+const DO_SPACES_SECRET = process.env.DO_SPACES_SECRET ?? "";
+const DO_SPACES_BUCKET = process.env.DO_SPACES_BUCKET ?? "";
+const DO_SPACES_REGION = process.env.DO_SPACES_REGION ?? "";
+const DO_SPACES_ENDPOINT = process.env.DO_SPACES_ENDPOINT ?? "";
+const DO_SPACES_CUSTOM_DOMAIN = process.env.DO_SPACES_CUSTOM_DOMAIN ?? "";
 
 const webOrigin = (() => {
   try {
@@ -79,6 +92,33 @@ const sessionSameSite =
   (webOrigin.startsWith("https://") ? "None" : "Lax");
 const sessionSecure =
   process.env.COOKIE_SECURE === "true" || webOrigin.startsWith("https://");
+const doSpacesConfigured = Boolean(
+  DO_SPACES_KEY &&
+    DO_SPACES_SECRET &&
+    DO_SPACES_BUCKET &&
+    DO_SPACES_REGION &&
+    DO_SPACES_ENDPOINT
+);
+const effectiveWorldStorageProvider =
+  WORLD_STORAGE_PROVIDER === "spaces" && doSpacesConfigured ? "spaces" : "local";
+
+if (WORLD_STORAGE_PROVIDER === "spaces" && !doSpacesConfigured) {
+  console.warn(
+    "[world-storage] WORLD_STORAGE_PROVIDER=spaces but DigitalOcean Spaces env vars are incomplete; falling back to local storage."
+  );
+}
+
+const spacesClient =
+  effectiveWorldStorageProvider === "spaces"
+    ? new S3Client({
+        region: DO_SPACES_REGION,
+        endpoint: DO_SPACES_ENDPOINT,
+        credentials: {
+          accessKeyId: DO_SPACES_KEY,
+          secretAccessKey: DO_SPACES_SECRET
+        }
+      })
+    : null;
 
 function decodeJwtPayload(token: string) {
   const parts = token.split(".");
@@ -145,6 +185,44 @@ function sanitizeFilename(value: string) {
     .slice(0, 120);
 }
 
+function toUrlSafeStorageKey(storageKey: string) {
+  return storageKey
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+}
+
+function normalizeBaseUrl(value: string) {
+  return value.replace(/\/+$/, "");
+}
+
+function resolveSpacesPublicBaseUrl() {
+  if (DO_SPACES_CUSTOM_DOMAIN) {
+    return normalizeBaseUrl(DO_SPACES_CUSTOM_DOMAIN);
+  }
+
+  try {
+    const endpointUrl = new URL(DO_SPACES_ENDPOINT);
+    return `${endpointUrl.protocol}//${DO_SPACES_BUCKET}.${endpointUrl.host}`;
+  } catch {
+    return "";
+  }
+}
+
+function resolveWorldAssetPublicUrl(storageKey: string) {
+  if (effectiveWorldStorageProvider !== "spaces") return null;
+  const baseUrl = resolveSpacesPublicBaseUrl();
+  if (!baseUrl) return null;
+  return `${baseUrl}/${toUrlSafeStorageKey(storageKey)}`;
+}
+
+function resolveWorldAssetFileUrl(versionId: string, storageKey: string) {
+  return (
+    resolveWorldAssetPublicUrl(storageKey) ??
+    `/api/v1/world/assets/version/${versionId}/file`
+  );
+}
+
 function toNumberOrDefault(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -197,13 +275,30 @@ async function saveWorldAssetFile(
   const storageKey = path
     .join(WORLD_STORAGE_NAMESPACE, worldOwnerId, assetId, versionId, sanitized)
     .replace(/\\/g, "/");
+
+  if (effectiveWorldStorageProvider === "spaces") {
+    if (!spacesClient) {
+      throw new Error("DigitalOcean Spaces client not configured");
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await spacesClient.send(
+      new PutObjectCommand({
+        Bucket: DO_SPACES_BUCKET,
+        Key: storageKey,
+        Body: bytes,
+        ACL: "public-read",
+        ContentType: file.type || "model/gltf-binary"
+      })
+    );
+
+    return { storageKey };
+  }
+
   const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await Bun.write(absolutePath, file);
-  return {
-    storageKey,
-    absolutePath
-  };
+  return { storageKey };
 }
 
 function isValidGlbUpload(file: File) {
@@ -863,7 +958,10 @@ const api = new Elysia({ prefix: "/api/v1" })
               contentType: asset.currentVersion.contentType,
               sizeBytes: asset.currentVersion.sizeBytes,
               createdAt: asset.currentVersion.createdAt.toISOString(),
-              fileUrl: `/api/v1/world/assets/version/${asset.currentVersion.id}/file`
+              fileUrl: resolveWorldAssetFileUrl(
+                asset.currentVersion.id,
+                asset.currentVersion.storageKey
+              )
             }
           : null,
         versions: asset.versions.map((version) => ({
@@ -873,7 +971,7 @@ const api = new Elysia({ prefix: "/api/v1" })
           contentType: version.contentType,
           sizeBytes: version.sizeBytes,
           createdAt: version.createdAt.toISOString(),
-          fileUrl: `/api/v1/world/assets/version/${version.id}/file`
+          fileUrl: resolveWorldAssetFileUrl(version.id, version.storageKey)
         }))
       })),
       placements: placements.map((placement) => ({
@@ -1247,6 +1345,11 @@ const api = new Elysia({ prefix: "/api/v1" })
       return new Response("Forbidden", { status: 403 });
     }
 
+    const publicUrl = resolveWorldAssetPublicUrl(version.storageKey);
+    if (publicUrl) {
+      return Response.redirect(publicUrl, 302);
+    }
+
     const filePath = path.join(WORLD_STORAGE_ROOT, version.storageKey);
     const file = Bun.file(filePath);
     const exists = await file.exists();
@@ -1308,3 +1411,6 @@ const app = registerRealtimeWs(
   .listen(port);
 
 console.log(`Elysia server running on port ${port}`);
+console.log(
+  `[world-storage] provider=${effectiveWorldStorageProvider} namespace=${WORLD_STORAGE_NAMESPACE}`
+);
