@@ -69,3 +69,40 @@ export type PartyState = {
     expiresAt: string;
   }>;
 };
+
+export type WorldAssetVersion = {
+  id: string;
+  version: number;
+  originalName: string;
+  contentType: string;
+  sizeBytes: number;
+  createdAt: string;
+  fileUrl: string;
+};
+
+export type WorldAsset = {
+  id: string;
+  name: string;
+  createdAt: string;
+  updatedAt: string;
+  currentVersion: WorldAssetVersion | null;
+  versions: WorldAssetVersion[];
+};
+
+export type WorldPlacement = {
+  id: string;
+  assetId: string;
+  assetName: string;
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorldState = {
+  worldOwnerId: string;
+  canManage: boolean;
+  assets: WorldAsset[];
+  placements: WorldPlacement[];
+};

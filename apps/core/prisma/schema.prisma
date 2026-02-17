@@ -31,6 +31,11 @@ model User {
   sessions   Session[]
   partyMembership PartyMember?
   ledParties      Party[]      @relation("PartyLeader")
+  ownedWorldAssets WorldAsset[] @relation("WorldAssetOwner")
+  createdWorldAssets WorldAsset[] @relation("WorldAssetCreator")
+  createdWorldAssetVersions WorldAssetVersion[] @relation("WorldAssetVersionCreator")
+  ownedWorldPlacements WorldPlacement[] @relation("WorldPlacementOwner")
+  createdWorldPlacements WorldPlacement[] @relation("WorldPlacementCreator")
 }
 
 model Session {
@@ -61,4 +66,63 @@ model PartyMember {
   createdAt DateTime @default(now())
 
   @@index([partyId])
+}
+
+model WorldAsset {
+  id               String              @id @default(uuid()) @db.Uuid
+  worldOwnerId     String              @db.Uuid
+  createdById      String              @db.Uuid
+  name             String
+  currentVersionId String?             @unique @db.Uuid
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  worldOwner       User                @relation("WorldAssetOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
+  createdBy        User                @relation("WorldAssetCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  currentVersion   WorldAssetVersion?  @relation("WorldAssetCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  versions         WorldAssetVersion[] @relation("WorldAssetVersions")
+  placements       WorldPlacement[]
+
+  @@index([worldOwnerId, updatedAt])
+}
+
+model WorldAssetVersion {
+  id              String      @id @default(uuid()) @db.Uuid
+  assetId         String      @db.Uuid
+  createdById     String      @db.Uuid
+  version         Int
+  storageKey      String      @unique
+  originalName    String
+  contentType     String
+  sizeBytes       Int
+  createdAt       DateTime    @default(now())
+  asset           WorldAsset  @relation("WorldAssetVersions", fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy       User        @relation("WorldAssetVersionCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  currentForAsset WorldAsset? @relation("WorldAssetCurrentVersion")
+
+  @@unique([assetId, version])
+  @@index([assetId, createdAt])
+}
+
+model WorldPlacement {
+  id           String    @id @default(uuid()) @db.Uuid
+  worldOwnerId String    @db.Uuid
+  assetId      String    @db.Uuid
+  createdById  String    @db.Uuid
+  positionX    Float
+  positionY    Float
+  positionZ    Float
+  rotationX    Float     @default(0)
+  rotationY    Float     @default(0)
+  rotationZ    Float     @default(0)
+  scaleX       Float     @default(1)
+  scaleY       Float     @default(1)
+  scaleZ       Float     @default(1)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  worldOwner   User      @relation("WorldPlacementOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
+  asset        WorldAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  createdBy    User      @relation("WorldPlacementCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([worldOwnerId, updatedAt])
+  @@index([assetId])
 }

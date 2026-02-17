@@ -2,6 +2,8 @@ import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient } from "@prisma/client";
 import jwt from "jsonwebtoken";
+import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import { parseCookies, serializeCookie } from "./lib/cookies.js";
 import { resolveSessionUser } from "./lib/session.js";
 import { registerRealtimeWs } from "./realtime/ws.js";
@@ -57,6 +59,12 @@ const MAX_CHAT_HISTORY = Number(process.env.MAX_CHAT_HISTORY ?? "100");
 const MAX_CHAT_MESSAGE_LENGTH = Number(
   process.env.MAX_CHAT_MESSAGE_LENGTH ?? "500"
 );
+const WORLD_STORAGE_ROOT = process.env.WORLD_STORAGE_ROOT
+  ? path.resolve(process.env.WORLD_STORAGE_ROOT)
+  : path.resolve(process.cwd(), "storage", "world-assets");
+const WORLD_STORAGE_NAMESPACE =
+  process.env.WORLD_STORAGE_NAMESPACE ??
+  (process.env.NODE_ENV === "production" ? "prod" : "dev");
 
 const webOrigin = (() => {
   try {
@@ -126,6 +134,81 @@ function jsonResponse(
     status: options.status ?? 200,
     headers
   });
+}
+
+function sanitizeFilename(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return "model.glb";
+  return trimmed
+    .replace(/[^a-zA-Z0-9._-]/g, "_")
+    .replace(/_+/g, "_")
+    .slice(0, 120);
+}
+
+function toNumberOrDefault(value: unknown, fallback: number) {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+async function resolveActiveWorldOwnerId(userId: string) {
+  const membership = await prisma.partyMember.findUnique({
+    where: { userId },
+    include: {
+      party: {
+        select: {
+          leaderId: true
+        }
+      }
+    }
+  });
+
+  if (!membership) {
+    return userId;
+  }
+
+  return membership.party.leaderId;
+}
+
+async function canManageWorldOwner(userId: string, worldOwnerId: string) {
+  if (userId === worldOwnerId) return true;
+
+  const membership = await prisma.partyMember.findUnique({
+    where: { userId },
+    include: {
+      party: {
+        select: {
+          leaderId: true
+        }
+      }
+    }
+  });
+
+  if (!membership) return false;
+  if (membership.party.leaderId !== worldOwnerId) return false;
+  return membership.role === "MANAGER" || membership.party.leaderId === userId;
+}
+
+async function saveWorldAssetFile(
+  file: File,
+  worldOwnerId: string,
+  assetId: string,
+  versionId: string
+) {
+  const sanitized = sanitizeFilename(file.name || "model.glb");
+  const storageKey = path
+    .join(WORLD_STORAGE_NAMESPACE, worldOwnerId, assetId, versionId, sanitized)
+    .replace(/\\/g, "/");
+  const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, file);
+  return {
+    storageKey,
+    absolutePath
+  };
+}
+
+function isValidGlbUpload(file: File) {
+  const fileName = file.name.toLowerCase();
+  return fileName.endsWith(".glb");
 }
 
 const api = new Elysia({ prefix: "/api/v1" })
@@ -729,6 +812,454 @@ const api = new Elysia({ prefix: "/api/v1" })
     });
 
     return jsonResponse({ results });
+  })
+  .get("/world", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+
+    const [assets, placements] = await Promise.all([
+      prisma.worldAsset.findMany({
+        where: { worldOwnerId },
+        include: {
+          currentVersion: true,
+          versions: {
+            orderBy: { version: "desc" }
+          }
+        },
+        orderBy: { updatedAt: "desc" }
+      }),
+      prisma.worldPlacement.findMany({
+        where: { worldOwnerId },
+        include: {
+          asset: {
+            select: {
+              id: true,
+              name: true
+            }
+          }
+        },
+        orderBy: { createdAt: "asc" }
+      })
+    ]);
+
+    return jsonResponse({
+      worldOwnerId,
+      canManage,
+      assets: assets.map((asset) => ({
+        id: asset.id,
+        name: asset.name,
+        createdAt: asset.createdAt.toISOString(),
+        updatedAt: asset.updatedAt.toISOString(),
+        currentVersion: asset.currentVersion
+          ? {
+              id: asset.currentVersion.id,
+              version: asset.currentVersion.version,
+              originalName: asset.currentVersion.originalName,
+              contentType: asset.currentVersion.contentType,
+              sizeBytes: asset.currentVersion.sizeBytes,
+              createdAt: asset.currentVersion.createdAt.toISOString(),
+              fileUrl: `/api/v1/world/assets/version/${asset.currentVersion.id}/file`
+            }
+          : null,
+        versions: asset.versions.map((version) => ({
+          id: version.id,
+          version: version.version,
+          originalName: version.originalName,
+          contentType: version.contentType,
+          sizeBytes: version.sizeBytes,
+          createdAt: version.createdAt.toISOString(),
+          fileUrl: `/api/v1/world/assets/version/${version.id}/file`
+        }))
+      })),
+      placements: placements.map((placement) => ({
+        id: placement.id,
+        assetId: placement.assetId,
+        assetName: placement.asset.name,
+        position: {
+          x: placement.positionX,
+          y: placement.positionY,
+          z: placement.positionZ
+        },
+        rotation: {
+          x: placement.rotationX,
+          y: placement.rotationY,
+          z: placement.rotationZ
+        },
+        scale: {
+          x: placement.scaleX,
+          y: placement.scaleY,
+          z: placement.scaleZ
+        },
+        createdAt: placement.createdAt.toISOString(),
+        updatedAt: placement.updatedAt.toISOString()
+      }))
+    });
+  })
+  .post("/world/assets", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const formData = await request.formData();
+    const fileValue = formData.get("file");
+    if (!(fileValue instanceof File)) {
+      return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+    }
+    if (!isValidGlbUpload(fileValue)) {
+      return jsonResponse({ error: "INVALID_GLB_FILE" }, { status: 400 });
+    }
+
+    const rawName = String(formData.get("name") ?? "").trim();
+    const modelName =
+      rawName ||
+      sanitizeFilename(fileValue.name.replace(/\.glb$/i, "")).replace(/_/g, " ");
+    const assetId = crypto.randomUUID();
+    const versionId = crypto.randomUUID();
+    const saved = await saveWorldAssetFile(fileValue, worldOwnerId, assetId, versionId);
+
+    await prisma.$transaction(async (tx) => {
+      await tx.worldAsset.create({
+        data: {
+          id: assetId,
+          worldOwnerId,
+          createdById: user.id,
+          name: modelName
+        }
+      });
+
+      await tx.worldAssetVersion.create({
+        data: {
+          id: versionId,
+          assetId,
+          createdById: user.id,
+          version: 1,
+          storageKey: saved.storageKey,
+          originalName: fileValue.name,
+          contentType: fileValue.type || "model/gltf-binary",
+          sizeBytes: fileValue.size
+        }
+      });
+
+      await tx.worldAsset.update({
+        where: { id: assetId },
+        data: {
+          currentVersionId: versionId
+        }
+      });
+    });
+
+    return jsonResponse({ ok: true, assetId, versionId });
+  })
+  .post("/world/assets/:assetId/versions", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const assetId = String((params as Record<string, unknown>).assetId ?? "");
+    if (!assetId) {
+      return jsonResponse({ error: "ASSET_ID_REQUIRED" }, { status: 400 });
+    }
+
+    const asset = await prisma.worldAsset.findUnique({
+      where: { id: assetId },
+      include: {
+        versions: {
+          orderBy: { version: "desc" },
+          take: 1
+        }
+      }
+    });
+
+    if (!asset) {
+      return jsonResponse({ error: "ASSET_NOT_FOUND" }, { status: 404 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    if (worldOwnerId !== asset.worldOwnerId) {
+      return jsonResponse({ error: "WORLD_ACCESS_DENIED" }, { status: 403 });
+    }
+
+    const canManage = await canManageWorldOwner(user.id, asset.worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const formData = await request.formData();
+    const fileValue = formData.get("file");
+    if (!(fileValue instanceof File)) {
+      return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+    }
+    if (!isValidGlbUpload(fileValue)) {
+      return jsonResponse({ error: "INVALID_GLB_FILE" }, { status: 400 });
+    }
+
+    const versionId = crypto.randomUUID();
+    const nextVersion = (asset.versions[0]?.version ?? 0) + 1;
+    const saved = await saveWorldAssetFile(
+      fileValue,
+      asset.worldOwnerId,
+      asset.id,
+      versionId
+    );
+    const maybeNewName = String(formData.get("name") ?? "").trim();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.worldAssetVersion.create({
+        data: {
+          id: versionId,
+          assetId: asset.id,
+          createdById: user.id,
+          version: nextVersion,
+          storageKey: saved.storageKey,
+          originalName: fileValue.name,
+          contentType: fileValue.type || "model/gltf-binary",
+          sizeBytes: fileValue.size
+        }
+      });
+
+      await tx.worldAsset.update({
+        where: { id: asset.id },
+        data: {
+          currentVersionId: versionId,
+          ...(maybeNewName ? { name: maybeNewName } : {})
+        }
+      });
+    });
+
+    return jsonResponse({ ok: true, assetId: asset.id, versionId, nextVersion });
+  })
+  .post("/world/placements", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const assetId = typeof payload?.assetId === "string" ? payload.assetId : "";
+    if (!assetId) {
+      return jsonResponse({ error: "ASSET_ID_REQUIRED" }, { status: 400 });
+    }
+
+    const asset = await prisma.worldAsset.findFirst({
+      where: {
+        id: assetId,
+        worldOwnerId
+      },
+      select: { id: true }
+    });
+
+    if (!asset) {
+      return jsonResponse({ error: "ASSET_NOT_FOUND" }, { status: 404 });
+    }
+
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : {};
+    const rotation =
+      payload?.rotation && typeof payload.rotation === "object"
+        ? (payload.rotation as Record<string, unknown>)
+        : {};
+    const scale =
+      payload?.scale && typeof payload.scale === "object"
+        ? (payload.scale as Record<string, unknown>)
+        : {};
+
+    const placement = await prisma.worldPlacement.create({
+      data: {
+        worldOwnerId,
+        assetId,
+        createdById: user.id,
+        positionX: toNumberOrDefault(position.x, 0),
+        positionY: toNumberOrDefault(position.y, 0),
+        positionZ: toNumberOrDefault(position.z, 0),
+        rotationX: toNumberOrDefault(rotation.x, 0),
+        rotationY: toNumberOrDefault(rotation.y, 0),
+        rotationZ: toNumberOrDefault(rotation.z, 0),
+        scaleX: toNumberOrDefault(scale.x, 1),
+        scaleY: toNumberOrDefault(scale.y, 1),
+        scaleZ: toNumberOrDefault(scale.z, 1)
+      }
+    });
+
+    return jsonResponse({
+      ok: true,
+      placementId: placement.id
+    });
+  })
+  .patch("/world/placements/:placementId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const placementId = String(
+      (params as Record<string, unknown>).placementId ?? ""
+    );
+    const placement = await prisma.worldPlacement.findUnique({
+      where: { id: placementId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!placement || placement.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "PLACEMENT_NOT_FOUND" }, { status: 404 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : null;
+    const rotation =
+      payload?.rotation && typeof payload.rotation === "object"
+        ? (payload.rotation as Record<string, unknown>)
+        : null;
+    const scale =
+      payload?.scale && typeof payload.scale === "object"
+        ? (payload.scale as Record<string, unknown>)
+        : null;
+
+    await prisma.worldPlacement.update({
+      where: { id: placementId },
+      data: {
+        ...(position
+          ? {
+              positionX: toNumberOrDefault(position.x, 0),
+              positionY: toNumberOrDefault(position.y, 0),
+              positionZ: toNumberOrDefault(position.z, 0)
+            }
+          : {}),
+        ...(rotation
+          ? {
+              rotationX: toNumberOrDefault(rotation.x, 0),
+              rotationY: toNumberOrDefault(rotation.y, 0),
+              rotationZ: toNumberOrDefault(rotation.z, 0)
+            }
+          : {}),
+        ...(scale
+          ? {
+              scaleX: toNumberOrDefault(scale.x, 1),
+              scaleY: toNumberOrDefault(scale.y, 1),
+              scaleZ: toNumberOrDefault(scale.z, 1)
+            }
+          : {})
+      }
+    });
+
+    return jsonResponse({ ok: true });
+  })
+  .delete("/world/placements/:placementId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const placementId = String(
+      (params as Record<string, unknown>).placementId ?? ""
+    );
+    const placement = await prisma.worldPlacement.findUnique({
+      where: { id: placementId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!placement || placement.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "PLACEMENT_NOT_FOUND" }, { status: 404 });
+    }
+
+    await prisma.worldPlacement.delete({
+      where: { id: placementId }
+    });
+
+    return jsonResponse({ ok: true });
+  })
+  .get("/world/assets/version/:versionId/file", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return new Response("Auth required", { status: 401 });
+    }
+
+    const versionId = String((params as Record<string, unknown>).versionId ?? "");
+    const version = await prisma.worldAssetVersion.findUnique({
+      where: { id: versionId },
+      include: {
+        asset: {
+          select: {
+            worldOwnerId: true
+          }
+        }
+      }
+    });
+
+    if (!version) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    if (activeWorldOwnerId !== version.asset.worldOwnerId) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const filePath = path.join(WORLD_STORAGE_ROOT, version.storageKey);
+    const file = Bun.file(filePath);
+    const exists = await file.exists();
+    if (!exists) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    return new Response(file, {
+      headers: {
+        "Content-Type": version.contentType || "model/gltf-binary",
+        "Cache-Control": "private, max-age=120"
+      }
+    });
   })
   .post("/auth/logout", async ({ request }) => {
     const cookies = parseCookies(request.headers.get("cookie"));

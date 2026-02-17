@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import type { PlayerPayload, PlayerState } from "../lib/types";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import type { PlayerPayload, PlayerState, WorldState } from "../lib/types";
 
 type PlayerBadge = {
   sprite: any;
@@ -25,6 +26,9 @@ type GameSceneOptions = {
   onLocalStateChange?: (state: PlayerState, force: boolean) => void;
   onRemoteInviteClick?: (clientId: string) => void;
   canShowRemoteInvite?: (clientId: string) => boolean;
+  onWorldPlacementRequest?: (
+    position: { x: number; y: number; z: number }
+  ) => boolean;
 };
 
 export function createGameScene(options: GameSceneOptions) {
@@ -41,6 +45,11 @@ export function createGameScene(options: GameSceneOptions) {
   const pointer = new THREE.Vector2();
   const raycaster = new THREE.Raycaster();
   const clock = new THREE.Clock();
+  const gltfLoader = new GLTFLoader();
+  const worldRoot = new THREE.Group();
+  const modelTemplateCache = new Map<string, Promise<THREE.Object3D | null>>();
+  let worldState: WorldState | null = null;
+  let worldRenderEpoch = 0;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -49,6 +58,7 @@ export function createGameScene(options: GameSceneOptions) {
   options.mount.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
+  scene.add(worldRoot);
 
   const camera = new THREE.PerspectiveCamera(
     60,
@@ -478,6 +488,71 @@ export function createGameScene(options: GameSceneOptions) {
     }
   }
 
+  function clearWorldModels() {
+    while (worldRoot.children.length > 0) {
+      const child = worldRoot.children[0];
+      if (!child) break;
+      worldRoot.remove(child);
+    }
+  }
+
+  function loadModelTemplate(url: string) {
+    const cached = modelTemplateCache.get(url);
+    if (cached) return cached;
+
+    const promise = new Promise<THREE.Object3D | null>((resolve) => {
+      gltfLoader.load(
+        url,
+        (gltf) => {
+          resolve(gltf.scene);
+        },
+        undefined,
+        () => resolve(null)
+      );
+    });
+    modelTemplateCache.set(url, promise);
+    return promise;
+  }
+
+  async function renderWorldModels() {
+    const renderEpoch = ++worldRenderEpoch;
+    clearWorldModels();
+    if (!worldState) return;
+
+    const assetById = new Map(worldState.assets.map((asset) => [asset.id, asset]));
+    const placements = worldState.placements;
+
+    await Promise.all(
+      placements.map(async (placement) => {
+        const asset = assetById.get(placement.assetId);
+        const modelUrl = asset?.currentVersion?.fileUrl;
+        if (!modelUrl) return;
+
+        const template = await loadModelTemplate(modelUrl);
+        if (!template) return;
+        if (renderEpoch !== worldRenderEpoch) return;
+
+        const instance = template.clone(true);
+        instance.position.set(
+          placement.position.x,
+          placement.position.y,
+          placement.position.z
+        );
+        instance.rotation.set(
+          placement.rotation.x,
+          placement.rotation.y,
+          placement.rotation.z
+        );
+        instance.scale.set(placement.scale.x, placement.scale.y, placement.scale.z);
+        instance.userData = {
+          placementId: placement.id,
+          assetId: placement.assetId
+        };
+        worldRoot.add(instance);
+      })
+    );
+  }
+
   function updateRemotePlayers(deltaSeconds: number) {
     const blend = Math.min(1, deltaSeconds * 8);
     for (const remote of remotePlayers.values()) {
@@ -533,6 +608,16 @@ export function createGameScene(options: GameSceneOptions) {
 
     const hitPoint = intersections[0]?.point;
     if (!hitPoint) return;
+
+    const consumedByPlacement =
+      options.onWorldPlacementRequest?.({
+        x: hitPoint.x,
+        y: hitPoint.y,
+        z: hitPoint.z
+      }) ?? false;
+    if (consumedByPlacement) {
+      return;
+    }
 
     targetPosition.set(hitPoint.x, playerRadius, hitPoint.z);
   }
@@ -608,6 +693,11 @@ export function createGameScene(options: GameSceneOptions) {
     maybeSendLocalState(true);
   }
 
+  function setWorldData(nextWorldState: WorldState | null) {
+    worldState = nextWorldState;
+    void renderWorldModels();
+  }
+
   return {
     start,
     setSelfClientId,
@@ -617,6 +707,7 @@ export function createGameScene(options: GameSceneOptions) {
     setRemoteMediaState,
     setRemoteMediaStream,
     forceSyncLocalState,
+    setWorldData,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,
     removeRemotePlayer

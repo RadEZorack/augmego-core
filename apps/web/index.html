@@ -148,6 +148,21 @@
           Leave Party
         </button>
 
+        <div class="party-members-title">World Models</div>
+        <div id="world-status" class="party-status">Sign in to load world</div>
+        <form id="world-upload-form" class="party-search">
+          <input
+            id="world-model-name"
+            class="party-search-input"
+            type="text"
+            placeholder="Model name"
+            autocomplete="off"
+          />
+          <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
+        </form>
+        <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
+        <div class="party-search-results" id="world-assets"></div>
+
         <div class="chat-header">
           <span>Party Chat</span>
           <span class="chat-status" id="party-chat-status">Join a party to chat</span>

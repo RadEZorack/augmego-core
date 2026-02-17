@@ -3,7 +3,13 @@ import "./style.css";
 
 import { createGameScene } from "./game/scene";
 import { createApiUrlResolver, resolveWsUrl } from "./lib/urls";
-import type { CurrentUser, PartyState, PlayerPayload } from "./lib/types";
+import type {
+  CurrentUser,
+  PartyState,
+  PlayerPayload,
+  WorldAsset,
+  WorldState
+} from "./lib/types";
 import { createRealtimeClient } from "./network/realtime";
 import { createWebRtcController } from "./network/webrtc";
 import { createAuthController } from "./ui/auth";
@@ -114,6 +120,16 @@ let partyState: PartyState = {
   party: null,
   pendingInvites: []
 };
+let worldState: WorldState | null = null;
+let selectedPlacementAssetId: string | null = null;
+let isPlacingModel = false;
+
+const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
+const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
+const worldModelNameInput = document.getElementById("world-model-name") as HTMLInputElement | null;
+const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
+const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
+const worldAssetsContainer = document.getElementById("world-assets") as HTMLDivElement | null;
 
 const playersByClientId = new Map<string, PlayerPayload>();
 const knownRemoteVolumeIds = new Set<string>();
@@ -180,6 +196,150 @@ function inviteClient(clientId: string) {
   realtime.sendPartyInvite({ targetClientId: clientId });
 }
 
+function setWorldNotice(message: string) {
+  if (!worldStatus) return;
+  worldStatus.textContent = message;
+}
+
+function getWorldAssetLabel(asset: WorldAsset) {
+  const currentVersion = asset.currentVersion?.version ?? 0;
+  return `${asset.name} (v${currentVersion})`;
+}
+
+function createReplaceInput(onSelect: (file: File) => void) {
+  const input = document.createElement("input");
+  input.type = "file";
+  input.accept = ".glb";
+  input.style.display = "none";
+  input.addEventListener("change", () => {
+    const file = input.files?.[0];
+    if (file) onSelect(file);
+    input.remove();
+  });
+  document.body.appendChild(input);
+  input.click();
+}
+
+async function loadWorldState() {
+  if (!auth.getCurrentUser()) {
+    worldState = null;
+    game.setWorldData(null);
+    setWorldNotice("Sign in to load world");
+    if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
+    if (worldUploadButton) worldUploadButton.disabled = true;
+    if (worldModelFileInput) worldModelFileInput.disabled = true;
+    if (worldModelNameInput) worldModelNameInput.disabled = true;
+    return;
+  }
+
+  const response = await fetch(apiUrl("/api/v1/world"), {
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    setWorldNotice("Failed to load world");
+    return;
+  }
+
+  const payload = (await response.json()) as WorldState;
+  worldState = payload;
+  game.setWorldData(payload);
+  if (worldUploadButton) worldUploadButton.disabled = !payload.canManage;
+  if (worldModelFileInput) worldModelFileInput.disabled = !payload.canManage;
+  if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
+
+  const worldOwnerLabel =
+    payload.worldOwnerId === auth.getCurrentUser()?.id ? "Your world" : "Party leader world";
+  setWorldNotice(
+    `${worldOwnerLabel} • ${payload.assets.length} models • ${payload.placements.length} placements`
+  );
+
+  renderWorldAssets();
+}
+
+function renderWorldAssets() {
+  if (!worldAssetsContainer) return;
+  worldAssetsContainer.innerHTML = "";
+
+  if (!worldState || worldState.assets.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "No models uploaded";
+    worldAssetsContainer.appendChild(empty);
+    return;
+  }
+
+  for (const asset of worldState.assets) {
+    const row = document.createElement("div");
+    row.className = "world-asset-row";
+
+    const label = document.createElement("div");
+    label.className = "party-result-label";
+    label.textContent = getWorldAssetLabel(asset);
+    label.title = `${asset.name} (${asset.versions.length} versions)`;
+
+    const placeButton = document.createElement("button");
+    placeButton.className = "party-secondary-button";
+    placeButton.type = "button";
+    placeButton.textContent = selectedPlacementAssetId === asset.id ? "Placing..." : "Place";
+    placeButton.disabled = !worldState.canManage;
+    placeButton.addEventListener("click", () => {
+      selectedPlacementAssetId = asset.id;
+      isPlacingModel = true;
+      setWorldNotice(`Placement mode: ${asset.name}. Click the floor to place.`);
+      renderWorldAssets();
+    });
+
+    const replaceButton = document.createElement("button");
+    replaceButton.className = "party-secondary-button";
+    replaceButton.type = "button";
+    replaceButton.textContent = "Replace";
+    replaceButton.disabled = !worldState.canManage;
+    replaceButton.addEventListener("click", () => {
+      createReplaceInput(async (file) => {
+        const formData = new FormData();
+        formData.set("file", file);
+        formData.set("name", asset.name);
+        const response = await fetch(
+          apiUrl(`/api/v1/world/assets/${encodeURIComponent(asset.id)}/versions`),
+          {
+            method: "POST",
+            credentials: "include",
+            body: formData
+          }
+        );
+        if (!response.ok) {
+          setWorldNotice("Replace failed");
+          return;
+        }
+        await loadWorldState();
+      });
+    });
+
+    const downloadButton = document.createElement("a");
+    downloadButton.className = "party-secondary-button";
+    downloadButton.textContent = "Download";
+    const fileUrl = asset.currentVersion?.fileUrl
+      ? apiUrl(asset.currentVersion.fileUrl)
+      : null;
+    downloadButton.href = fileUrl ?? "#";
+    downloadButton.style.textDecoration = "none";
+    downloadButton.style.textAlign = "center";
+    downloadButton.target = "_blank";
+    downloadButton.rel = "noreferrer";
+    if (!fileUrl) {
+      downloadButton.style.pointerEvents = "none";
+      downloadButton.style.opacity = "0.5";
+    }
+
+    row.appendChild(label);
+    row.appendChild(placeButton);
+    row.appendChild(replaceButton);
+    row.appendChild(downloadButton);
+    worldAssetsContainer.appendChild(row);
+  }
+}
+
 const game = createGameScene({
   mount: app,
   onLocalStateChange(state) {
@@ -190,6 +350,38 @@ const game = createGameScene({
   },
   canShowRemoteInvite(clientId) {
     return canInviteClient(clientId);
+  },
+  onWorldPlacementRequest(position) {
+    if (!isPlacingModel || !selectedPlacementAssetId || !worldState?.canManage) {
+      return false;
+    }
+
+    void (async () => {
+      const response = await fetch(apiUrl("/api/v1/world/placements"), {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          assetId: selectedPlacementAssetId,
+          position,
+          rotation: { x: 0, y: 0, z: 0 },
+          scale: { x: 1, y: 1, z: 1 }
+        })
+      });
+
+      if (!response.ok) {
+        setWorldNotice("Placement failed");
+        return;
+      }
+
+      isPlacingModel = false;
+      selectedPlacementAssetId = null;
+      await loadWorldState();
+    })();
+
+    return true;
   }
 });
 
@@ -215,6 +407,18 @@ const auth = createAuthController({
 
     const canPartyChat = Boolean(user) && Boolean(partyState.party);
     partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a party to chat");
+
+    if (!user) {
+      worldState = null;
+      isPlacingModel = false;
+      selectedPlacementAssetId = null;
+      game.setWorldData(null);
+      setWorldNotice("Sign in to load world");
+      if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
+      return;
+    }
+
+    void loadWorldState();
   }
 });
 
@@ -391,6 +595,7 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     partyChat.setStatus(state.party ? "Connected" : "Join a party to chat");
 
     syncMediaPeersAndVolumes();
+    void loadWorldState();
   },
   onPartyInvite(invite) {
     party.addIncomingInvite(invite);
@@ -447,6 +652,47 @@ partyChat.onSubmit((text) => {
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
 setupTabs();
 
+worldUploadForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  const file = worldModelFileInput?.files?.[0];
+  if (!file) {
+    setWorldNotice("Select a GLB file first");
+    return;
+  }
+  if (!worldState?.canManage) {
+    setWorldNotice("Only party leader/managers can modify this world");
+    return;
+  }
+
+  void (async () => {
+    setWorldNotice("Uploading model...");
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("name", worldModelNameInput?.value?.trim() || file.name.replace(/\.glb$/i, ""));
+
+    const response = await fetch(apiUrl("/api/v1/world/assets"), {
+      method: "POST",
+      credentials: "include",
+      body: formData
+    });
+
+    if (!response.ok) {
+      setWorldNotice("Upload failed");
+      return;
+    }
+
+    if (worldModelFileInput) {
+      worldModelFileInput.value = "";
+    }
+    if (worldModelNameInput) {
+      worldModelNameInput.value = "";
+    }
+
+    await loadWorldState();
+  })();
+});
+
 const shouldMinimizeByDefault = window.matchMedia(
   "(max-width: 700px) and (max-height: 850px)"
 ).matches;
@@ -462,7 +708,16 @@ media.setCameraEnabled(webrtc.getCameraEnabled());
 game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 media.setPermissionState("not_requested");
 partyChat.setCanPost(false, "Join a party to chat");
+setWorldNotice("Sign in to load world");
+if (worldUploadButton) worldUploadButton.disabled = true;
+if (worldModelFileInput) worldModelFileInput.disabled = true;
+if (worldModelNameInput) worldModelNameInput.disabled = true;
 void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();
 game.start();
+
+window.setInterval(() => {
+  if (!auth.getCurrentUser()) return;
+  void loadWorldState();
+}, 5000);

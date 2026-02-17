@@ -1,3 +1,6 @@
+# Local assets
+storage
+
 # dependencies (bun install)
 node_modules
 

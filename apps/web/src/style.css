@@ -554,6 +554,13 @@ canvas {
   gap: 8px;
 }
 
+.world-asset-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  align-items: center;
+  gap: 6px;
+}
+
 .party-member-row {
   grid-template-columns: auto 1fr auto auto;
 }
@@ -602,6 +609,10 @@ canvas {
 .party-leave-button {
   margin-bottom: 10px;
   width: 100%;
+}
+
+#world-model-file {
+  margin-bottom: 8px;
 }
 
 .party-search-button:disabled,
