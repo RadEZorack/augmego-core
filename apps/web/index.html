@@ -131,81 +131,93 @@
 
       <div id="pane-party" class="dock-pane" role="tabpanel" aria-labelledby="tab-party">
         <div class="party-status" id="party-status">No world</div>
-        <div class="party-search">
-          <input
-            id="party-search-input"
-            class="party-search-input"
-            type="text"
-            placeholder="Search worlds or owners"
-            autocomplete="off"
-          />
-          <button id="party-search-button" class="party-search-button" type="button">Find</button>
+        <div class="world-section">
+          <div class="party-members-title">Find Worlds</div>
+          <div class="party-search">
+            <input
+              id="party-search-input"
+              class="party-search-input"
+              type="text"
+              placeholder="Search worlds or owners"
+              autocomplete="off"
+            />
+            <button id="party-search-button" class="party-search-button" type="button">Find</button>
+          </div>
+          <div class="party-search-results" id="party-search-results"></div>
         </div>
-        <div class="party-search-results" id="party-search-results"></div>
-        <div class="party-members-title">Current World Visitors</div>
-        <div class="party-members" id="party-members"></div>
-        <button id="party-leave-button" class="party-leave-button" type="button" disabled>
-          Leave World
-        </button>
 
-        <div class="party-members-title">World Settings</div>
-        <form id="world-settings-form" class="party-search">
-          <input
-            id="world-name-input"
-            class="party-search-input"
-            type="text"
-            maxlength="80"
-            placeholder="World name"
-            autocomplete="off"
-          />
-          <button id="world-settings-save" class="party-secondary-button" type="submit" disabled>
-            Save
+        <div class="world-section">
+          <div class="party-members-title">Current World Visitors</div>
+          <div class="party-members" id="party-members"></div>
+          <button id="party-leave-button" class="party-leave-button" type="button" disabled>
+            Leave World
           </button>
-        </form>
-        <input
-          id="world-description-input"
-          class="party-search-input"
-          type="text"
-          maxlength="240"
-          placeholder="World description"
-          autocomplete="off"
-        />
-        <div class="party-search">
-          <label for="world-public-toggle" class="party-result-label">Public world</label>
-          <input id="world-public-toggle" type="checkbox" />
         </div>
 
-        <div class="party-members-title">World Models</div>
-        <div id="world-status" class="party-status">Sign in to load world</div>
-        <form id="world-upload-form" class="party-search">
+        <div class="world-section">
+          <div class="party-members-title">World Settings</div>
+          <form id="world-settings-form" class="party-search">
+            <input
+              id="world-name-input"
+              class="party-search-input"
+              type="text"
+              maxlength="80"
+              placeholder="World name"
+              autocomplete="off"
+            />
+            <button id="world-settings-save" class="party-secondary-button" type="submit" disabled>
+              Save
+            </button>
+          </form>
           <input
-            id="world-model-name"
+            id="world-description-input"
             class="party-search-input"
             type="text"
-            placeholder="Model name"
+            maxlength="240"
+            placeholder="World description"
             autocomplete="off"
           />
-          <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
-        </form>
-        <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
-        <div class="party-search-results" id="world-assets"></div>
-
-        <div class="chat-header">
-          <span>World Chat</span>
-          <span class="chat-status" id="party-chat-status">Join a world to chat</span>
+          <div class="party-search">
+            <label for="world-public-toggle" class="party-result-label">Public world</label>
+            <input id="world-public-toggle" type="checkbox" />
+          </div>
         </div>
-        <div class="chat-log" id="party-chat-log" role="log" aria-live="polite"></div>
-        <form class="chat-form" id="party-chat-form">
-          <input
-            id="party-chat-input"
-            class="chat-input"
-            type="text"
-            maxlength="500"
-            placeholder="Join a world to chat"
-            autocomplete="off"
-          />
-          <button id="party-chat-send" class="chat-send" type="submit">Send</button>
-        </form>
+
+        <div class="world-section">
+          <div class="party-members-title">World Models</div>
+          <div id="world-status" class="party-status">Sign in to load world</div>
+          <form id="world-upload-form" class="party-search">
+            <input
+              id="world-model-name"
+              class="party-search-input"
+              type="text"
+              placeholder="Model name"
+              autocomplete="off"
+            />
+            <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
+          </form>
+          <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
+          <div class="party-search-results" id="world-assets"></div>
+        </div>
+
+        <div class="world-section world-section-chat">
+          <div class="chat-header">
+            <span>World Chat</span>
+            <span class="chat-status" id="party-chat-status">Join a world to chat</span>
+          </div>
+          <div class="chat-log" id="party-chat-log" role="log" aria-live="polite"></div>
+          <form class="chat-form" id="party-chat-form">
+            <input
+              id="party-chat-input"
+              class="chat-input"
+              type="text"
+              maxlength="500"
+              placeholder="Join a world to chat"
+              autocomplete="off"
+            />
+            <button id="party-chat-send" class="chat-send" type="submit">Send</button>
+          </form>
+        </div>
       </div>
     </aside>
 

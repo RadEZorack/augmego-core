@@ -959,8 +959,13 @@ const api = new Elysia({ prefix: "/api/v1" })
                 {
                   OR: [
                     { leaderId: { in: matchingOwnerIds } },
-                    { name: { contains: query } },
-                    { description: { contains: query } }
+                    { name: { contains: query, mode: "insensitive" as const } },
+                    {
+                      description: {
+                        contains: query,
+                        mode: "insensitive" as const
+                      }
+                    }
                   ]
                 }
               ]

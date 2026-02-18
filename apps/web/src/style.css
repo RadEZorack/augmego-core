@@ -485,6 +485,19 @@ canvas {
   margin-bottom: 8px;
 }
 
+.world-section {
+  margin-bottom: 12px;
+  padding: 10px;
+  border: 1px solid rgba(44, 225, 255, 0.18);
+  border-radius: 12px;
+  background: rgba(5, 14, 24, 0.45);
+}
+
+.world-section-chat {
+  padding: 0;
+  overflow: hidden;
+}
+
 .party-search {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -543,7 +556,9 @@ canvas {
 .party-members-title {
   font-size: 0.74rem;
   color: #a9cfeb;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 .party-result-row,
@@ -634,7 +649,7 @@ canvas {
 }
 
 .party-leave-button {
-  margin-bottom: 10px;
+  margin-top: 8px;
   width: 100%;
 }
 
