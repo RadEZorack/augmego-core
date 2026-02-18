@@ -161,6 +161,16 @@ function getOnlineClientIdForUser(userId: string): string | null {
   return null;
 }
 
+export function countOnlineUsersByIds(userIds: string[]) {
+  let count = 0;
+  for (const userId of userIds) {
+    if (getOnlineClientIdForUser(userId)) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 function isMediaAllowedBetweenClients(fromClientId: string, toClientId: string) {
   const fromPartyId = socketPartyIds.get(fromClientId) ?? null;
   const toPartyId = socketPartyIds.get(toClientId) ?? null;
@@ -185,9 +195,15 @@ async function resolvePartyIdForUser(prisma: PrismaClient, userId: string) {
   });
 
   if (!ownedWorld) {
+    const owner = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true, email: true }
+    });
+    const ownerLabel = owner?.name ?? owner?.email ?? "My";
     ownedWorld = await prisma.party.create({
       data: {
-        leaderId: userId
+        leaderId: userId,
+        name: `${ownerLabel}'s World`
       },
       select: { id: true }
     });
@@ -315,6 +331,8 @@ async function buildPartyStateForUser(prisma: PrismaClient, user: SessionUser) {
   return {
     party: {
       id: party.id,
+      name: party.name,
+      description: party.description,
       leaderUserId: party.leaderId,
       isPublic: party.isPublic,
       members: party.members.map((member) => {
@@ -901,7 +919,10 @@ export function registerRealtimeWs<
             select: { id: true }
           })) ??
           (await options.prisma.party.create({
-            data: { leaderId: user.id },
+            data: {
+              leaderId: user.id,
+              name: `${user.name ?? user.email ?? "My"}'s World`
+            },
             select: { id: true }
           }));
 

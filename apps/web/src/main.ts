@@ -130,8 +130,15 @@ const worldModelNameInput = document.getElementById("world-model-name") as HTMLI
 const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
 const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
 const worldAssetsContainer = document.getElementById("world-assets") as HTMLDivElement | null;
+const worldSettingsForm = document.getElementById("world-settings-form") as HTMLFormElement | null;
+const worldNameInput = document.getElementById("world-name-input") as HTMLInputElement | null;
+const worldDescriptionInput = document.getElementById(
+  "world-description-input"
+) as HTMLInputElement | null;
 const worldPublicToggle = document.getElementById("world-public-toggle") as HTMLInputElement | null;
-const worldPublicSaveButton = document.getElementById("world-public-save") as HTMLButtonElement | null;
+const worldSettingsSaveButton = document.getElementById(
+  "world-settings-save"
+) as HTMLButtonElement | null;
 
 const playersByClientId = new Map<string, PlayerPayload>();
 const knownRemoteVolumeIds = new Set<string>();
@@ -204,17 +211,32 @@ function setWorldNotice(message: string) {
 }
 
 function syncWorldVisibilityControls() {
-  if (!worldPublicToggle || !worldPublicSaveButton) return;
+  if (
+    !worldPublicToggle ||
+    !worldSettingsSaveButton ||
+    !worldNameInput ||
+    !worldDescriptionInput
+  ) {
+    return;
+  }
   if (!worldState) {
+    worldNameInput.value = "";
+    worldDescriptionInput.value = "";
     worldPublicToggle.checked = false;
     worldPublicToggle.disabled = true;
-    worldPublicSaveButton.disabled = true;
+    worldNameInput.disabled = true;
+    worldDescriptionInput.disabled = true;
+    worldSettingsSaveButton.disabled = true;
     return;
   }
 
+  worldNameInput.value = worldState.worldName;
+  worldDescriptionInput.value = worldState.worldDescription ?? "";
   worldPublicToggle.checked = worldState.isPublic;
   worldPublicToggle.disabled = !worldState.canManageVisibility;
-  worldPublicSaveButton.disabled = !worldState.canManageVisibility;
+  worldNameInput.disabled = !worldState.canManageVisibility;
+  worldDescriptionInput.disabled = !worldState.canManageVisibility;
+  worldSettingsSaveButton.disabled = !worldState.canManageVisibility;
 }
 
 function getWorldAssetLabel(asset: WorldAsset) {
@@ -265,6 +287,8 @@ async function loadWorldState() {
       ...partyState,
       party: {
         ...partyState.party,
+        name: payload.worldName,
+        description: payload.worldDescription,
         isPublic: payload.isPublic
       }
     };
@@ -278,7 +302,7 @@ async function loadWorldState() {
   const worldOwnerLabel =
     payload.worldOwnerId === auth.getCurrentUser()?.id ? "Your world" : "Visited world";
   setWorldNotice(
-    `${worldOwnerLabel} • ${payload.isPublic ? "Public" : "Private"} • ${
+    `${payload.worldName} • ${worldOwnerLabel} • ${payload.isPublic ? "Public" : "Private"} • ${
       payload.assets.length
     } models • ${payload.placements.length} placements`
   );
@@ -539,6 +563,8 @@ const party = createPartyController({
     const payload = (await response.json()) as {
       results: Array<{
         id: string;
+        name: string;
+        description: string | null;
         owner: {
           id: string;
           name: string;
@@ -546,6 +572,10 @@ const party = createPartyController({
         };
         isPublic: boolean;
         memberCount: number;
+        onlineVisitorCount: number;
+        modelCount: number;
+        placementCount: number;
+        updatedAt: string;
         isCurrentWorld: boolean;
         canJoin: boolean;
       }>;
@@ -733,27 +763,45 @@ worldUploadForm?.addEventListener("submit", (event) => {
   })();
 });
 
-worldPublicSaveButton?.addEventListener("click", () => {
-  if (!worldState?.canManageVisibility || !worldPublicToggle) return;
+worldSettingsForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (
+    !worldState?.canManageVisibility ||
+    !worldPublicToggle ||
+    !worldNameInput ||
+    !worldDescriptionInput
+  ) {
+    return;
+  }
 
   void (async () => {
+    const name = worldNameInput.value.trim();
+    if (!name) {
+      setWorldNotice("World name is required");
+      return;
+    }
     const isPublic = worldPublicToggle.checked;
-    const response = await fetch(apiUrl("/api/v1/world/visibility"), {
+    const description = worldDescriptionInput.value.trim();
+    const response = await fetch(apiUrl("/api/v1/world/settings"), {
       method: "PATCH",
       credentials: "include",
       headers: {
         "Content-Type": "application/json"
       },
-      body: JSON.stringify({ isPublic })
+      body: JSON.stringify({
+        name,
+        description,
+        isPublic
+      })
     });
 
     if (!response.ok) {
-      setWorldNotice("Visibility update failed");
+      setWorldNotice("World settings update failed");
       return;
     }
 
     await loadWorldState();
-    party.setNotice(isPublic ? "World is now public" : "World is now private");
+    party.setNotice("World settings saved");
   })();
 });
 

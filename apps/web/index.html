@@ -136,7 +136,7 @@
             id="party-search-input"
             class="party-search-input"
             type="text"
-            placeholder="Search public worlds"
+            placeholder="Search worlds or owners"
             autocomplete="off"
           />
           <button id="party-search-button" class="party-search-button" type="button">Find</button>
@@ -148,14 +148,32 @@
           Leave World
         </button>
 
-        <div class="party-members-title">World Visibility</div>
+        <div class="party-members-title">World Settings</div>
+        <form id="world-settings-form" class="party-search">
+          <input
+            id="world-name-input"
+            class="party-search-input"
+            type="text"
+            maxlength="80"
+            placeholder="World name"
+            autocomplete="off"
+          />
+          <button id="world-settings-save" class="party-secondary-button" type="submit" disabled>
+            Save
+          </button>
+        </form>
+        <input
+          id="world-description-input"
+          class="party-search-input"
+          type="text"
+          maxlength="240"
+          placeholder="World description"
+          autocomplete="off"
+        />
         <div class="party-search">
           <label for="world-public-toggle" class="party-result-label">Public world</label>
           <input id="world-public-toggle" type="checkbox" />
         </div>
-        <button id="world-public-save" class="party-secondary-button" type="button" disabled>
-          Save Visibility
-        </button>
 
         <div class="party-members-title">World Models</div>
         <div id="world-status" class="party-status">Sign in to load world</div>

@@ -554,6 +554,33 @@ canvas {
   gap: 8px;
 }
 
+.world-card {
+  display: grid;
+  gap: 4px;
+  border: 1px solid rgba(44, 225, 255, 0.24);
+  border-radius: 10px;
+  padding: 8px;
+  background: rgba(5, 14, 24, 0.5);
+}
+
+.world-card-title {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #e9f7ff;
+}
+
+.world-card-meta,
+.world-card-details,
+.world-card-updated {
+  font-size: 0.7rem;
+  color: #9cc5db;
+}
+
+.world-card-summary {
+  font-size: 0.73rem;
+  color: #c8e1f2;
+}
+
 .world-asset-row {
   display: grid;
   grid-template-columns: 1fr auto auto auto;

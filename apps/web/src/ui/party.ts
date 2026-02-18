@@ -2,6 +2,8 @@ import type { CurrentUser, PartyState } from "../lib/types";
 
 type SearchResult = {
   id: string;
+  name: string;
+  description: string | null;
   owner: {
     id: string;
     name: string;
@@ -9,6 +11,10 @@ type SearchResult = {
   };
   isPublic: boolean;
   memberCount: number;
+  onlineVisitorCount: number;
+  modelCount: number;
+  placementCount: number;
+  updatedAt: string;
   isCurrentWorld: boolean;
   canJoin: boolean;
 };
@@ -216,17 +222,34 @@ export function createPartyController(options: PartyControllerOptions) {
 
     for (const result of searchResults) {
       const row = document.createElement("div");
-      row.className = "party-result-row";
+      row.className = "world-card";
 
-      const label = document.createElement("div");
-      label.className = "party-result-label";
+      const title = document.createElement("div");
+      title.className = "world-card-title";
+      title.textContent = result.name;
+
+      const meta = document.createElement("div");
+      meta.className = "world-card-meta";
       const visibilityLabel = result.isPublic ? "Public" : "Private";
-      label.textContent = `${result.owner.name} • ${visibilityLabel} • ${result.memberCount} visitors`;
+      meta.textContent = `${result.owner.name} • ${visibilityLabel} • ${result.onlineVisitorCount}/${result.memberCount} online`;
+
+      const details = document.createElement("div");
+      details.className = "world-card-details";
+      details.textContent = `${result.modelCount} models • ${result.placementCount} placements`;
+
+      const summary = document.createElement("div");
+      summary.className = "world-card-summary";
+      summary.textContent = result.description?.trim() || "No description";
+
+      const updated = document.createElement("div");
+      updated.className = "world-card-updated";
+      const updatedLabel = new Date(result.updatedAt).toLocaleString();
+      updated.textContent = `Updated ${updatedLabel}`;
 
       const inviteButton = document.createElement("button");
-      inviteButton.className = "party-invite-button";
+      inviteButton.className = "party-secondary-button";
       inviteButton.type = "button";
-      inviteButton.textContent = result.isCurrentWorld ? "✓" : "→";
+      inviteButton.textContent = result.isCurrentWorld ? "Current World" : "Join";
 
       const alreadyMember = result.isCurrentWorld;
       inviteButton.disabled = alreadyMember || !result.canJoin;
@@ -240,7 +263,11 @@ export function createPartyController(options: PartyControllerOptions) {
         options.onJoinWorld(result.id);
       });
 
-      row.appendChild(label);
+      row.appendChild(title);
+      row.appendChild(meta);
+      row.appendChild(details);
+      row.appendChild(summary);
+      row.appendChild(updated);
       row.appendChild(inviteButton);
       searchResultsEl.appendChild(row);
     }
@@ -305,19 +332,19 @@ export function createPartyController(options: PartyControllerOptions) {
       setStatus("No world");
     } else if (isLeader()) {
       setStatus(
-        `World owner (${state.party.members.length} visitors) • ${
+        `${state.party.name} • World owner (${state.party.members.length} visitors) • ${
           state.party.isPublic ? "Public" : "Private"
         }`
       );
     } else if (canManageParty()) {
       setStatus(
-        `World manager (${state.party.members.length} visitors) • ${
+        `${state.party.name} • World manager (${state.party.members.length} visitors) • ${
           state.party.isPublic ? "Public" : "Private"
         }`
       );
     } else {
       setStatus(
-        `Visiting world (${state.party.members.length} visitors) • ${
+        `${state.party.name} • Visiting (${state.party.members.length} visitors) • ${
           state.party.isPublic ? "Public" : "Private"
         }`
       );
