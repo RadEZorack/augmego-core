@@ -80,6 +80,28 @@ const DO_SPACES_BUCKET = process.env.DO_SPACES_BUCKET ?? "";
 const DO_SPACES_REGION = process.env.DO_SPACES_REGION ?? "";
 const DO_SPACES_ENDPOINT = process.env.DO_SPACES_ENDPOINT ?? "";
 const DO_SPACES_CUSTOM_DOMAIN = process.env.DO_SPACES_CUSTOM_DOMAIN ?? "";
+const MESHY_API_BASE_URL = normalizeBaseUrl(
+  process.env.MESHY_API_BASE_URL ?? "https://api.meshy.ai"
+);
+const MESHY_API_KEY = process.env.MESHY_API_KEY ?? "";
+const MESHY_TEXT_TO_3D_MODEL = process.env.MESHY_TEXT_TO_3D_MODEL ?? "";
+const MESHY_TEXT_TO_3D_MODE = process.env.MESHY_TEXT_TO_3D_MODE ?? "preview";
+const WORLD_ASSET_GENERATION_WORKER_INTERVAL_MS = toPositiveInteger(
+  process.env.WORLD_ASSET_GENERATION_WORKER_INTERVAL_MS,
+  5000
+);
+const WORLD_ASSET_GENERATION_POLL_INTERVAL_MS = toPositiveInteger(
+  process.env.WORLD_ASSET_GENERATION_POLL_INTERVAL_MS,
+  15000
+);
+const WORLD_ASSET_GENERATION_RECENT_LIMIT = toPositiveInteger(
+  process.env.WORLD_ASSET_GENERATION_RECENT_LIMIT,
+  20
+);
+const WORLD_ASSET_GENERATION_MAX_ATTEMPTS = toPositiveInteger(
+  process.env.WORLD_ASSET_GENERATION_MAX_ATTEMPTS,
+  5
+);
 
 const webOrigin = (() => {
   try {
@@ -229,6 +251,38 @@ function toNumberOrDefault(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+function toPositiveInteger(value: string | undefined, fallback: number) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
+  return Math.floor(parsed);
+}
+
+function normalizeAssetName(value: string, fallback: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return fallback;
+  return trimmed.slice(0, 80);
+}
+
+function deriveModelNameFromPrompt(prompt: string) {
+  const compact = prompt.replace(/\s+/g, " ").trim();
+  if (!compact) return "Generated Model";
+  return compact.slice(0, 80);
+}
+
+type MeshyCreateTaskResponse = {
+  result?: string;
+  id?: string;
+};
+
+type MeshyTextTo3dTaskResponse = {
+  id?: string;
+  status?: string;
+  task_status?: string;
+  model_urls?: Record<string, unknown> | null;
+  glb_url?: string;
+  preview_glb_url?: string;
+};
+
 async function getDefaultWorldNameForUser(userId: string) {
   const owner = await prisma.user.findUnique({
     where: { id: userId },
@@ -349,9 +403,330 @@ async function saveWorldAssetFile(
   return { storageKey };
 }
 
+async function createWorldAssetWithInitialVersion(options: {
+  worldOwnerId: string;
+  createdById: string;
+  modelName: string;
+  file: File;
+}) {
+  const assetId = crypto.randomUUID();
+  const versionId = crypto.randomUUID();
+  const saved = await saveWorldAssetFile(
+    options.file,
+    options.worldOwnerId,
+    assetId,
+    versionId
+  );
+
+  await prisma.$transaction(async (tx) => {
+    await tx.worldAsset.create({
+      data: {
+        id: assetId,
+        worldOwnerId: options.worldOwnerId,
+        createdById: options.createdById,
+        name: options.modelName
+      }
+    });
+
+    await tx.worldAssetVersion.create({
+      data: {
+        id: versionId,
+        assetId,
+        createdById: options.createdById,
+        version: 1,
+        storageKey: saved.storageKey,
+        originalName: options.file.name || "model.glb",
+        contentType: options.file.type || "model/gltf-binary",
+        sizeBytes: options.file.size
+      }
+    });
+
+    await tx.worldAsset.update({
+      where: { id: assetId },
+      data: {
+        currentVersionId: versionId
+      }
+    });
+  });
+
+  return { assetId, versionId };
+}
+
 function isValidGlbUpload(file: File) {
   const fileName = file.name.toLowerCase();
   return fileName.endsWith(".glb");
+}
+
+async function createMeshyTextTo3dTask(prompt: string) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const requestBody: Record<string, unknown> = {
+    mode: MESHY_TEXT_TO_3D_MODE,
+    prompt
+  };
+  if (MESHY_TEXT_TO_3D_MODEL) {
+    requestBody.ai_model = MESHY_TEXT_TO_3D_MODEL;
+  }
+
+  const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v2/text-to-3d`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MESHY_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy create failed (${response.status}): ${text}`);
+  }
+
+  const payload = (await response.json()) as MeshyCreateTaskResponse;
+  const taskId = String(payload.result ?? payload.id ?? "").trim();
+  if (!taskId) {
+    throw new Error("Meshy create response missing task id");
+  }
+  return taskId;
+}
+
+async function fetchMeshyTextTo3dTask(taskId: string) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const response = await fetch(
+    `${MESHY_API_BASE_URL}/openapi/v2/text-to-3d/${encodeURIComponent(taskId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${MESHY_API_KEY}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy status failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as MeshyTextTo3dTaskResponse;
+}
+
+function resolveMeshyStatus(task: MeshyTextTo3dTaskResponse) {
+  return String(task.status ?? task.task_status ?? "").toUpperCase();
+}
+
+function extractMeshyGlbUrl(task: MeshyTextTo3dTaskResponse) {
+  const modelUrls =
+    task.model_urls && typeof task.model_urls === "object"
+      ? (task.model_urls as Record<string, unknown>)
+      : {};
+
+  const candidate = [
+    modelUrls.glb,
+    modelUrls.preview_glb,
+    modelUrls.glb_url,
+    task.glb_url,
+    task.preview_glb_url
+  ].find((value) => typeof value === "string" && value.length > 0);
+
+  return typeof candidate === "string" ? candidate : "";
+}
+
+function isMeshyTerminalStatus(status: string) {
+  return status === "SUCCEEDED" || status === "FAILED" || status === "CANCELED";
+}
+
+function isMeshySuccessStatus(status: string) {
+  return status === "SUCCEEDED";
+}
+
+let worldAssetGenerationWorkerBusy = false;
+
+async function claimNextWorldAssetGenerationTask() {
+  const inProgress = await prisma.worldAssetGenerationTask.findFirst({
+    where: { status: "IN_PROGRESS" },
+    orderBy: { updatedAt: "asc" }
+  });
+  if (inProgress) return inProgress;
+
+  const pending = await prisma.worldAssetGenerationTask.findFirst({
+    where: { status: "PENDING" },
+    orderBy: { createdAt: "asc" }
+  });
+  if (!pending) return null;
+
+  const update = await prisma.worldAssetGenerationTask.updateMany({
+    where: {
+      id: pending.id,
+      status: "PENDING"
+    },
+    data: {
+      status: "IN_PROGRESS",
+      startedAt: pending.startedAt ?? new Date(),
+      attempts: pending.attempts + 1
+    }
+  });
+  if (update.count === 0) return null;
+
+  return prisma.worldAssetGenerationTask.findUnique({
+    where: { id: pending.id }
+  });
+}
+
+async function processWorldAssetGenerationTask(taskId: string) {
+  const task = await prisma.worldAssetGenerationTask.findUnique({
+    where: { id: taskId }
+  });
+  if (!task || task.status !== "IN_PROGRESS") return;
+
+  if (!task.meshyTaskId) {
+    const meshyTaskId = await createMeshyTextTo3dTask(task.prompt);
+    await prisma.worldAssetGenerationTask.update({
+      where: { id: task.id },
+      data: {
+        meshyTaskId,
+        meshyStatus: "SUBMITTED"
+      }
+    });
+    return;
+  }
+
+  const elapsedSinceLastUpdate = Date.now() - task.updatedAt.getTime();
+  if (elapsedSinceLastUpdate < WORLD_ASSET_GENERATION_POLL_INTERVAL_MS) {
+    return;
+  }
+
+  const meshyTask = await fetchMeshyTextTo3dTask(task.meshyTaskId);
+  const meshyStatus = resolveMeshyStatus(meshyTask);
+  if (!meshyStatus) {
+    throw new Error("Meshy task returned empty status");
+  }
+
+  if (!isMeshyTerminalStatus(meshyStatus)) {
+    await prisma.worldAssetGenerationTask.update({
+      where: { id: task.id },
+      data: { meshyStatus }
+    });
+    return;
+  }
+
+  if (!isMeshySuccessStatus(meshyStatus)) {
+    await prisma.worldAssetGenerationTask.update({
+      where: { id: task.id },
+      data: {
+        status: "FAILED",
+        meshyStatus,
+        failureReason: `Meshy generation ended with status ${meshyStatus}`,
+        completedAt: new Date()
+      }
+    });
+    return;
+  }
+
+  const glbUrl = extractMeshyGlbUrl(meshyTask);
+  if (!glbUrl) {
+    await prisma.worldAssetGenerationTask.update({
+      where: { id: task.id },
+      data: {
+        status: "FAILED",
+        meshyStatus,
+        failureReason: "Meshy task succeeded but no GLB URL was returned",
+        completedAt: new Date()
+      }
+    });
+    return;
+  }
+
+  const glbResponse = await fetch(glbUrl);
+  if (!glbResponse.ok) {
+    throw new Error(
+      `Failed to download generated GLB (${glbResponse.status} ${glbResponse.statusText})`
+    );
+  }
+
+  const glbBytes = await glbResponse.arrayBuffer();
+  const safeName = sanitizeFilename(task.modelName || "generated_model");
+  const fileName = safeName.toLowerCase().endsWith(".glb")
+    ? safeName
+    : `${safeName}.glb`;
+  const file = new File([glbBytes], fileName, {
+    type: "model/gltf-binary"
+  });
+
+  const generated = await createWorldAssetWithInitialVersion({
+    worldOwnerId: task.worldOwnerId,
+    createdById: task.createdById,
+    modelName: task.modelName,
+    file
+  });
+
+  await prisma.worldAssetGenerationTask.update({
+    where: { id: task.id },
+    data: {
+      status: "COMPLETED",
+      meshyStatus,
+      generatedAssetId: generated.assetId,
+      generatedVersionId: generated.versionId,
+      completedAt: new Date()
+    }
+  });
+}
+
+async function runWorldAssetGenerationWorkerTick() {
+  if (worldAssetGenerationWorkerBusy || !MESHY_API_KEY) return;
+
+  worldAssetGenerationWorkerBusy = true;
+  let processingTaskId: string | null = null;
+  try {
+    const task = await claimNextWorldAssetGenerationTask();
+    if (!task) return;
+    processingTaskId = task.id;
+    await processWorldAssetGenerationTask(task.id);
+  } catch (error) {
+    console.error("[world-generation] task processing failed", error);
+    const message = error instanceof Error ? error.message : String(error);
+    if (processingTaskId) {
+      const task = await prisma.worldAssetGenerationTask.findUnique({
+        where: { id: processingTaskId },
+        select: { attempts: true }
+      });
+      if (!task) return;
+      const shouldRetry = task.attempts < WORLD_ASSET_GENERATION_MAX_ATTEMPTS;
+      await prisma.worldAssetGenerationTask.update({
+        where: { id: processingTaskId },
+        data: {
+          status: shouldRetry ? "PENDING" : "FAILED",
+          meshyStatus: shouldRetry ? "RETRYING" : "FAILED",
+          failureReason: message.slice(0, 500),
+          completedAt: shouldRetry ? null : new Date()
+        }
+      });
+    }
+  } finally {
+    worldAssetGenerationWorkerBusy = false;
+  }
+}
+
+async function startWorldAssetGenerationWorker() {
+  if (!MESHY_API_KEY) {
+    console.warn(
+      "[world-generation] MESHY_API_KEY is not configured; text-to-3d is disabled."
+    );
+    return;
+  }
+
+  await prisma.worldAssetGenerationTask.updateMany({
+    where: { status: "IN_PROGRESS" },
+    data: { status: "PENDING", meshyStatus: "REQUEUED_ON_STARTUP" }
+  });
+
+  setInterval(() => {
+    void runWorldAssetGenerationWorkerTick();
+  }, WORLD_ASSET_GENERATION_WORKER_INTERVAL_MS);
+  void runWorldAssetGenerationWorkerTick();
 }
 
 const api = new Elysia({ prefix: "/api/v1" })
@@ -1263,45 +1638,133 @@ const api = new Elysia({ prefix: "/api/v1" })
     }
 
     const rawName = String(formData.get("name") ?? "").trim();
-    const modelName =
-      rawName ||
-      sanitizeFilename(fileValue.name.replace(/\.glb$/i, "")).replace(/_/g, " ");
-    const assetId = crypto.randomUUID();
-    const versionId = crypto.randomUUID();
-    const saved = await saveWorldAssetFile(fileValue, worldOwnerId, assetId, versionId);
-
-    await prisma.$transaction(async (tx) => {
-      await tx.worldAsset.create({
-        data: {
-          id: assetId,
-          worldOwnerId,
-          createdById: user.id,
-          name: modelName
-        }
-      });
-
-      await tx.worldAssetVersion.create({
-        data: {
-          id: versionId,
-          assetId,
-          createdById: user.id,
-          version: 1,
-          storageKey: saved.storageKey,
-          originalName: fileValue.name,
-          contentType: fileValue.type || "model/gltf-binary",
-          sizeBytes: fileValue.size
-        }
-      });
-
-      await tx.worldAsset.update({
-        where: { id: assetId },
-        data: {
-          currentVersionId: versionId
-        }
-      });
+    const fallbackName = sanitizeFilename(
+      fileValue.name.replace(/\.glb$/i, "")
+    ).replace(/_/g, " ");
+    const modelName = normalizeAssetName(rawName, fallbackName);
+    const created = await createWorldAssetWithInitialVersion({
+      worldOwnerId,
+      createdById: user.id,
+      modelName,
+      file: fileValue
     });
 
-    return jsonResponse({ ok: true, assetId, versionId });
+    return jsonResponse({
+      ok: true,
+      assetId: created.assetId,
+      versionId: created.versionId
+    });
+  })
+  .post("/world/assets/generate", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+    if (!MESHY_API_KEY) {
+      return jsonResponse({ error: "MESHY_NOT_CONFIGURED" }, { status: 503 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const prompt =
+      typeof payload?.prompt === "string" ? payload.prompt.trim() : "";
+    if (!prompt || prompt.length > 1000) {
+      return jsonResponse({ error: "INVALID_PROMPT" }, { status: 400 });
+    }
+
+    const requestedName =
+      typeof payload?.name === "string" ? payload.name.trim() : "";
+    const modelName = normalizeAssetName(
+      requestedName,
+      deriveModelNameFromPrompt(prompt)
+    );
+
+    const task = await prisma.worldAssetGenerationTask.create({
+      data: {
+        worldOwnerId,
+        createdById: user.id,
+        prompt,
+        modelName
+      },
+      select: {
+        id: true,
+        status: true,
+        createdAt: true
+      }
+    });
+
+    void runWorldAssetGenerationWorkerTick();
+
+    return jsonResponse({
+      ok: true,
+      task: {
+        id: task.id,
+        status: task.status,
+        createdAt: task.createdAt.toISOString()
+      }
+    });
+  })
+  .get("/world/assets/generations", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const tasks = await prisma.worldAssetGenerationTask.findMany({
+      where: { worldOwnerId },
+      orderBy: { createdAt: "desc" },
+      take: WORLD_ASSET_GENERATION_RECENT_LIMIT,
+      select: {
+        id: true,
+        status: true,
+        prompt: true,
+        modelName: true,
+        meshyStatus: true,
+        generatedAssetId: true,
+        generatedVersionId: true,
+        failureReason: true,
+        createdAt: true,
+        updatedAt: true,
+        startedAt: true,
+        completedAt: true
+      }
+    });
+
+    return jsonResponse({
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        status: task.status,
+        prompt: task.prompt,
+        modelName: task.modelName,
+        meshyStatus: task.meshyStatus,
+        generatedAssetId: task.generatedAssetId,
+        generatedVersionId: task.generatedVersionId,
+        failureReason: task.failureReason,
+        createdAt: task.createdAt.toISOString(),
+        updatedAt: task.updatedAt.toISOString(),
+        startedAt: task.startedAt?.toISOString() ?? null,
+        completedAt: task.completedAt?.toISOString() ?? null
+      }))
+    });
   })
   .post("/world/assets/:assetId/versions", async ({ request, params }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
@@ -1630,6 +2093,8 @@ const api = new Elysia({ prefix: "/api/v1" })
   });
 
 const port = Number(process.env.PORT) || 3000;
+
+void startWorldAssetGenerationWorker();
 
 const app = registerRealtimeWs(
   new Elysia()

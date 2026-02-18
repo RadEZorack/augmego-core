@@ -186,6 +186,26 @@
         <div class="world-section">
           <div class="party-members-title">World Models</div>
           <div id="world-status" class="party-status">Sign in to load world</div>
+          <input
+            id="world-generate-name"
+            class="party-search-input"
+            type="text"
+            placeholder="Generated model name (optional)"
+            autocomplete="off"
+          />
+          <form id="world-generate-form" class="party-search">
+            <input
+              id="world-generate-prompt"
+              class="party-search-input"
+              type="text"
+              maxlength="1000"
+              placeholder="Describe the 3D model to generate"
+              autocomplete="off"
+            />
+            <button id="world-generate-button" class="party-search-button" type="submit">
+              Generate 3D
+            </button>
+          </form>
           <form id="world-upload-form" class="party-search">
             <input
               id="world-model-name"

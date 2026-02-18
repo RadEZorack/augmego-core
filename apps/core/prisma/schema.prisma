@@ -12,6 +12,13 @@ enum PartyMemberRole {
   MANAGER
 }
 
+enum WorldAssetGenerationStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  FAILED
+}
+
 model Example {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
@@ -36,6 +43,8 @@ model User {
   createdWorldAssetVersions WorldAssetVersion[] @relation("WorldAssetVersionCreator")
   ownedWorldPlacements WorldPlacement[] @relation("WorldPlacementOwner")
   createdWorldPlacements WorldPlacement[] @relation("WorldPlacementCreator")
+  ownedWorldAssetGenerationTasks WorldAssetGenerationTask[] @relation("WorldAssetGenerationOwner")
+  createdWorldAssetGenerationTasks WorldAssetGenerationTask[] @relation("WorldAssetGenerationCreator")
 }
 
 model Session {
@@ -128,4 +137,29 @@ model WorldPlacement {
 
   @@index([worldOwnerId, updatedAt])
   @@index([assetId])
+}
+
+model WorldAssetGenerationTask {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  worldOwnerId       String                     @db.Uuid
+  createdById        String                     @db.Uuid
+  status             WorldAssetGenerationStatus @default(PENDING)
+  prompt             String
+  modelName          String
+  meshyTaskId        String?                    @unique
+  meshyStatus        String?
+  generatedAssetId   String?                    @db.Uuid
+  generatedVersionId String?                    @db.Uuid
+  failureReason      String?
+  attempts           Int                        @default(0)
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  worldOwner         User                       @relation("WorldAssetGenerationOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
+  createdBy          User                       @relation("WorldAssetGenerationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([status, updatedAt])
+  @@index([worldOwnerId, createdAt])
+  @@index([createdById, createdAt])
 }

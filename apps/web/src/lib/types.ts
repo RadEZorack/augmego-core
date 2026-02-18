@@ -114,3 +114,18 @@ export type WorldState = {
   assets: WorldAsset[];
   placements: WorldPlacement[];
 };
+
+export type WorldAssetGenerationTask = {
+  id: string;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
+  prompt: string;
+  modelName: string;
+  meshyStatus: string | null;
+  generatedAssetId: string | null;
+  generatedVersionId: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+};

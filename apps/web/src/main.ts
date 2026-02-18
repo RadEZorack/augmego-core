@@ -8,6 +8,7 @@ import type {
   PartyState,
   PlayerPayload,
   WorldAsset,
+  WorldAssetGenerationTask,
   WorldState
 } from "./lib/types";
 import { createRealtimeClient } from "./network/realtime";
@@ -121,6 +122,8 @@ let partyState: PartyState = {
   pendingInvites: []
 };
 let worldState: WorldState | null = null;
+let worldGenerationTasks: WorldAssetGenerationTask[] = [];
+let worldGenerationPollTimer: number | null = null;
 let selectedPlacementAssetId: string | null = null;
 let isPlacingModel = false;
 
@@ -129,6 +132,14 @@ const worldUploadForm = document.getElementById("world-upload-form") as HTMLForm
 const worldModelNameInput = document.getElementById("world-model-name") as HTMLInputElement | null;
 const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
 const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
+const worldGenerateForm = document.getElementById("world-generate-form") as HTMLFormElement | null;
+const worldGeneratePromptInput = document.getElementById(
+  "world-generate-prompt"
+) as HTMLInputElement | null;
+const worldGenerateNameInput = document.getElementById("world-generate-name") as HTMLInputElement | null;
+const worldGenerateButton = document.getElementById(
+  "world-generate-button"
+) as HTMLButtonElement | null;
 const worldAssetsContainer = document.getElementById("world-assets") as HTMLDivElement | null;
 const worldSettingsForm = document.getElementById("world-settings-form") as HTMLFormElement | null;
 const worldNameInput = document.getElementById("world-name-input") as HTMLInputElement | null;
@@ -210,6 +221,76 @@ function setWorldNotice(message: string) {
   worldStatus.textContent = message;
 }
 
+function getGenerationStatusLabel(task: WorldAssetGenerationTask) {
+  if (task.status === "COMPLETED") return "Completed";
+  if (task.status === "FAILED") return "Failed";
+  if (task.meshyStatus) return task.meshyStatus.replace(/_/g, " ");
+  return task.status === "IN_PROGRESS" ? "In progress" : "Queued";
+}
+
+function stopWorldGenerationPolling() {
+  if (worldGenerationPollTimer !== null) {
+    window.clearInterval(worldGenerationPollTimer);
+    worldGenerationPollTimer = null;
+  }
+}
+
+function startWorldGenerationPolling() {
+  stopWorldGenerationPolling();
+  if (!worldState?.canManage) return;
+
+  worldGenerationPollTimer = window.setInterval(() => {
+    void loadWorldGenerationTasks();
+  }, 10000);
+}
+
+async function loadWorldGenerationTasks() {
+  if (!auth.getCurrentUser() || !worldState?.canManage) {
+    worldGenerationTasks = [];
+    renderWorldAssets();
+    stopWorldGenerationPolling();
+    return;
+  }
+
+  const response = await fetch(apiUrl("/api/v1/world/assets/generations"), {
+    credentials: "include"
+  });
+  if (!response.ok) {
+    return;
+  }
+
+  const payload = (await response.json()) as {
+    tasks: WorldAssetGenerationTask[];
+  };
+  const previousTaskStatusById = new Map(
+    worldGenerationTasks.map((task) => [task.id, task.status])
+  );
+  worldGenerationTasks = payload.tasks;
+  renderWorldAssets();
+
+  const hasNewlyCompletedTask = worldGenerationTasks.some((task) => {
+    if (task.status !== "COMPLETED") return false;
+    if (!task.generatedAssetId) return false;
+    return previousTaskStatusById.get(task.id) !== "COMPLETED";
+  });
+  if (hasNewlyCompletedTask) {
+    await loadWorldState();
+    return;
+  }
+
+  const latestFailedTask = worldGenerationTasks.find(
+    (task) =>
+      task.status === "FAILED" && previousTaskStatusById.get(task.id) !== "FAILED"
+  );
+  if (latestFailedTask) {
+    setWorldNotice(
+      latestFailedTask.failureReason
+        ? `Text-to-3D failed: ${latestFailedTask.failureReason}`
+        : "Text-to-3D generation failed"
+    );
+  }
+}
+
 function syncWorldVisibilityControls() {
   if (
     !worldPublicToggle ||
@@ -227,6 +308,9 @@ function syncWorldVisibilityControls() {
     worldNameInput.disabled = true;
     worldDescriptionInput.disabled = true;
     worldSettingsSaveButton.disabled = true;
+    if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
+    if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+    if (worldGenerateButton) worldGenerateButton.disabled = true;
     return;
   }
 
@@ -237,6 +321,9 @@ function syncWorldVisibilityControls() {
   worldNameInput.disabled = !worldState.canManageVisibility;
   worldDescriptionInput.disabled = !worldState.canManageVisibility;
   worldSettingsSaveButton.disabled = !worldState.canManageVisibility;
+  if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !worldState.canManage;
+  if (worldGenerateNameInput) worldGenerateNameInput.disabled = !worldState.canManage;
+  if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
 }
 
 function getWorldAssetLabel(asset: WorldAsset) {
@@ -261,12 +348,17 @@ function createReplaceInput(onSelect: (file: File) => void) {
 async function loadWorldState() {
   if (!auth.getCurrentUser()) {
     worldState = null;
+    worldGenerationTasks = [];
+    stopWorldGenerationPolling();
     game.setWorldData(null);
     setWorldNotice("Sign in to load world");
     if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
     if (worldUploadButton) worldUploadButton.disabled = true;
     if (worldModelFileInput) worldModelFileInput.disabled = true;
     if (worldModelNameInput) worldModelNameInput.disabled = true;
+    if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
+    if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+    if (worldGenerateButton) worldGenerateButton.disabled = true;
     syncWorldVisibilityControls();
     return;
   }
@@ -298,6 +390,9 @@ async function loadWorldState() {
   if (worldUploadButton) worldUploadButton.disabled = !payload.canManage;
   if (worldModelFileInput) worldModelFileInput.disabled = !payload.canManage;
   if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
+  if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !payload.canManage;
+  if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
+  if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
 
   const worldOwnerLabel =
     payload.worldOwnerId === auth.getCurrentUser()?.id ? "Your world" : "Visited world";
@@ -308,6 +403,8 @@ async function loadWorldState() {
   );
 
   syncWorldVisibilityControls();
+  startWorldGenerationPolling();
+  void loadWorldGenerationTasks();
   renderWorldAssets();
 }
 
@@ -315,7 +412,8 @@ function renderWorldAssets() {
   if (!worldAssetsContainer) return;
   worldAssetsContainer.innerHTML = "";
 
-  if (!worldState || worldState.assets.length === 0) {
+  const assets = worldState?.assets ?? [];
+  if (assets.length === 0 && worldGenerationTasks.length === 0) {
     const empty = document.createElement("div");
     empty.className = "party-empty";
     empty.textContent = "No models uploaded";
@@ -323,7 +421,22 @@ function renderWorldAssets() {
     return;
   }
 
-  for (const asset of worldState.assets) {
+  for (const task of worldGenerationTasks) {
+    if (task.status === "COMPLETED") continue;
+
+    const row = document.createElement("div");
+    row.className = "world-asset-row";
+
+    const label = document.createElement("div");
+    label.className = "party-result-label";
+    label.textContent = `${task.modelName} • ${getGenerationStatusLabel(task)}`;
+    label.title = task.prompt;
+
+    row.appendChild(label);
+    worldAssetsContainer.appendChild(row);
+  }
+
+  for (const asset of assets) {
     const row = document.createElement("div");
     row.className = "world-asset-row";
 
@@ -336,7 +449,7 @@ function renderWorldAssets() {
     placeButton.className = "party-secondary-button";
     placeButton.type = "button";
     placeButton.textContent = selectedPlacementAssetId === asset.id ? "Placing..." : "Place";
-    placeButton.disabled = !worldState.canManage;
+    placeButton.disabled = !worldState?.canManage;
     placeButton.addEventListener("click", () => {
       selectedPlacementAssetId = asset.id;
       isPlacingModel = true;
@@ -348,7 +461,7 @@ function renderWorldAssets() {
     replaceButton.className = "party-secondary-button";
     replaceButton.type = "button";
     replaceButton.textContent = "Replace";
-    replaceButton.disabled = !worldState.canManage;
+    replaceButton.disabled = !worldState?.canManage;
     replaceButton.addEventListener("click", () => {
       createReplaceInput(async (file) => {
         const formData = new FormData();
@@ -464,6 +577,8 @@ const auth = createAuthController({
 
     if (!user) {
       worldState = null;
+      worldGenerationTasks = [];
+      stopWorldGenerationPolling();
       isPlacingModel = false;
       selectedPlacementAssetId = null;
       game.setWorldData(null);
@@ -725,6 +840,50 @@ partyChat.onSubmit((text) => {
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
 setupTabs();
 
+worldGenerateForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!worldState?.canManage) {
+    setWorldNotice("Only world owners/managers can modify this world");
+    return;
+  }
+
+  const prompt = worldGeneratePromptInput?.value?.trim() ?? "";
+  if (!prompt) {
+    setWorldNotice("Enter a prompt first");
+    return;
+  }
+
+  void (async () => {
+    setWorldNotice("Queueing text-to-3D generation...");
+    const response = await fetch(apiUrl("/api/v1/world/assets/generate"), {
+      method: "POST",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        prompt,
+        name: worldGenerateNameInput?.value?.trim() ?? ""
+      })
+    });
+
+    if (!response.ok) {
+      setWorldNotice("Failed to queue text-to-3D job");
+      return;
+    }
+
+    if (worldGeneratePromptInput) {
+      worldGeneratePromptInput.value = "";
+    }
+    if (worldGenerateNameInput) {
+      worldGenerateNameInput.value = "";
+    }
+
+    setWorldNotice("Text-to-3D job queued. It will continue if you go offline.");
+    await loadWorldGenerationTasks();
+  })();
+});
+
 worldUploadForm?.addEventListener("submit", (event) => {
   event.preventDefault();
 
@@ -827,6 +986,9 @@ setWorldNotice("Sign in to load world");
 if (worldUploadButton) worldUploadButton.disabled = true;
 if (worldModelFileInput) worldModelFileInput.disabled = true;
 if (worldModelNameInput) worldModelNameInput.disabled = true;
+if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
+if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+if (worldGenerateButton) worldGenerateButton.disabled = true;
 syncWorldVisibilityControls();
 void auth.loadCurrentUser();
 realtime.connect();
