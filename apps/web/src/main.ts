@@ -603,6 +603,9 @@ const party = createPartyController({
 const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onStatus(status) {
     chat.setStatus(status);
+    if (status === "Connected" && auth.getCurrentUser()) {
+      void loadWorldState();
+    }
   },
   onSessionInfo(clientId) {
     selfClientId = clientId;
@@ -829,8 +832,3 @@ void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();
 game.start();
-
-window.setInterval(() => {
-  if (!auth.getCurrentUser()) return;
-  void loadWorldState();
-}, 5000);
