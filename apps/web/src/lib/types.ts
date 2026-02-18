@@ -54,7 +54,10 @@ export type PartyMember = {
 export type PartyState = {
   party: {
     id: string;
+    name: string;
+    description: string | null;
     leaderUserId: string;
+    isPublic: boolean;
     members: PartyMember[];
   } | null;
   pendingInvites: Array<{
@@ -101,8 +104,13 @@ export type WorldPlacement = {
 };
 
 export type WorldState = {
+  worldId: string;
+  worldName: string;
+  worldDescription: string | null;
   worldOwnerId: string;
   canManage: boolean;
+  isPublic: boolean;
+  canManageVisibility: boolean;
   assets: WorldAsset[];
   placements: WorldPlacement[];
 };

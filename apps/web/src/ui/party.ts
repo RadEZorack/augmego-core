@@ -2,9 +2,21 @@ import type { CurrentUser, PartyState } from "../lib/types";
 
 type SearchResult = {
   id: string;
-  name: string | null;
-  email: string | null;
-  avatarUrl: string | null;
+  name: string;
+  description: string | null;
+  owner: {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+  };
+  isPublic: boolean;
+  memberCount: number;
+  onlineVisitorCount: number;
+  modelCount: number;
+  placementCount: number;
+  updatedAt: string;
+  isCurrentWorld: boolean;
+  canJoin: boolean;
 };
 
 type PartyElements = {
@@ -23,7 +35,7 @@ type PartyElements = {
 type PartyControllerOptions = {
   elements: PartyElements;
   onSearch: (query: string) => Promise<SearchResult[]>;
-  onInviteUser: (userId: string) => void;
+  onJoinWorld: (worldId: string) => void;
   onInviteResponse: (inviteId: string, accept: boolean) => void;
   onLeave: () => void;
   onKick: (userId: string) => void;
@@ -42,7 +54,8 @@ export function createPartyController(options: PartyControllerOptions) {
   function canManageParty() {
     if (!currentUser) return false;
     if (!state.party) return false;
-    const me = state.party.members.find((member) => member.userId === currentUser.id);
+    const currentUserId = currentUser.id;
+    const me = state.party.members.find((member) => member.userId === currentUserId);
     if (!me) return false;
     return me.role === "LEADER" || me.role === "MANAGER";
   }
@@ -91,7 +104,7 @@ export function createPartyController(options: PartyControllerOptions) {
     const renderInviteText = () => {
       const secondsLeft = Math.max(0, Math.ceil((inviteDeadline - Date.now()) / 1000));
       options.elements.inviteModalText!.textContent =
-        `${invite.leader.name} invited you to join their party (${secondsLeft}s)`;
+        `${invite.leader.name} invited you to join their world (${secondsLeft}s)`;
       if (secondsLeft <= 0) {
         closeInviteModal();
       }
@@ -112,12 +125,13 @@ export function createPartyController(options: PartyControllerOptions) {
       leaveButton.disabled = true;
       const empty = document.createElement("div");
       empty.className = "party-empty";
-      empty.textContent = "Not in a party";
+      empty.textContent = "No active world";
       memberList.appendChild(empty);
       return;
     }
 
-    leaveButton.disabled = false;
+    leaveButton.disabled = isLeader();
+    leaveButton.title = isLeader() ? "World owners cannot leave their own world" : "Leave world";
 
     for (const member of state.party.members) {
       const row = document.createElement("div");
@@ -201,39 +215,59 @@ export function createPartyController(options: PartyControllerOptions) {
     if (searchResults.length === 0) {
       const row = document.createElement("div");
       row.className = "party-empty";
-      row.textContent = "No results";
+      row.textContent = "No worlds found";
       searchResultsEl.appendChild(row);
       return;
     }
 
-    const memberUserIds = new Set(state.party?.members.map((member) => member.userId) ?? []);
-
     for (const result of searchResults) {
       const row = document.createElement("div");
-      row.className = "party-result-row";
+      row.className = "world-card";
 
-      const label = document.createElement("div");
-      label.className = "party-result-label";
-      label.textContent = result.name || result.email || "User";
+      const title = document.createElement("div");
+      title.className = "world-card-title";
+      title.textContent = result.name;
+
+      const meta = document.createElement("div");
+      meta.className = "world-card-meta";
+      const visibilityLabel = result.isPublic ? "Public" : "Private";
+      meta.textContent = `${result.owner.name} • ${visibilityLabel} • ${result.onlineVisitorCount}/${result.memberCount} online`;
+
+      const details = document.createElement("div");
+      details.className = "world-card-details";
+      details.textContent = `${result.modelCount} models • ${result.placementCount} placements`;
+
+      const summary = document.createElement("div");
+      summary.className = "world-card-summary";
+      summary.textContent = result.description?.trim() || "No description";
+
+      const updated = document.createElement("div");
+      updated.className = "world-card-updated";
+      const updatedLabel = new Date(result.updatedAt).toLocaleString();
+      updated.textContent = `Updated ${updatedLabel}`;
 
       const inviteButton = document.createElement("button");
-      inviteButton.className = "party-invite-button";
+      inviteButton.className = "party-secondary-button";
       inviteButton.type = "button";
-      inviteButton.textContent = "+";
+      inviteButton.textContent = result.isCurrentWorld ? "Current World" : "Join";
 
-      const alreadyMember = memberUserIds.has(result.id);
-      inviteButton.disabled = !canInvite() || alreadyMember;
+      const alreadyMember = result.isCurrentWorld;
+      inviteButton.disabled = alreadyMember || !result.canJoin;
       inviteButton.title = alreadyMember
-        ? "Already in party"
-        : canInvite()
-          ? "Send invite"
-          : "Only leaders and managers can invite";
+        ? "Current world"
+        : result.canJoin
+          ? "Join world"
+          : "Private world";
 
       inviteButton.addEventListener("click", () => {
-        options.onInviteUser(result.id);
+        options.onJoinWorld(result.id);
       });
 
-      row.appendChild(label);
+      row.appendChild(title);
+      row.appendChild(meta);
+      row.appendChild(details);
+      row.appendChild(summary);
+      row.appendChild(updated);
       row.appendChild(inviteButton);
       searchResultsEl.appendChild(row);
     }
@@ -241,12 +275,6 @@ export function createPartyController(options: PartyControllerOptions) {
 
   async function runSearch() {
     const query = options.elements.searchInput?.value.trim() ?? "";
-    if (query.length < 2) {
-      searchResults = [];
-      renderSearchResults();
-      return;
-    }
-
     searchBusy = true;
     renderSearchResults();
 
@@ -301,13 +329,25 @@ export function createPartyController(options: PartyControllerOptions) {
   function setPartyState(nextState: PartyState) {
     state = nextState;
     if (!state.party) {
-      setStatus("No party");
+      setStatus("No world");
     } else if (isLeader()) {
-      setStatus(`Party leader (${state.party.members.length} members)`);
+      setStatus(
+        `${state.party.name} • World owner (${state.party.members.length} visitors) • ${
+          state.party.isPublic ? "Public" : "Private"
+        }`
+      );
     } else if (canManageParty()) {
-      setStatus(`Party manager (${state.party.members.length} members)`);
+      setStatus(
+        `${state.party.name} • World manager (${state.party.members.length} visitors) • ${
+          state.party.isPublic ? "Public" : "Private"
+        }`
+      );
     } else {
-      setStatus(`In party (${state.party.members.length} members)`);
+      setStatus(
+        `${state.party.name} • Visiting (${state.party.members.length} visitors) • ${
+          state.party.isPublic ? "Public" : "Private"
+        }`
+      );
     }
 
     if (!activeInviteId && state.pendingInvites.length > 0) {

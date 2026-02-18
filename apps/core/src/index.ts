@@ -7,7 +7,7 @@ import path from "node:path";
 import { mkdir } from "node:fs/promises";
 import { parseCookies, serializeCookie } from "./lib/cookies.js";
 import { resolveSessionUser } from "./lib/session.js";
-import { registerRealtimeWs } from "./realtime/ws.js";
+import { countOnlineUsersByIds, registerRealtimeWs } from "./realtime/ws.js";
 
 const prisma = new PrismaClient();
 
@@ -229,7 +229,30 @@ function toNumberOrDefault(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
+async function getDefaultWorldNameForUser(userId: string) {
+  const owner = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { name: true, email: true }
+  });
+  return `${owner?.name ?? owner?.email ?? "My"}'s World`;
+}
+
 async function resolveActiveWorldOwnerId(userId: string) {
+  const ownedWorld = await prisma.party.findFirst({
+    where: { leaderId: userId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true }
+  });
+  if (!ownedWorld) {
+    const defaultWorldName = await getDefaultWorldNameForUser(userId);
+    await prisma.party.create({
+      data: {
+        leaderId: userId,
+        name: defaultWorldName
+      }
+    });
+  }
+
   const membership = await prisma.partyMember.findUnique({
     where: { userId },
     include: {
@@ -265,6 +288,29 @@ async function canManageWorldOwner(userId: string, worldOwnerId: string) {
   if (!membership) return false;
   if (membership.party.leaderId !== worldOwnerId) return false;
   return membership.role === "MANAGER" || membership.party.leaderId === userId;
+}
+
+async function resolveActiveWorldPartyId(userId: string) {
+  const membership = await prisma.partyMember.findUnique({
+    where: { userId },
+    select: { partyId: true }
+  });
+  if (membership) return membership.partyId;
+
+  const ownedWorld =
+    (await prisma.party.findFirst({
+      where: { leaderId: userId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true }
+    })) ??
+    (await prisma.party.create({
+      data: {
+        leaderId: userId,
+        name: await getDefaultWorldNameForUser(userId)
+      },
+      select: { id: true }
+    }));
+  return ownedWorld.id;
 }
 
 async function saveWorldAssetFile(
@@ -878,7 +924,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       }
     });
   })
-  .get("/party/search", async ({ request }) => {
+  .get("/worlds/search", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
     if (!user) {
       return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
@@ -886,29 +932,120 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     const url = new URL(request.url);
     const query = url.searchParams.get("query")?.trim() ?? "";
-    if (query.length < 2) {
-      return jsonResponse({ results: [] });
-    }
+    const activeWorldId = await resolveActiveWorldPartyId(user.id);
 
-    const results = await prisma.user.findMany({
+    const matchingOwnerIds =
+      query.length >= 2
+        ? (
+            await prisma.user.findMany({
+              where: {
+                OR: [
+                  { name: { contains: query, mode: "insensitive" } },
+                  { email: { contains: query, mode: "insensitive" } }
+                ]
+              },
+              select: { id: true },
+              take: 40
+            })
+          ).map((item) => item.id)
+        : [];
+
+    const worlds = await prisma.party.findMany({
       where: {
-        id: { not: user.id },
-        OR: [
-          { name: { contains: query, mode: "insensitive" } },
-          { email: { contains: query, mode: "insensitive" } }
+        AND: [
+          { OR: [{ isPublic: true }, { leaderId: user.id }, { id: activeWorldId }] },
+          ...(query.length >= 2
+            ? [
+                {
+                  OR: [
+                    { leaderId: { in: matchingOwnerIds } },
+                    { name: { contains: query, mode: "insensitive" as const } },
+                    {
+                      description: {
+                        contains: query,
+                        mode: "insensitive" as const
+                      }
+                    }
+                  ]
+                }
+              ]
+            : [])
         ]
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { updatedAt: "desc" },
       take: 20,
       select: {
         id: true,
+        leaderId: true,
+        isPublic: true,
         name: true,
-        email: true,
-        avatarUrl: true
+        description: true,
+        updatedAt: true,
+        leader: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        },
+        _count: {
+          select: { members: true }
+        }
       }
     });
 
-    return jsonResponse({ results });
+    const ownerIds = [...new Set(worlds.map((world) => world.leaderId))];
+    const [assetCounts, placementCounts, memberUserIds] = await Promise.all([
+      prisma.worldAsset.groupBy({
+        by: ["worldOwnerId"],
+        where: { worldOwnerId: { in: ownerIds } },
+        _count: { _all: true }
+      }),
+      prisma.worldPlacement.groupBy({
+        by: ["worldOwnerId"],
+        where: { worldOwnerId: { in: ownerIds } },
+        _count: { _all: true }
+      }),
+      prisma.partyMember.findMany({
+        where: { partyId: { in: worlds.map((world) => world.id) } },
+        select: { partyId: true, userId: true }
+      })
+    ]);
+
+    const assetCountByOwnerId = new Map(
+      assetCounts.map((item) => [item.worldOwnerId, item._count._all])
+    );
+    const placementCountByOwnerId = new Map(
+      placementCounts.map((item) => [item.worldOwnerId, item._count._all])
+    );
+    const memberIdsByWorldId = new Map<string, string[]>();
+    for (const item of memberUserIds) {
+      const current = memberIdsByWorldId.get(item.partyId) ?? [];
+      current.push(item.userId);
+      memberIdsByWorldId.set(item.partyId, current);
+    }
+
+    return jsonResponse({
+      results: worlds.map((world) => ({
+        id: world.id,
+        name: world.name,
+        description: world.description,
+        owner: {
+          id: world.leader.id,
+          name: world.leader.name ?? world.leader.email ?? "User",
+          avatarUrl: world.leader.avatarUrl
+        },
+        isPublic: world.isPublic,
+        memberCount: world._count.members,
+        onlineVisitorCount: countOnlineUsersByIds(memberIdsByWorldId.get(world.id) ?? []),
+        modelCount: assetCountByOwnerId.get(world.leaderId) ?? 0,
+        placementCount: placementCountByOwnerId.get(world.leaderId) ?? 0,
+        updatedAt: world.updatedAt.toISOString(),
+        isCurrentWorld: world.id === activeWorldId,
+        canJoin: world.isPublic || world.id === activeWorldId || world.leaderId === user.id
+      }))
+    });
   })
   .get("/world", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
@@ -917,7 +1054,12 @@ const api = new Elysia({ prefix: "/api/v1" })
     }
 
     const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const activeWorldPartyId = await resolveActiveWorldPartyId(user.id);
     const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    const activeWorld = await prisma.party.findUnique({
+      where: { id: activeWorldPartyId },
+      select: { id: true, isPublic: true, leaderId: true, name: true, description: true }
+    });
 
     const [assets, placements] = await Promise.all([
       prisma.worldAsset.findMany({
@@ -946,7 +1088,12 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     return jsonResponse({
       worldOwnerId,
+      worldId: activeWorld?.id ?? activeWorldPartyId,
+      worldName: activeWorld?.name ?? "Untitled World",
+      worldDescription: activeWorld?.description ?? null,
       canManage,
+      isPublic: activeWorld?.isPublic ?? false,
+      canManageVisibility: (activeWorld?.leaderId ?? "") === user.id,
       assets: assets.map((asset) => ({
         id: asset.id,
         name: asset.name,
@@ -999,6 +1146,97 @@ const api = new Elysia({ prefix: "/api/v1" })
         updatedAt: placement.updatedAt.toISOString()
       }))
     });
+  })
+  .patch("/world/settings", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      name?: unknown;
+      description?: unknown;
+      isPublic?: unknown;
+    } | null;
+
+    if (!body) {
+      return jsonResponse({ error: "INVALID_SETTINGS" }, { status: 400 });
+    }
+
+    const activeWorldPartyId = await resolveActiveWorldPartyId(user.id);
+    const activeWorld = await prisma.party.findUnique({
+      where: { id: activeWorldPartyId },
+      select: { id: true, leaderId: true }
+    });
+    if (!activeWorld || activeWorld.leaderId !== user.id) {
+      return jsonResponse({ error: "WORLD_OWNER_REQUIRED" }, { status: 403 });
+    }
+
+    const name =
+      typeof body.name === "string" ? body.name.trim().slice(0, 80) : undefined;
+    const description =
+      typeof body.description === "string"
+        ? body.description.trim().slice(0, 240)
+        : undefined;
+
+    if (name !== undefined && name.length === 0) {
+      return jsonResponse({ error: "INVALID_WORLD_NAME" }, { status: 400 });
+    }
+
+    const updated = await prisma.party.update({
+      where: { id: activeWorld.id },
+      data: {
+        ...(name !== undefined ? { name } : {}),
+        ...(description !== undefined ? { description: description || null } : {}),
+        ...(typeof body.isPublic === "boolean" ? { isPublic: body.isPublic } : {})
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        isPublic: true
+      }
+    });
+
+    return jsonResponse({
+      ok: true,
+      world: {
+        id: updated.id,
+        name: updated.name,
+        description: updated.description,
+        isPublic: updated.isPublic
+      }
+    });
+  })
+  .patch("/world/visibility", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      isPublic?: unknown;
+    } | null;
+
+    if (!body || typeof body.isPublic !== "boolean") {
+      return jsonResponse({ error: "INVALID_VISIBILITY" }, { status: 400 });
+    }
+
+    const activeWorldPartyId = await resolveActiveWorldPartyId(user.id);
+    const activeWorld = await prisma.party.findUnique({
+      where: { id: activeWorldPartyId },
+      select: { id: true, leaderId: true }
+    });
+    if (!activeWorld || activeWorld.leaderId !== user.id) {
+      return jsonResponse({ error: "WORLD_OWNER_REQUIRED" }, { status: 403 });
+    }
+
+    await prisma.party.update({
+      where: { id: activeWorld.id },
+      data: { isPublic: body.isPublic }
+    });
+
+    return jsonResponse({ ok: true, isPublic: body.isPublic });
   })
   .post("/world/assets", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);

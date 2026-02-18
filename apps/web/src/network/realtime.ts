@@ -288,6 +288,17 @@ export function createRealtimeClient(
     return true;
   }
 
+  function sendWorldJoin(worldId: string) {
+    if (!isOpen() || !socket) return false;
+    socket.send(
+      JSON.stringify({
+        type: "world:join",
+        worldId
+      })
+    );
+    return true;
+  }
+
   return {
     connect,
     isOpen,
@@ -300,6 +311,7 @@ export function createRealtimeClient(
     sendPartyLeave,
     sendPartyKick,
     sendPartyPromote,
-    sendPartyChat
+    sendPartyChat,
+    sendWorldJoin
   };
 }

@@ -50,6 +50,9 @@ model Session {
 model Party {
   id        String       @id @default(uuid()) @db.Uuid
   leaderId  String       @db.Uuid
+  name      String       @default("Untitled World")
+  description String?
+  isPublic  Boolean      @default(false)
   leader    User         @relation("PartyLeader", fields: [leaderId], references: [id], onDelete: Cascade)
   members   PartyMember[]
   createdAt DateTime     @default(now())

@@ -130,6 +130,15 @@ const worldModelNameInput = document.getElementById("world-model-name") as HTMLI
 const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
 const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
 const worldAssetsContainer = document.getElementById("world-assets") as HTMLDivElement | null;
+const worldSettingsForm = document.getElementById("world-settings-form") as HTMLFormElement | null;
+const worldNameInput = document.getElementById("world-name-input") as HTMLInputElement | null;
+const worldDescriptionInput = document.getElementById(
+  "world-description-input"
+) as HTMLInputElement | null;
+const worldPublicToggle = document.getElementById("world-public-toggle") as HTMLInputElement | null;
+const worldSettingsSaveButton = document.getElementById(
+  "world-settings-save"
+) as HTMLButtonElement | null;
 
 const playersByClientId = new Map<string, PlayerPayload>();
 const knownRemoteVolumeIds = new Set<string>();
@@ -201,6 +210,35 @@ function setWorldNotice(message: string) {
   worldStatus.textContent = message;
 }
 
+function syncWorldVisibilityControls() {
+  if (
+    !worldPublicToggle ||
+    !worldSettingsSaveButton ||
+    !worldNameInput ||
+    !worldDescriptionInput
+  ) {
+    return;
+  }
+  if (!worldState) {
+    worldNameInput.value = "";
+    worldDescriptionInput.value = "";
+    worldPublicToggle.checked = false;
+    worldPublicToggle.disabled = true;
+    worldNameInput.disabled = true;
+    worldDescriptionInput.disabled = true;
+    worldSettingsSaveButton.disabled = true;
+    return;
+  }
+
+  worldNameInput.value = worldState.worldName;
+  worldDescriptionInput.value = worldState.worldDescription ?? "";
+  worldPublicToggle.checked = worldState.isPublic;
+  worldPublicToggle.disabled = !worldState.canManageVisibility;
+  worldNameInput.disabled = !worldState.canManageVisibility;
+  worldDescriptionInput.disabled = !worldState.canManageVisibility;
+  worldSettingsSaveButton.disabled = !worldState.canManageVisibility;
+}
+
 function getWorldAssetLabel(asset: WorldAsset) {
   const currentVersion = asset.currentVersion?.version ?? 0;
   return `${asset.name} (v${currentVersion})`;
@@ -229,6 +267,7 @@ async function loadWorldState() {
     if (worldUploadButton) worldUploadButton.disabled = true;
     if (worldModelFileInput) worldModelFileInput.disabled = true;
     if (worldModelNameInput) worldModelNameInput.disabled = true;
+    syncWorldVisibilityControls();
     return;
   }
 
@@ -243,17 +282,32 @@ async function loadWorldState() {
 
   const payload = (await response.json()) as WorldState;
   worldState = payload;
+  if (partyState.party) {
+    partyState = {
+      ...partyState,
+      party: {
+        ...partyState.party,
+        name: payload.worldName,
+        description: payload.worldDescription,
+        isPublic: payload.isPublic
+      }
+    };
+    party.setPartyState(partyState);
+  }
   game.setWorldData(payload);
   if (worldUploadButton) worldUploadButton.disabled = !payload.canManage;
   if (worldModelFileInput) worldModelFileInput.disabled = !payload.canManage;
   if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
 
   const worldOwnerLabel =
-    payload.worldOwnerId === auth.getCurrentUser()?.id ? "Your world" : "Party leader world";
+    payload.worldOwnerId === auth.getCurrentUser()?.id ? "Your world" : "Visited world";
   setWorldNotice(
-    `${worldOwnerLabel} • ${payload.assets.length} models • ${payload.placements.length} placements`
+    `${payload.worldName} • ${worldOwnerLabel} • ${payload.isPublic ? "Public" : "Private"} • ${
+      payload.assets.length
+    } models • ${payload.placements.length} placements`
   );
 
+  syncWorldVisibilityControls();
   renderWorldAssets();
 }
 
@@ -406,7 +460,7 @@ const auth = createAuthController({
     party.setCurrentUser(user);
 
     const canPartyChat = Boolean(user) && Boolean(partyState.party);
-    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a party to chat");
+    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a world to chat");
 
     if (!user) {
       worldState = null;
@@ -415,6 +469,7 @@ const auth = createAuthController({
       game.setWorldData(null);
       setWorldNotice("Sign in to load world");
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
+      syncWorldVisibilityControls();
       return;
     }
 
@@ -495,29 +550,41 @@ const party = createPartyController({
   },
   async onSearch(query) {
     const response = await fetch(
-      apiUrl(`/api/v1/party/search?query=${encodeURIComponent(query)}`),
+      apiUrl(`/api/v1/worlds/search?query=${encodeURIComponent(query)}`),
       {
         credentials: "include"
       }
     );
 
     if (!response.ok) {
-      throw new Error("Party search failed");
+      throw new Error("World search failed");
     }
 
     const payload = (await response.json()) as {
       results: Array<{
         id: string;
-        name: string | null;
-        email: string | null;
-        avatarUrl: string | null;
+        name: string;
+        description: string | null;
+        owner: {
+          id: string;
+          name: string;
+          avatarUrl: string | null;
+        };
+        isPublic: boolean;
+        memberCount: number;
+        onlineVisitorCount: number;
+        modelCount: number;
+        placementCount: number;
+        updatedAt: string;
+        isCurrentWorld: boolean;
+        canJoin: boolean;
       }>;
     };
 
     return payload.results;
   },
-  onInviteUser(userId) {
-    realtime.sendPartyInvite({ targetUserId: userId });
+  onJoinWorld(worldId) {
+    realtime.sendWorldJoin(worldId);
   },
   onInviteResponse(inviteId, accept) {
     realtime.sendPartyInviteResponse(inviteId, accept);
@@ -536,6 +603,9 @@ const party = createPartyController({
 const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onStatus(status) {
     chat.setStatus(status);
+    if (status === "Connected" && auth.getCurrentUser()) {
+      void loadWorldState();
+    }
   },
   onSessionInfo(clientId) {
     selfClientId = clientId;
@@ -591,8 +661,8 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     party.setPartyState(state);
 
     const canPartyChat = Boolean(auth.getCurrentUser()) && Boolean(state.party);
-    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a party to chat");
-    partyChat.setStatus(state.party ? "Connected" : "Join a party to chat");
+    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a world to chat");
+    partyChat.setStatus(state.party ? "Connected" : "Join a world to chat");
 
     syncMediaPeersAndVolumes();
     void loadWorldState();
@@ -611,7 +681,7 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   },
   onAuthRequired() {
     chat.setStatus("Sign in to send messages");
-    party.setNotice("Sign in to use parties");
+    party.setNotice("Sign in to use worlds");
   },
   onError(code, payload) {
     const partyErrorCodes = new Set([
@@ -624,7 +694,10 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
       "NOT_IN_PARTY",
       "INVITE_EXPIRED",
       "PARTY_MEDIA_RESTRICTED",
-      "CANNOT_KICK_LEADER"
+      "CANNOT_KICK_LEADER",
+      "WORLD_NOT_PUBLIC",
+      "WORLD_NOT_FOUND",
+      "WORLD_OWNER_CANNOT_LEAVE"
     ]);
 
     if (partyErrorCodes.has(code)) {
@@ -661,7 +734,7 @@ worldUploadForm?.addEventListener("submit", (event) => {
     return;
   }
   if (!worldState?.canManage) {
-    setWorldNotice("Only party leader/managers can modify this world");
+    setWorldNotice("Only world owners/managers can modify this world");
     return;
   }
 
@@ -693,6 +766,48 @@ worldUploadForm?.addEventListener("submit", (event) => {
   })();
 });
 
+worldSettingsForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (
+    !worldState?.canManageVisibility ||
+    !worldPublicToggle ||
+    !worldNameInput ||
+    !worldDescriptionInput
+  ) {
+    return;
+  }
+
+  void (async () => {
+    const name = worldNameInput.value.trim();
+    if (!name) {
+      setWorldNotice("World name is required");
+      return;
+    }
+    const isPublic = worldPublicToggle.checked;
+    const description = worldDescriptionInput.value.trim();
+    const response = await fetch(apiUrl("/api/v1/world/settings"), {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        name,
+        description,
+        isPublic
+      })
+    });
+
+    if (!response.ok) {
+      setWorldNotice("World settings update failed");
+      return;
+    }
+
+    await loadWorldState();
+    party.setNotice("World settings saved");
+  })();
+});
+
 const shouldMinimizeByDefault = window.matchMedia(
   "(max-width: 700px) and (max-height: 850px)"
 ).matches;
@@ -707,17 +822,13 @@ media.setMicMuted(webrtc.getMicMuted());
 media.setCameraEnabled(webrtc.getCameraEnabled());
 game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 media.setPermissionState("not_requested");
-partyChat.setCanPost(false, "Join a party to chat");
+partyChat.setCanPost(false, "Join a world to chat");
 setWorldNotice("Sign in to load world");
 if (worldUploadButton) worldUploadButton.disabled = true;
 if (worldModelFileInput) worldModelFileInput.disabled = true;
 if (worldModelNameInput) worldModelNameInput.disabled = true;
+syncWorldVisibilityControls();
 void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();
 game.start();
-
-window.setInterval(() => {
-  if (!auth.getCurrentUser()) return;
-  void loadWorldState();
-}, 5000);
