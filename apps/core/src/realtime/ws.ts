@@ -170,11 +170,40 @@ function isMediaAllowedBetweenClients(fromClientId: string, toClientId: string) 
 }
 
 async function resolvePartyIdForUser(prisma: PrismaClient, userId: string) {
-  const membership = await prisma.partyMember.findUnique({
+  const existingMembership = await prisma.partyMember.findUnique({
     where: { userId },
     select: { partyId: true }
   });
-  return membership?.partyId ?? null;
+  if (existingMembership) {
+    return existingMembership.partyId;
+  }
+
+  let ownedWorld = await prisma.party.findFirst({
+    where: { leaderId: userId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true }
+  });
+
+  if (!ownedWorld) {
+    ownedWorld = await prisma.party.create({
+      data: {
+        leaderId: userId
+      },
+      select: { id: true }
+    });
+  }
+
+  const membership = await prisma.partyMember.upsert({
+    where: { userId },
+    update: {},
+    create: {
+      partyId: ownedWorld.id,
+      userId
+    },
+    select: { partyId: true }
+  });
+
+  return membership.partyId;
 }
 
 async function updateSocketPartyIdsForUsers(prisma: PrismaClient, userIds: string[]) {
@@ -242,25 +271,22 @@ function hasPartyManagePermissions(membership: {
 async function buildPartyStateForUser(prisma: PrismaClient, user: SessionUser) {
   cleanupExpiredInvites();
 
-  const membership = await prisma.partyMember.findUnique({
-    where: { userId: user.id },
+  const partyId = await resolvePartyIdForUser(prisma, user.id);
+  const party = await prisma.party.findUnique({
+    where: { id: partyId },
     include: {
-      party: {
+      members: {
         include: {
-          members: {
-            include: {
-              user: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  avatarUrl: true
-                }
-              }
-            },
-            orderBy: { createdAt: "asc" }
+          user: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              avatarUrl: true
+            }
           }
-        }
+        },
+        orderBy: { createdAt: "asc" }
       }
     }
   });
@@ -279,18 +305,18 @@ async function buildPartyStateForUser(prisma: PrismaClient, user: SessionUser) {
     expiresAt: new Date(invite.expiresAtMs).toISOString()
   }));
 
-  if (!membership) {
+  if (!party) {
     return {
       party: null,
       pendingInvites
     };
   }
 
-  const party = membership.party;
   return {
     party: {
       id: party.id,
       leaderUserId: party.leaderId,
+      isPublic: party.isPublic,
       members: party.members.map((member) => {
         const onlineClientId = getOnlineClientIdForUser(member.userId);
         const isLeader = member.userId === party.leaderId;
@@ -365,12 +391,13 @@ function broadcastPartyPresenceForUsers(userIds: string[]) {
 }
 
 async function ensureManagerOrCreateLeaderParty(prisma: PrismaClient, userId: string) {
+  const partyId = await resolvePartyIdForUser(prisma, userId);
   const membership = await prisma.partyMember.findUnique({
     where: { userId },
     include: { party: true }
   });
 
-  if (membership) {
+  if (membership && membership.partyId === partyId) {
     return {
       partyId: membership.partyId,
       canManage: hasPartyManagePermissions(membership),
@@ -378,27 +405,49 @@ async function ensureManagerOrCreateLeaderParty(prisma: PrismaClient, userId: st
     };
   }
 
-  const created = await prisma.$transaction(async (tx) => {
-    const party = await tx.party.create({
-      data: {
-        leaderId: userId
-      }
-    });
+  return {
+    partyId,
+    canManage: membership ? hasPartyManagePermissions(membership) : false,
+    created: false
+  };
+}
 
-    await tx.partyMember.create({
-      data: {
-        partyId: party.id,
-        userId
-      }
-    });
+async function switchUserToParty(
+  prisma: PrismaClient,
+  userId: string,
+  partyId: string
+) {
+  const previousMembership = await prisma.partyMember.findUnique({
+    where: { userId },
+    select: { partyId: true }
+  });
 
-    return party;
+  if (previousMembership?.partyId === partyId) {
+    return {
+      changed: false,
+      affectedUserIds: [userId]
+    };
+  }
+
+  await prisma.partyMember.upsert({
+    where: { userId },
+    update: { partyId },
+    create: { userId, partyId }
+  });
+
+  const partyIds = [partyId];
+  if (previousMembership?.partyId && previousMembership.partyId !== partyId) {
+    partyIds.push(previousMembership.partyId);
+  }
+
+  const relatedMembers = await prisma.partyMember.findMany({
+    where: { partyId: { in: partyIds } },
+    select: { userId: true }
   });
 
   return {
-    partyId: created.id,
-    canManage: true,
-    created: true
+    changed: true,
+    affectedUserIds: [...new Set([userId, ...relatedMembers.map((member) => member.userId)])]
   };
 }
 
@@ -670,7 +719,7 @@ export function registerRealtimeWs<
           where: { userId: targetUserId },
           select: { partyId: true }
         });
-        if (targetMembership) {
+        if (targetMembership?.partyId === partyInfo.partyId) {
           sendJson(ws, { type: "error", code: "TARGET_ALREADY_IN_PARTY" });
           return;
         }
@@ -786,56 +835,26 @@ export function registerRealtimeWs<
           return;
         }
 
-        const joined = await options.prisma.$transaction(async (tx) => {
-          const alreadyMember = await tx.partyMember.findUnique({
-            where: { userId: user.id },
-            select: { partyId: true }
-          });
-          if (alreadyMember) {
-            return { ok: false as const, reason: "TARGET_ALREADY_IN_PARTY" };
-          }
-
-          const party = await tx.party.findUnique({
-            where: { id: invite.partyId },
-            select: { id: true }
-          });
-          if (!party) {
-            return { ok: false as const, reason: "PARTY_NOT_FOUND" };
-          }
-
-          await tx.partyMember.create({
-            data: {
-              partyId: invite.partyId,
-              userId: user.id
-            }
-          });
-
-          return { ok: true as const, partyId: invite.partyId };
+        const targetParty = await options.prisma.party.findUnique({
+          where: { id: invite.partyId },
+          select: { id: true }
         });
-
-        if (!joined.ok) {
-          sendJson(ws, { type: "error", code: joined.reason });
+        if (!targetParty) {
+          sendJson(ws, { type: "error", code: "PARTY_NOT_FOUND" });
           await sendPartyStateToUser(options.prisma, user);
           return;
         }
 
-        const partyMembers = await options.prisma.partyMember.findMany({
-          where: { partyId: joined.partyId },
-          include: {
-            user: {
-              select: {
-                id: true,
-                name: true,
-                email: true,
-                avatarUrl: true
-              }
-            }
+        const switched = await switchUserToParty(options.prisma, user.id, invite.partyId);
+        const affectedUsers = await options.prisma.user.findMany({
+          where: { id: { in: switched.affectedUserIds } },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
           }
         });
-
-        const affectedUsers = partyMembers
-          .map((member) => member.user)
-          .filter((member): member is SessionUser => Boolean(member));
 
         await updateSocketPartyIdsForUsers(
           options.prisma,
@@ -861,14 +880,34 @@ export function registerRealtimeWs<
           return;
         }
 
-        const result = await removeUserFromParty(options.prisma, user.id);
-        if (!result) {
+        const membership = await options.prisma.partyMember.findUnique({
+          where: { userId: user.id },
+          include: { party: { select: { leaderId: true } } }
+        });
+        if (!membership) {
           sendJson(ws, { type: "error", code: "NOT_IN_PARTY" });
           return;
         }
 
+        if (membership.party.leaderId === user.id) {
+          sendJson(ws, { type: "error", code: "WORLD_OWNER_CANNOT_LEAVE" });
+          return;
+        }
+
+        const ownedWorld =
+          (await options.prisma.party.findFirst({
+            where: { leaderId: user.id },
+            orderBy: { createdAt: "asc" },
+            select: { id: true }
+          })) ??
+          (await options.prisma.party.create({
+            data: { leaderId: user.id },
+            select: { id: true }
+          }));
+
+        const switched = await switchUserToParty(options.prisma, user.id, ownedWorld.id);
         const affectedUsers = await options.prisma.user.findMany({
-          where: { id: { in: result.affectedUserIds } },
+          where: { id: { in: switched.affectedUserIds } },
           select: {
             id: true,
             name: true,
@@ -884,6 +923,59 @@ export function registerRealtimeWs<
         await sendPartyStateToUsers(options.prisma, affectedUsers);
         broadcastPartyPresenceForUsers(affectedUsers.map((item) => item.id));
 
+        return;
+      }
+
+      if (parsed.type === "world:join") {
+        const user = socketUsers.get(ws.id);
+        if (!user) {
+          sendJson(ws, { type: "error", code: "AUTH_REQUIRED" });
+          return;
+        }
+
+        const targetWorldId =
+          typeof parsed.worldId === "string" ? parsed.worldId.trim() : "";
+        if (!targetWorldId) {
+          sendJson(ws, { type: "error", code: "INVALID_WORLD_ID" });
+          return;
+        }
+
+        const targetWorld = await options.prisma.party.findUnique({
+          where: { id: targetWorldId },
+          select: { id: true, isPublic: true, leaderId: true }
+        });
+        if (!targetWorld) {
+          sendJson(ws, { type: "error", code: "WORLD_NOT_FOUND" });
+          return;
+        }
+
+        if (!targetWorld.isPublic && targetWorld.leaderId !== user.id) {
+          sendJson(ws, { type: "error", code: "WORLD_NOT_PUBLIC" });
+          return;
+        }
+
+        const switched = await switchUserToParty(options.prisma, user.id, targetWorld.id);
+        if (!switched.changed) {
+          await sendPartyStateToUser(options.prisma, user);
+          return;
+        }
+
+        const affectedUsers = await options.prisma.user.findMany({
+          where: { id: { in: switched.affectedUserIds } },
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        });
+
+        await updateSocketPartyIdsForUsers(
+          options.prisma,
+          affectedUsers.map((item) => item.id)
+        );
+        await sendPartyStateToUsers(options.prisma, affectedUsers);
+        broadcastPartyPresenceForUsers(affectedUsers.map((item) => item.id));
         return;
       }
 

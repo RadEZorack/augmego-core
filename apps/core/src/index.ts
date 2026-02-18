@@ -230,6 +230,17 @@ function toNumberOrDefault(value: unknown, fallback: number) {
 }
 
 async function resolveActiveWorldOwnerId(userId: string) {
+  const ownedWorld = await prisma.party.findFirst({
+    where: { leaderId: userId },
+    orderBy: { createdAt: "asc" },
+    select: { id: true }
+  });
+  if (!ownedWorld) {
+    await prisma.party.create({
+      data: { leaderId: userId }
+    });
+  }
+
   const membership = await prisma.partyMember.findUnique({
     where: { userId },
     include: {
@@ -265,6 +276,26 @@ async function canManageWorldOwner(userId: string, worldOwnerId: string) {
   if (!membership) return false;
   if (membership.party.leaderId !== worldOwnerId) return false;
   return membership.role === "MANAGER" || membership.party.leaderId === userId;
+}
+
+async function resolveActiveWorldPartyId(userId: string) {
+  const membership = await prisma.partyMember.findUnique({
+    where: { userId },
+    select: { partyId: true }
+  });
+  if (membership) return membership.partyId;
+
+  const ownedWorld =
+    (await prisma.party.findFirst({
+      where: { leaderId: userId },
+      orderBy: { createdAt: "asc" },
+      select: { id: true }
+    })) ??
+    (await prisma.party.create({
+      data: { leaderId: userId },
+      select: { id: true }
+    }));
+  return ownedWorld.id;
 }
 
 async function saveWorldAssetFile(
@@ -878,7 +909,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       }
     });
   })
-  .get("/party/search", async ({ request }) => {
+  .get("/worlds/search", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
     if (!user) {
       return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
@@ -886,29 +917,63 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     const url = new URL(request.url);
     const query = url.searchParams.get("query")?.trim() ?? "";
-    if (query.length < 2) {
-      return jsonResponse({ results: [] });
-    }
+    const activeWorldId = await resolveActiveWorldPartyId(user.id);
 
-    const results = await prisma.user.findMany({
+    const matchingOwnerIds =
+      query.length >= 2
+        ? (
+            await prisma.user.findMany({
+              where: {
+                OR: [
+                  { name: { contains: query, mode: "insensitive" } },
+                  { email: { contains: query, mode: "insensitive" } }
+                ]
+              },
+              select: { id: true },
+              take: 40
+            })
+          ).map((item) => item.id)
+        : [];
+
+    const worlds = await prisma.party.findMany({
       where: {
-        id: { not: user.id },
-        OR: [
-          { name: { contains: query, mode: "insensitive" } },
-          { email: { contains: query, mode: "insensitive" } }
-        ]
+        OR: [{ isPublic: true }, { leaderId: user.id }, { id: activeWorldId }],
+        ...(query.length >= 2 ? { leaderId: { in: matchingOwnerIds } } : {})
       },
-      orderBy: { createdAt: "desc" },
+      orderBy: { updatedAt: "desc" },
       take: 20,
       select: {
         id: true,
-        name: true,
-        email: true,
-        avatarUrl: true
+        leaderId: true,
+        isPublic: true,
+        leader: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        },
+        _count: {
+          select: { members: true }
+        }
       }
     });
 
-    return jsonResponse({ results });
+    return jsonResponse({
+      results: worlds.map((world) => ({
+        id: world.id,
+        owner: {
+          id: world.leader.id,
+          name: world.leader.name ?? world.leader.email ?? "User",
+          avatarUrl: world.leader.avatarUrl
+        },
+        isPublic: world.isPublic,
+        memberCount: world._count.members,
+        isCurrentWorld: world.id === activeWorldId,
+        canJoin: world.isPublic || world.id === activeWorldId || world.leaderId === user.id
+      }))
+    });
   })
   .get("/world", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
@@ -917,7 +982,12 @@ const api = new Elysia({ prefix: "/api/v1" })
     }
 
     const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const activeWorldPartyId = await resolveActiveWorldPartyId(user.id);
     const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    const activeWorld = await prisma.party.findUnique({
+      where: { id: activeWorldPartyId },
+      select: { isPublic: true, leaderId: true }
+    });
 
     const [assets, placements] = await Promise.all([
       prisma.worldAsset.findMany({
@@ -947,6 +1017,8 @@ const api = new Elysia({ prefix: "/api/v1" })
     return jsonResponse({
       worldOwnerId,
       canManage,
+      isPublic: activeWorld?.isPublic ?? false,
+      canManageVisibility: (activeWorld?.leaderId ?? "") === user.id,
       assets: assets.map((asset) => ({
         id: asset.id,
         name: asset.name,
@@ -999,6 +1071,36 @@ const api = new Elysia({ prefix: "/api/v1" })
         updatedAt: placement.updatedAt.toISOString()
       }))
     });
+  })
+  .patch("/world/visibility", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      isPublic?: unknown;
+    } | null;
+
+    if (!body || typeof body.isPublic !== "boolean") {
+      return jsonResponse({ error: "INVALID_VISIBILITY" }, { status: 400 });
+    }
+
+    const activeWorldPartyId = await resolveActiveWorldPartyId(user.id);
+    const activeWorld = await prisma.party.findUnique({
+      where: { id: activeWorldPartyId },
+      select: { id: true, leaderId: true }
+    });
+    if (!activeWorld || activeWorld.leaderId !== user.id) {
+      return jsonResponse({ error: "WORLD_OWNER_REQUIRED" }, { status: 403 });
+    }
+
+    await prisma.party.update({
+      where: { id: activeWorld.id },
+      data: { isPublic: body.isPublic }
+    });
+
+    return jsonResponse({ ok: true, isPublic: body.isPublic });
   })
   .post("/world/assets", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);

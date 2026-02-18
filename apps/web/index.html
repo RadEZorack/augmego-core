@@ -68,7 +68,7 @@
             Global Chat
           </button>
           <button id="tab-party" class="dock-tab" type="button" role="tab" aria-selected="false">
-            Party
+            Worlds
           </button>
           <button id="tab-media" class="dock-tab" type="button" role="tab" aria-selected="false">
             Media
@@ -130,22 +130,31 @@
       </div>
 
       <div id="pane-party" class="dock-pane" role="tabpanel" aria-labelledby="tab-party">
-        <div class="party-status" id="party-status">No party</div>
+        <div class="party-status" id="party-status">No world</div>
         <div class="party-search">
           <input
             id="party-search-input"
             class="party-search-input"
             type="text"
-            placeholder="Search name or email"
+            placeholder="Search public worlds"
             autocomplete="off"
           />
           <button id="party-search-button" class="party-search-button" type="button">Find</button>
         </div>
         <div class="party-search-results" id="party-search-results"></div>
-        <div class="party-members-title">Party Members</div>
+        <div class="party-members-title">Current World Visitors</div>
         <div class="party-members" id="party-members"></div>
         <button id="party-leave-button" class="party-leave-button" type="button" disabled>
-          Leave Party
+          Leave World
+        </button>
+
+        <div class="party-members-title">World Visibility</div>
+        <div class="party-search">
+          <label for="world-public-toggle" class="party-result-label">Public world</label>
+          <input id="world-public-toggle" type="checkbox" />
+        </div>
+        <button id="world-public-save" class="party-secondary-button" type="button" disabled>
+          Save Visibility
         </button>
 
         <div class="party-members-title">World Models</div>
@@ -164,8 +173,8 @@
         <div class="party-search-results" id="world-assets"></div>
 
         <div class="chat-header">
-          <span>Party Chat</span>
-          <span class="chat-status" id="party-chat-status">Join a party to chat</span>
+          <span>World Chat</span>
+          <span class="chat-status" id="party-chat-status">Join a world to chat</span>
         </div>
         <div class="chat-log" id="party-chat-log" role="log" aria-live="polite"></div>
         <form class="chat-form" id="party-chat-form">
@@ -174,7 +183,7 @@
             class="chat-input"
             type="text"
             maxlength="500"
-            placeholder="Join a party to chat"
+            placeholder="Join a world to chat"
             autocomplete="off"
           />
           <button id="party-chat-send" class="chat-send" type="submit">Send</button>
@@ -184,7 +193,7 @@
 
     <div id="party-invite-modal" class="party-invite-modal" role="dialog" aria-modal="true">
       <div class="party-invite-card">
-        <div class="party-invite-title">Party Invite</div>
+        <div class="party-invite-title">World Invite</div>
         <div id="party-invite-text" class="party-invite-text"></div>
         <div class="party-invite-actions">
           <button id="party-invite-accept" class="party-search-button" type="button">Accept</button>
