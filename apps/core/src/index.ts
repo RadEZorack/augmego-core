@@ -85,7 +85,29 @@ const MESHY_API_BASE_URL = normalizeBaseUrl(
 );
 const MESHY_API_KEY = process.env.MESHY_API_KEY ?? "";
 const MESHY_TEXT_TO_3D_MODEL = process.env.MESHY_TEXT_TO_3D_MODEL ?? "";
-const MESHY_TEXT_TO_3D_MODE = process.env.MESHY_TEXT_TO_3D_MODE ?? "preview";
+const MESHY_TEXT_TO_3D_ENABLE_REFINE =
+  (process.env.MESHY_TEXT_TO_3D_ENABLE_REFINE ?? "true").toLowerCase() !==
+  "false";
+const MESHY_TEXT_TO_3D_REFINE_MODEL =
+  process.env.MESHY_TEXT_TO_3D_REFINE_MODEL ?? "";
+const MESHY_TEXT_TO_3D_ENABLE_PBR =
+  (process.env.MESHY_TEXT_TO_3D_ENABLE_PBR ?? "false").toLowerCase() ===
+  "true";
+const MESHY_TEXT_TO_3D_TOPOLOGY = (
+  process.env.MESHY_TEXT_TO_3D_TOPOLOGY ?? "triangle"
+).toLowerCase();
+const MESHY_TEXT_TO_3D_TARGET_POLYCOUNT = (() => {
+  const value = Number(process.env.MESHY_TEXT_TO_3D_TARGET_POLYCOUNT ?? "");
+  if (!Number.isFinite(value)) return null;
+  const normalized = Math.floor(value);
+  if (normalized < 100 || normalized > 300000) {
+    console.warn(
+      "[world-generation] MESHY_TEXT_TO_3D_TARGET_POLYCOUNT is out of range (100-300000); ignoring."
+    );
+    return null;
+  }
+  return normalized;
+})();
 const WORLD_ASSET_GENERATION_WORKER_INTERVAL_MS = toPositiveInteger(
   process.env.WORLD_ASSET_GENERATION_WORKER_INTERVAL_MS,
   5000
@@ -276,6 +298,7 @@ type MeshyCreateTaskResponse = {
 
 type MeshyTextTo3dTaskResponse = {
   id?: string;
+  type?: string;
   status?: string;
   task_status?: string;
   model_urls?: Record<string, unknown> | null;
@@ -457,17 +480,27 @@ function isValidGlbUpload(file: File) {
   return fileName.endsWith(".glb");
 }
 
-async function createMeshyTextTo3dTask(prompt: string) {
+async function createMeshyTextTo3dPreviewTask(prompt: string) {
   if (!MESHY_API_KEY) {
     throw new Error("MESHY_API_KEY is not configured");
   }
 
   const requestBody: Record<string, unknown> = {
-    mode: MESHY_TEXT_TO_3D_MODE,
+    mode: "preview",
     prompt
   };
   if (MESHY_TEXT_TO_3D_MODEL) {
     requestBody.ai_model = MESHY_TEXT_TO_3D_MODEL;
+  }
+  if (MESHY_TEXT_TO_3D_TARGET_POLYCOUNT !== null) {
+    requestBody.should_remesh = true;
+    requestBody.target_polycount = MESHY_TEXT_TO_3D_TARGET_POLYCOUNT;
+    if (
+      MESHY_TEXT_TO_3D_TOPOLOGY === "triangle" ||
+      MESHY_TEXT_TO_3D_TOPOLOGY === "quad"
+    ) {
+      requestBody.topology = MESHY_TEXT_TO_3D_TOPOLOGY;
+    }
   }
 
   const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v2/text-to-3d`, {
@@ -488,6 +521,44 @@ async function createMeshyTextTo3dTask(prompt: string) {
   const taskId = String(payload.result ?? payload.id ?? "").trim();
   if (!taskId) {
     throw new Error("Meshy create response missing task id");
+  }
+  return taskId;
+}
+
+async function createMeshyTextTo3dRefineTask(previewTaskId: string) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const requestBody: Record<string, unknown> = {
+    mode: "refine",
+    preview_task_id: previewTaskId
+  };
+  if (MESHY_TEXT_TO_3D_REFINE_MODEL) {
+    requestBody.ai_model = MESHY_TEXT_TO_3D_REFINE_MODEL;
+  }
+  if (MESHY_TEXT_TO_3D_ENABLE_PBR) {
+    requestBody.enable_pbr = true;
+  }
+
+  const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v2/text-to-3d`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MESHY_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy refine create failed (${response.status}): ${text}`);
+  }
+
+  const payload = (await response.json()) as MeshyCreateTaskResponse;
+  const taskId = String(payload.result ?? payload.id ?? "").trim();
+  if (!taskId) {
+    throw new Error("Meshy refine response missing task id");
   }
   return taskId;
 }
@@ -543,6 +614,18 @@ function isMeshySuccessStatus(status: string) {
   return status === "SUCCEEDED";
 }
 
+function resolveMeshyTaskStage(
+  task: MeshyTextTo3dTaskResponse,
+  persistedStatus: string | null
+) {
+  const type = String(task.type ?? "").toLowerCase();
+  if (type.includes("refine")) return "REFINE";
+  if (String(persistedStatus ?? "").toUpperCase().includes("REFINE")) {
+    return "REFINE";
+  }
+  return "PREVIEW";
+}
+
 let worldAssetGenerationWorkerBusy = false;
 
 async function claimNextWorldAssetGenerationTask() {
@@ -583,12 +666,12 @@ async function processWorldAssetGenerationTask(taskId: string) {
   if (!task || task.status !== "IN_PROGRESS") return;
 
   if (!task.meshyTaskId) {
-    const meshyTaskId = await createMeshyTextTo3dTask(task.prompt);
+    const meshyTaskId = await createMeshyTextTo3dPreviewTask(task.prompt);
     await prisma.worldAssetGenerationTask.update({
       where: { id: task.id },
       data: {
         meshyTaskId,
-        meshyStatus: "SUBMITTED"
+        meshyStatus: "PREVIEW_SUBMITTED"
       }
     });
     return;
@@ -601,6 +684,7 @@ async function processWorldAssetGenerationTask(taskId: string) {
 
   const meshyTask = await fetchMeshyTextTo3dTask(task.meshyTaskId);
   const meshyStatus = resolveMeshyStatus(meshyTask);
+  const stage = resolveMeshyTaskStage(meshyTask, task.meshyStatus);
   if (!meshyStatus) {
     throw new Error("Meshy task returned empty status");
   }
@@ -608,7 +692,7 @@ async function processWorldAssetGenerationTask(taskId: string) {
   if (!isMeshyTerminalStatus(meshyStatus)) {
     await prisma.worldAssetGenerationTask.update({
       where: { id: task.id },
-      data: { meshyStatus }
+      data: { meshyStatus: `${stage}_${meshyStatus}` }
     });
     return;
   }
@@ -618,9 +702,21 @@ async function processWorldAssetGenerationTask(taskId: string) {
       where: { id: task.id },
       data: {
         status: "FAILED",
-        meshyStatus,
-        failureReason: `Meshy generation ended with status ${meshyStatus}`,
+        meshyStatus: `${stage}_${meshyStatus}`,
+        failureReason: `Meshy ${stage.toLowerCase()} ended with status ${meshyStatus}`,
         completedAt: new Date()
+      }
+    });
+    return;
+  }
+
+  if (stage === "PREVIEW" && MESHY_TEXT_TO_3D_ENABLE_REFINE) {
+    const refineTaskId = await createMeshyTextTo3dRefineTask(task.meshyTaskId);
+    await prisma.worldAssetGenerationTask.update({
+      where: { id: task.id },
+      data: {
+        meshyTaskId: refineTaskId,
+        meshyStatus: "REFINE_SUBMITTED"
       }
     });
     return;
@@ -632,8 +728,8 @@ async function processWorldAssetGenerationTask(taskId: string) {
       where: { id: task.id },
       data: {
         status: "FAILED",
-        meshyStatus,
-        failureReason: "Meshy task succeeded but no GLB URL was returned",
+        meshyStatus: `${stage}_SUCCEEDED`,
+        failureReason: `Meshy ${stage.toLowerCase()} succeeded but no GLB URL was returned`,
         completedAt: new Date()
       }
     });
@@ -667,7 +763,7 @@ async function processWorldAssetGenerationTask(taskId: string) {
     where: { id: task.id },
     data: {
       status: "COMPLETED",
-      meshyStatus,
+      meshyStatus: `${stage}_SUCCEEDED`,
       generatedAssetId: generated.assetId,
       generatedVersionId: generated.versionId,
       completedAt: new Date()
@@ -1678,7 +1774,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       | null;
     const prompt =
       typeof payload?.prompt === "string" ? payload.prompt.trim() : "";
-    if (!prompt || prompt.length > 1000) {
+    if (!prompt || prompt.length > 600) {
       return jsonResponse({ error: "INVALID_PROMPT" }, { status: 400 });
     }
 
