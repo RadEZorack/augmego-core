@@ -129,6 +129,7 @@ let selectedPlacementAssetId: string | null = null;
 let selectedWorldPlacementId: string | null = null;
 let pendingSelectedWorldPlacementId: string | null = null;
 let isPlacingModel = false;
+const placementPersistTimers = new Map<string, number>();
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
@@ -369,7 +370,11 @@ function setSelectedWorldPlacement(placementId: string | null) {
   renderWorldPlacementEditor();
 }
 
-function applyPlacementLocally(placementId: string, nextPlacement: WorldPlacement) {
+function applyPlacementLocally(
+  placementId: string,
+  nextPlacement: WorldPlacement,
+  renderUi = true
+) {
   if (!worldState) return;
   worldState = {
     ...worldState,
@@ -378,8 +383,10 @@ function applyPlacementLocally(placementId: string, nextPlacement: WorldPlacemen
     )
   };
   game.setWorldData(worldState);
-  renderWorldPlacements();
-  renderWorldPlacementEditor();
+  if (renderUi) {
+    renderWorldPlacements();
+    renderWorldPlacementEditor();
+  }
 }
 
 async function persistPlacementTransform(placement: WorldPlacement) {
@@ -404,16 +411,32 @@ async function persistPlacementTransform(placement: WorldPlacement) {
   }
 }
 
+function schedulePlacementTransformPersist(placement: WorldPlacement, delayMs = 120) {
+  const existing = placementPersistTimers.get(placement.id);
+  if (existing !== undefined) {
+    window.clearTimeout(existing);
+  }
+  const timeoutId = window.setTimeout(() => {
+    placementPersistTimers.delete(placement.id);
+    void persistPlacementTransform(placement);
+  }, delayMs);
+  placementPersistTimers.set(placement.id, timeoutId);
+}
+
 function commitPlacementTransform(
   placementId: string,
   transform: {
     position: { x: number; y: number; z: number };
     rotation: { x: number; y: number; z: number };
     scale: { x: number; y: number; z: number };
-  }
+  },
+  options: {
+    persistMode?: "immediate" | "debounced";
+    renderUi?: boolean;
+  } = {}
 ) {
   const current = getPlacementById(placementId);
-  if (!current) return;
+  if (!current) return null;
 
   const nextPlacement: WorldPlacement = {
     ...current,
@@ -421,8 +444,18 @@ function commitPlacementTransform(
     rotation: transform.rotation,
     scale: transform.scale
   };
-  applyPlacementLocally(placementId, nextPlacement);
-  void persistPlacementTransform(nextPlacement);
+  applyPlacementLocally(placementId, nextPlacement, options.renderUi ?? true);
+  if (options.persistMode === "debounced") {
+    schedulePlacementTransformPersist(nextPlacement);
+  } else {
+    const existing = placementPersistTimers.get(nextPlacement.id);
+    if (existing !== undefined) {
+      window.clearTimeout(existing);
+      placementPersistTimers.delete(nextPlacement.id);
+    }
+    void persistPlacementTransform(nextPlacement);
+  }
+  return nextPlacement;
 }
 
 async function copySelectedPlacement() {
@@ -610,6 +643,7 @@ function renderWorldPlacementEditor() {
       input.value = opts.value.toFixed(2);
       slider.value = opts.sliderMode === "delta" ? "0" : String(opts.value);
     }
+    let lastSliderValue = Number(slider.value);
 
     input.addEventListener("change", () => {
       const parsed = Number(input.value);
@@ -624,10 +658,14 @@ function renderWorldPlacementEditor() {
       if (opts.group === "rotation") rotation[opts.axis] = degToRad(parsed);
       if (opts.group === "scale") scale[opts.axis] = Math.max(0.01, parsed);
 
-      commitPlacementTransform(latest.id, { position, rotation, scale });
+      commitPlacementTransform(
+        latest.id,
+        { position, rotation, scale },
+        { persistMode: "immediate", renderUi: true }
+      );
     });
 
-    slider.addEventListener("change", () => {
+    slider.addEventListener("input", () => {
       const parsed = Number(slider.value);
       if (!Number.isFinite(parsed)) return;
       const latest = getPlacementById(selectedWorldPlacementId);
@@ -645,18 +683,70 @@ function renderWorldPlacementEditor() {
           scale[opts.axis] = Math.max(0.01, parsed);
         }
       } else {
-        if (Math.abs(parsed) <= 0.00001) return;
+        const delta = parsed - lastSliderValue;
+        if (Math.abs(delta) <= 0.00001) return;
         if (opts.group === "position") {
-          position[opts.axis] += parsed;
+          position[opts.axis] += delta;
         } else {
-          scale[opts.axis] = Math.max(0.01, scale[opts.axis] + parsed);
+          scale[opts.axis] = Math.max(0.01, scale[opts.axis] + delta);
         }
       }
 
-      commitPlacementTransform(latest.id, { position, rotation, scale });
-      if (opts.sliderMode === "delta") {
-        slider.value = "0";
+      const updated = commitPlacementTransform(
+        latest.id,
+        { position, rotation, scale },
+        { persistMode: "debounced", renderUi: false }
+      );
+      if (!updated) return;
+
+      if (opts.group === "rotation") {
+        input.value = radToDeg(updated.rotation[opts.axis]).toFixed(1);
+      } else if (opts.group === "position") {
+        input.value = updated.position[opts.axis].toFixed(2);
+      } else {
+        input.value = updated.scale[opts.axis].toFixed(2);
       }
+      lastSliderValue = parsed;
+    });
+
+    slider.addEventListener("change", () => {
+      const parsed = Number(slider.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPlacementById(selectedWorldPlacementId);
+      if (!latest) return;
+
+      if (opts.sliderMode === "delta") {
+        commitPlacementTransform(
+          latest.id,
+          {
+            position: { ...latest.position },
+            rotation: { ...latest.rotation },
+            scale: { ...latest.scale }
+          },
+          { persistMode: "immediate", renderUi: true }
+        );
+        slider.value = "0";
+        lastSliderValue = 0;
+        return;
+      }
+
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+
+      if (opts.group === "rotation") {
+        rotation[opts.axis] = degToRad(parsed);
+      } else if (opts.group === "position") {
+        position[opts.axis] = parsed;
+      } else {
+        scale[opts.axis] = Math.max(0.01, parsed);
+      }
+
+      commitPlacementTransform(
+        latest.id,
+        { position, rotation, scale },
+        { persistMode: "immediate", renderUi: true }
+      );
     });
 
     row.appendChild(label);
