@@ -9,6 +9,7 @@ import type {
   PlayerPayload,
   WorldAsset,
   WorldAssetGenerationTask,
+  WorldPlacement,
   WorldState
 } from "./lib/types";
 import { createRealtimeClient } from "./network/realtime";
@@ -125,6 +126,8 @@ let worldState: WorldState | null = null;
 let worldGenerationTasks: WorldAssetGenerationTask[] = [];
 let worldGenerationPollTimer: number | null = null;
 let selectedPlacementAssetId: string | null = null;
+let selectedWorldPlacementId: string | null = null;
+let pendingSelectedWorldPlacementId: string | null = null;
 let isPlacingModel = false;
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
@@ -141,6 +144,10 @@ const worldGenerateButton = document.getElementById(
   "world-generate-button"
 ) as HTMLButtonElement | null;
 const worldAssetsContainer = document.getElementById("world-assets") as HTMLDivElement | null;
+const worldPlacementsContainer = document.getElementById("world-placements") as HTMLDivElement | null;
+const worldPlacementEditor = document.getElementById(
+  "world-placement-editor"
+) as HTMLDivElement | null;
 const worldSettingsForm = document.getElementById("world-settings-form") as HTMLFormElement | null;
 const worldNameInput = document.getElementById("world-name-input") as HTMLInputElement | null;
 const worldDescriptionInput = document.getElementById(
@@ -248,6 +255,8 @@ async function loadWorldGenerationTasks() {
   if (!auth.getCurrentUser() || !worldState?.canManage) {
     worldGenerationTasks = [];
     renderWorldAssets();
+    renderWorldPlacements();
+    renderWorldPlacementEditor();
     stopWorldGenerationPolling();
     return;
   }
@@ -331,6 +340,460 @@ function getWorldAssetLabel(asset: WorldAsset) {
   return `${asset.name} (v${currentVersion})`;
 }
 
+function getPlacementById(placementId: string | null) {
+  if (!placementId || !worldState) return null;
+  return worldState.placements.find((placement) => placement.id === placementId) ?? null;
+}
+
+function cancelPlacementMode() {
+  if (!isPlacingModel && !selectedPlacementAssetId) return;
+  isPlacingModel = false;
+  selectedPlacementAssetId = null;
+  renderWorldAssets();
+}
+
+function setSelectedWorldPlacement(placementId: string | null) {
+  if (!worldState) {
+    selectedWorldPlacementId = null;
+  } else {
+    selectedWorldPlacementId = worldState.placements.some(
+      (placement) => placement.id === placementId
+    )
+      ? placementId
+      : null;
+  }
+  if (selectedWorldPlacementId) {
+    cancelPlacementMode();
+  }
+  renderWorldPlacements();
+  renderWorldPlacementEditor();
+}
+
+function applyPlacementLocally(placementId: string, nextPlacement: WorldPlacement) {
+  if (!worldState) return;
+  worldState = {
+    ...worldState,
+    placements: worldState.placements.map((placement) =>
+      placement.id === placementId ? nextPlacement : placement
+    )
+  };
+  game.setWorldData(worldState);
+  renderWorldPlacements();
+  renderWorldPlacementEditor();
+}
+
+async function persistPlacementTransform(placement: WorldPlacement) {
+  const response = await fetch(
+    apiUrl(`/api/v1/world/placements/${encodeURIComponent(placement.id)}`),
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        position: placement.position,
+        rotation: placement.rotation,
+        scale: placement.scale
+      })
+    }
+  );
+  if (!response.ok) {
+    setWorldNotice("Instance transform update failed");
+    await loadWorldState();
+  }
+}
+
+function commitPlacementTransform(
+  placementId: string,
+  transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { x: number; y: number; z: number };
+    scale: { x: number; y: number; z: number };
+  }
+) {
+  const current = getPlacementById(placementId);
+  if (!current) return;
+
+  const nextPlacement: WorldPlacement = {
+    ...current,
+    position: transform.position,
+    rotation: transform.rotation,
+    scale: transform.scale
+  };
+  applyPlacementLocally(placementId, nextPlacement);
+  void persistPlacementTransform(nextPlacement);
+}
+
+async function copySelectedPlacement() {
+  const placement = getPlacementById(selectedWorldPlacementId);
+  if (!placement || !worldState?.canManage) return;
+
+  const response = await fetch(apiUrl("/api/v1/world/placements"), {
+    method: "POST",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      assetId: placement.assetId,
+      position: {
+        x: placement.position.x + 0.5,
+        y: placement.position.y,
+        z: placement.position.z + 0.5
+      },
+      rotation: placement.rotation,
+      scale: placement.scale
+    })
+  });
+
+  if (!response.ok) {
+    setWorldNotice("Instance copy failed");
+    return;
+  }
+
+  const payload = (await response.json().catch(() => null)) as
+    | { placementId?: string }
+    | null;
+  pendingSelectedWorldPlacementId = payload?.placementId ?? null;
+  await loadWorldState();
+  setWorldNotice("Instance copied");
+}
+
+async function deleteSelectedPlacement() {
+  const placement = getPlacementById(selectedWorldPlacementId);
+  if (!placement || !worldState?.canManage) return;
+
+  const response = await fetch(
+    apiUrl(`/api/v1/world/placements/${encodeURIComponent(placement.id)}`),
+    {
+      method: "DELETE",
+      credentials: "include"
+    }
+  );
+  if (!response.ok) {
+    setWorldNotice("Instance delete failed");
+    return;
+  }
+
+  selectedWorldPlacementId = null;
+  await loadWorldState();
+  setWorldNotice("Instance deleted");
+}
+
+function renderWorldPlacements() {
+  if (!worldPlacementsContainer) return;
+  worldPlacementsContainer.innerHTML = "";
+
+  const placements = worldState?.placements ?? [];
+  if (placements.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "No instances placed";
+    worldPlacementsContainer.appendChild(empty);
+    return;
+  }
+
+  for (const placement of placements) {
+    const row = document.createElement("div");
+    row.className = "world-placement-row";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "world-placement-select";
+    if (placement.id === selectedWorldPlacementId) {
+      button.classList.add("active");
+    }
+    button.textContent = `${placement.assetName} • ${placement.id.slice(0, 8)}`;
+    button.title = `Position: ${placement.position.x.toFixed(2)}, ${placement.position.y.toFixed(
+      2
+    )}, ${placement.position.z.toFixed(2)}`;
+    button.addEventListener("click", () => {
+      setSelectedWorldPlacement(placement.id);
+    });
+
+    row.appendChild(button);
+    worldPlacementsContainer.appendChild(row);
+  }
+}
+
+function renderWorldPlacementEditor() {
+  if (!worldPlacementEditor) return;
+  worldPlacementEditor.innerHTML = "";
+
+  if (!worldState) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Sign in to edit instances";
+    worldPlacementEditor.appendChild(empty);
+    return;
+  }
+
+  const selectedPlacement = getPlacementById(selectedWorldPlacementId);
+  if (!selectedPlacement) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Select an instance from the list or world";
+    worldPlacementEditor.appendChild(empty);
+    return;
+  }
+
+  const canEdit = worldState.canManage;
+  const radToDeg = (value: number) => (value * 180) / Math.PI;
+  const degToRad = (value: number) => (value * Math.PI) / 180;
+
+  const heading = document.createElement("div");
+  heading.className = "party-result-label";
+  heading.textContent = `${selectedPlacement.assetName} • ${selectedPlacement.id.slice(0, 8)}`;
+  worldPlacementEditor.appendChild(heading);
+
+  const actions = document.createElement("div");
+  actions.className = "world-placement-editor-actions";
+
+  const copyButton = document.createElement("button");
+  copyButton.type = "button";
+  copyButton.className = "party-secondary-button";
+  copyButton.textContent = "Copy";
+  copyButton.disabled = !canEdit;
+  copyButton.addEventListener("click", () => {
+    void copySelectedPlacement();
+  });
+
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "party-secondary-button";
+  deleteButton.textContent = "Delete";
+  deleteButton.disabled = !canEdit;
+  deleteButton.addEventListener("click", () => {
+    void deleteSelectedPlacement();
+  });
+
+  actions.appendChild(copyButton);
+  actions.appendChild(deleteButton);
+  worldPlacementEditor.appendChild(actions);
+
+  const buildAxisRow = (opts: {
+    group: "position" | "rotation" | "scale";
+    axis: "x" | "y" | "z";
+    value: number;
+    inputStep: string;
+    sliderMin: number;
+    sliderMax: number;
+    sliderStep: number;
+    sliderMode: "absolute" | "delta";
+  }) => {
+    const row = document.createElement("div");
+    row.className = "world-placement-axis-row";
+
+    const label = document.createElement("span");
+    label.className = "world-placement-axis-label";
+    label.textContent = opts.axis.toUpperCase();
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "world-placement-axis-input";
+    input.step = opts.inputStep;
+    input.disabled = !canEdit;
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "world-placement-axis-slider";
+    slider.min = String(opts.sliderMin);
+    slider.max = String(opts.sliderMax);
+    slider.step = String(opts.sliderStep);
+    slider.disabled = !canEdit;
+
+    if (opts.group === "rotation") {
+      input.value = radToDeg(opts.value).toFixed(1);
+      slider.value = String(Math.max(opts.sliderMin, Math.min(opts.sliderMax, radToDeg(opts.value))));
+    } else {
+      input.value = opts.value.toFixed(2);
+      slider.value = opts.sliderMode === "delta" ? "0" : String(opts.value);
+    }
+
+    input.addEventListener("change", () => {
+      const parsed = Number(input.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPlacementById(selectedWorldPlacementId);
+      if (!latest) return;
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+
+      if (opts.group === "position") position[opts.axis] = parsed;
+      if (opts.group === "rotation") rotation[opts.axis] = degToRad(parsed);
+      if (opts.group === "scale") scale[opts.axis] = Math.max(0.01, parsed);
+
+      commitPlacementTransform(latest.id, { position, rotation, scale });
+    });
+
+    slider.addEventListener("change", () => {
+      const parsed = Number(slider.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPlacementById(selectedWorldPlacementId);
+      if (!latest) return;
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+
+      if (opts.sliderMode === "absolute") {
+        if (opts.group === "rotation") {
+          rotation[opts.axis] = degToRad(parsed);
+        } else if (opts.group === "position") {
+          position[opts.axis] = parsed;
+        } else {
+          scale[opts.axis] = Math.max(0.01, parsed);
+        }
+      } else {
+        if (Math.abs(parsed) <= 0.00001) return;
+        if (opts.group === "position") {
+          position[opts.axis] += parsed;
+        } else {
+          scale[opts.axis] = Math.max(0.01, scale[opts.axis] + parsed);
+        }
+      }
+
+      commitPlacementTransform(latest.id, { position, rotation, scale });
+      if (opts.sliderMode === "delta") {
+        slider.value = "0";
+      }
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    row.appendChild(slider);
+    return row;
+  };
+
+  const buildGroup = (titleText: string) => {
+    const group = document.createElement("div");
+    group.className = "world-placement-group";
+    const title = document.createElement("div");
+    title.className = "world-placement-group-title";
+    title.textContent = titleText;
+    group.appendChild(title);
+    return group;
+  };
+
+  const positionGroup = buildGroup("Position");
+  positionGroup.appendChild(
+    buildAxisRow({
+      group: "position",
+      axis: "x",
+      value: selectedPlacement.position.x,
+      inputStep: "0.01",
+      sliderMin: -1.5,
+      sliderMax: 1.5,
+      sliderStep: 0.05,
+      sliderMode: "delta"
+    })
+  );
+  positionGroup.appendChild(
+    buildAxisRow({
+      group: "position",
+      axis: "y",
+      value: selectedPlacement.position.y,
+      inputStep: "0.01",
+      sliderMin: -1.5,
+      sliderMax: 1.5,
+      sliderStep: 0.05,
+      sliderMode: "delta"
+    })
+  );
+  positionGroup.appendChild(
+    buildAxisRow({
+      group: "position",
+      axis: "z",
+      value: selectedPlacement.position.z,
+      inputStep: "0.01",
+      sliderMin: -1.5,
+      sliderMax: 1.5,
+      sliderStep: 0.05,
+      sliderMode: "delta"
+    })
+  );
+
+  const rotationGroup = buildGroup("Rotation (Degrees)");
+  rotationGroup.appendChild(
+    buildAxisRow({
+      group: "rotation",
+      axis: "x",
+      value: selectedPlacement.rotation.x,
+      inputStep: "1",
+      sliderMin: -180,
+      sliderMax: 180,
+      sliderStep: 1,
+      sliderMode: "absolute"
+    })
+  );
+  rotationGroup.appendChild(
+    buildAxisRow({
+      group: "rotation",
+      axis: "y",
+      value: selectedPlacement.rotation.y,
+      inputStep: "1",
+      sliderMin: -180,
+      sliderMax: 180,
+      sliderStep: 1,
+      sliderMode: "absolute"
+    })
+  );
+  rotationGroup.appendChild(
+    buildAxisRow({
+      group: "rotation",
+      axis: "z",
+      value: selectedPlacement.rotation.z,
+      inputStep: "1",
+      sliderMin: -180,
+      sliderMax: 180,
+      sliderStep: 1,
+      sliderMode: "absolute"
+    })
+  );
+
+  const scaleGroup = buildGroup("Scale");
+  scaleGroup.appendChild(
+    buildAxisRow({
+      group: "scale",
+      axis: "x",
+      value: selectedPlacement.scale.x,
+      inputStep: "0.01",
+      sliderMin: -0.5,
+      sliderMax: 0.5,
+      sliderStep: 0.02,
+      sliderMode: "delta"
+    })
+  );
+  scaleGroup.appendChild(
+    buildAxisRow({
+      group: "scale",
+      axis: "y",
+      value: selectedPlacement.scale.y,
+      inputStep: "0.01",
+      sliderMin: -0.5,
+      sliderMax: 0.5,
+      sliderStep: 0.02,
+      sliderMode: "delta"
+    })
+  );
+  scaleGroup.appendChild(
+    buildAxisRow({
+      group: "scale",
+      axis: "z",
+      value: selectedPlacement.scale.z,
+      inputStep: "0.01",
+      sliderMin: -0.5,
+      sliderMax: 0.5,
+      sliderStep: 0.02,
+      sliderMode: "delta"
+    })
+  );
+
+  worldPlacementEditor.appendChild(positionGroup);
+  worldPlacementEditor.appendChild(rotationGroup);
+  worldPlacementEditor.appendChild(scaleGroup);
+}
+
 function createReplaceInput(onSelect: (file: File) => void) {
   const input = document.createElement("input");
   input.type = "file";
@@ -349,10 +812,14 @@ async function loadWorldState() {
   if (!auth.getCurrentUser()) {
     worldState = null;
     worldGenerationTasks = [];
+    selectedWorldPlacementId = null;
+    pendingSelectedWorldPlacementId = null;
     stopWorldGenerationPolling();
     game.setWorldData(null);
     setWorldNotice("Sign in to load world");
     if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
+    if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
+    if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
     if (worldUploadButton) worldUploadButton.disabled = true;
     if (worldModelFileInput) worldModelFileInput.disabled = true;
     if (worldModelNameInput) worldModelNameInput.disabled = true;
@@ -374,6 +841,13 @@ async function loadWorldState() {
 
   const payload = (await response.json()) as WorldState;
   worldState = payload;
+  const requestedPlacementId = pendingSelectedWorldPlacementId ?? selectedWorldPlacementId;
+  pendingSelectedWorldPlacementId = null;
+  selectedWorldPlacementId =
+    requestedPlacementId &&
+    payload.placements.some((placement) => placement.id === requestedPlacementId)
+      ? requestedPlacementId
+      : null;
   if (partyState.party) {
     partyState = {
       ...partyState,
@@ -406,6 +880,8 @@ async function loadWorldState() {
   startWorldGenerationPolling();
   void loadWorldGenerationTasks();
   renderWorldAssets();
+  renderWorldPlacements();
+  renderWorldPlacementEditor();
 }
 
 function renderWorldAssets() {
@@ -518,6 +994,9 @@ const game = createGameScene({
   canShowRemoteInvite(clientId) {
     return canInviteClient(clientId);
   },
+  onWorldPlacementSelect(placementId) {
+    setSelectedWorldPlacement(placementId);
+  },
   onWorldPlacementRequest(position) {
     if (!isPlacingModel || !selectedPlacementAssetId || !worldState?.canManage) {
       return false;
@@ -581,9 +1060,13 @@ const auth = createAuthController({
       stopWorldGenerationPolling();
       isPlacingModel = false;
       selectedPlacementAssetId = null;
+      selectedWorldPlacementId = null;
+      pendingSelectedWorldPlacementId = null;
       game.setWorldData(null);
       setWorldNotice("Sign in to load world");
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
+      if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
+      if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
       syncWorldVisibilityControls();
       return;
     }
@@ -990,6 +1473,8 @@ if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
 if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
 if (worldGenerateButton) worldGenerateButton.disabled = true;
 syncWorldVisibilityControls();
+renderWorldPlacements();
+renderWorldPlacementEditor();
 void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();

@@ -26,6 +26,7 @@ type GameSceneOptions = {
   onLocalStateChange?: (state: PlayerState, force: boolean) => void;
   onRemoteInviteClick?: (clientId: string) => void;
   canShowRemoteInvite?: (clientId: string) => boolean;
+  onWorldPlacementSelect?: (placementId: string) => void;
   onWorldPlacementRequest?: (
     position: { x: number; y: number; z: number }
   ) => boolean;
@@ -47,7 +48,7 @@ export function createGameScene(options: GameSceneOptions) {
   const clock = new THREE.Clock();
   const gltfLoader = new GLTFLoader();
   const worldRoot = new THREE.Group();
-  const modelTemplateCache = new Map<string, Promise<THREE.Object3D | null>>();
+  const modelTemplateCache = new Map<string, Promise<any>>();
   let worldState: WorldState | null = null;
   let worldRenderEpoch = 0;
 
@@ -500,10 +501,10 @@ export function createGameScene(options: GameSceneOptions) {
     const cached = modelTemplateCache.get(url);
     if (cached) return cached;
 
-    const promise = new Promise<THREE.Object3D | null>((resolve) => {
+    const promise = new Promise<any>((resolve) => {
       gltfLoader.load(
         url,
-        (gltf) => {
+        (gltf: any) => {
           resolve(gltf.scene);
         },
         undefined,
@@ -601,6 +602,29 @@ export function createGameScene(options: GameSceneOptions) {
     ) {
       options.onRemoteInviteClick?.(inviteHit.userData.clientId);
       return;
+    }
+
+    const modelIntersections = raycaster.intersectObjects(worldRoot.children, true);
+    const placementHit = modelIntersections.find((intersection: any) => {
+      let node: any = intersection.object;
+      while (node) {
+        if (typeof node.userData?.placementId === "string") {
+          return true;
+        }
+        node = node.parent;
+      }
+      return false;
+    });
+
+    if (placementHit) {
+      let node: any = placementHit.object;
+      while (node) {
+        if (typeof node.userData?.placementId === "string") {
+          options.onWorldPlacementSelect?.(node.userData.placementId);
+          return;
+        }
+        node = node.parent;
+      }
     }
 
     const intersections = raycaster.intersectObject(floor, false);
