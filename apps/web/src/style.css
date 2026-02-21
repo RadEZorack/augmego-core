@@ -220,11 +220,17 @@ canvas {
 }
 
 .dock-header {
+  position: sticky;
+  top: -10px;
+  z-index: 6;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin: -10px -10px 8px;
+  padding: 10px 10px 8px;
+  background: rgba(4, 8, 14, 0.94);
+  backdrop-filter: blur(6px);
 }
 
 .dock-tabs {
@@ -283,8 +289,13 @@ canvas {
 }
 
 .dock-panel.minimized .dock-header {
+  position: static;
+  margin: 0;
+  padding: 0;
   margin-bottom: 0;
   justify-content: center;
+  background: transparent;
+  backdrop-filter: none;
 }
 
 .media-header {
