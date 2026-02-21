@@ -27,6 +27,9 @@ if (!app) {
 
 const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
 const dockMinimizeButton = document.getElementById("dock-minimize") as HTMLButtonElement | null;
+const dockHeightToggleButton = document.getElementById(
+  "dock-height-toggle"
+) as HTMLButtonElement | null;
 const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
 const partyTabButton = document.getElementById("tab-party") as HTMLButtonElement | null;
 const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
@@ -38,6 +41,55 @@ const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
 
 const apiUrl = createApiUrlResolver(apiBase);
+
+type DockHeightState = "quarter" | "half" | "full";
+
+function setDockHeightState(
+  panel: HTMLElement | null,
+  button: HTMLButtonElement | null,
+  state: DockHeightState
+) {
+  if (!panel || !button) return;
+
+  panel.classList.remove("height-quarter", "height-half", "height-full");
+  panel.classList.add(
+    state === "quarter"
+      ? "height-quarter"
+      : state === "half"
+        ? "height-half"
+        : "height-full"
+  );
+
+  if (state === "quarter") {
+    button.textContent = "1/4";
+    button.setAttribute("aria-label", "Set panel height to half");
+    return;
+  }
+  if (state === "half") {
+    button.textContent = "1/2";
+    button.setAttribute("aria-label", "Set panel height to full");
+    return;
+  }
+
+  button.textContent = "Full";
+  button.setAttribute("aria-label", "Set panel height to quarter");
+}
+
+function setupDockHeightToggle(
+  panel: HTMLElement | null,
+  button: HTMLButtonElement | null
+) {
+  if (!panel || !button) return;
+
+  const states: DockHeightState[] = ["quarter", "half", "full"];
+  let index = 0;
+  setDockHeightState(panel, button, states[index]!);
+
+  button.addEventListener("click", () => {
+    index = (index + 1) % states.length;
+    setDockHeightState(panel, button, states[index]!);
+  });
+}
 
 function setupPanelToggle(
   panel: HTMLElement | null,
@@ -1021,9 +1073,19 @@ function renderWorldAssets() {
     row.className = "world-asset-row";
 
     const label = document.createElement("div");
-    label.className = "party-result-label";
+    label.className = "party-result-label world-asset-name";
     label.textContent = getWorldAssetLabel(asset);
     label.title = `${asset.name} (${asset.versions.length} versions)`;
+
+    const options = document.createElement("details");
+    options.className = "world-asset-options";
+
+    const optionsSummary = document.createElement("summary");
+    optionsSummary.className = "party-secondary-button world-asset-options-toggle";
+    optionsSummary.textContent = "Options";
+
+    const optionsMenu = document.createElement("div");
+    optionsMenu.className = "world-asset-options-menu";
 
     const placeButton = document.createElement("button");
     placeButton.className = "party-secondary-button";
@@ -1031,6 +1093,7 @@ function renderWorldAssets() {
     placeButton.textContent = selectedPlacementAssetId === asset.id ? "Placing..." : "Place";
     placeButton.disabled = !worldState?.canManage;
     placeButton.addEventListener("click", () => {
+      options.open = false;
       selectedPlacementAssetId = asset.id;
       isPlacingModel = true;
       setWorldNotice(`Placement mode: ${asset.name}. Click the floor to place.`);
@@ -1043,6 +1106,7 @@ function renderWorldAssets() {
     replaceButton.textContent = "Replace";
     replaceButton.disabled = !worldState?.canManage;
     replaceButton.addEventListener("click", () => {
+      options.open = false;
       createReplaceInput(async (file) => {
         const formData = new FormData();
         formData.set("file", file);
@@ -1079,6 +1143,10 @@ function renderWorldAssets() {
       downloadButton.style.opacity = "0.5";
     }
 
+    const visibilityLabel = document.createElement("label");
+    visibilityLabel.className = "world-asset-options-field";
+    visibilityLabel.textContent = "Visibility";
+
     const visibilitySelect = document.createElement("select");
     visibilitySelect.className = "party-search-input world-asset-visibility";
     visibilitySelect.innerHTML = `
@@ -1114,16 +1182,25 @@ function renderWorldAssets() {
           await loadWorldState();
           return;
         }
-
+        options.open = false;
         await loadWorldState();
       })();
     });
 
+    const actionRow = document.createElement("div");
+    actionRow.className = "world-asset-options-actions";
+    actionRow.appendChild(placeButton);
+    actionRow.appendChild(replaceButton);
+    actionRow.appendChild(downloadButton);
+
+    optionsMenu.appendChild(visibilityLabel);
+    optionsMenu.appendChild(visibilitySelect);
+    optionsMenu.appendChild(actionRow);
+    options.appendChild(optionsSummary);
+    options.appendChild(optionsMenu);
+
     row.appendChild(label);
-    row.appendChild(visibilitySelect);
-    row.appendChild(placeButton);
-    row.appendChild(replaceButton);
-    row.appendChild(downloadButton);
+    row.appendChild(options);
     worldAssetsContainer.appendChild(row);
   }
 }
@@ -1468,6 +1545,7 @@ partyChat.onSubmit((text) => {
 });
 
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
+setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
 
 worldGenerateForm?.addEventListener("submit", (event) => {
