@@ -206,6 +206,13 @@
               Generate 3D
             </button>
           </form>
+          <div class="party-search">
+            <label for="world-generate-visibility" class="party-result-label">Generated mesh visibility</label>
+            <select id="world-generate-visibility" class="party-search-input">
+              <option value="public" selected>Public</option>
+              <option value="private">Private</option>
+            </select>
+          </div>
           <form id="world-upload-form" class="party-search">
             <input
               id="world-model-name"
@@ -216,6 +223,13 @@
             />
             <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
           </form>
+          <div class="party-search">
+            <label for="world-model-visibility" class="party-result-label">Uploaded mesh visibility</label>
+            <select id="world-model-visibility" class="party-search-input">
+              <option value="public" selected>Public</option>
+              <option value="private">Private</option>
+            </select>
+          </div>
           <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
           <div class="party-search-results" id="world-assets"></div>
         </div>

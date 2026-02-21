@@ -134,6 +134,9 @@ const placementPersistTimers = new Map<string, number>();
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
 const worldModelNameInput = document.getElementById("world-model-name") as HTMLInputElement | null;
+const worldModelVisibilityInput = document.getElementById(
+  "world-model-visibility"
+) as HTMLSelectElement | null;
 const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
 const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
 const worldGenerateForm = document.getElementById("world-generate-form") as HTMLFormElement | null;
@@ -141,6 +144,9 @@ const worldGeneratePromptInput = document.getElementById(
   "world-generate-prompt"
 ) as HTMLInputElement | null;
 const worldGenerateNameInput = document.getElementById("world-generate-name") as HTMLInputElement | null;
+const worldGenerateVisibilityInput = document.getElementById(
+  "world-generate-visibility"
+) as HTMLSelectElement | null;
 const worldGenerateButton = document.getElementById(
   "world-generate-button"
 ) as HTMLButtonElement | null;
@@ -320,6 +326,8 @@ function syncWorldVisibilityControls() {
     worldSettingsSaveButton.disabled = true;
     if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+    if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
+    if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
     return;
   }
@@ -333,6 +341,8 @@ function syncWorldVisibilityControls() {
   worldSettingsSaveButton.disabled = !worldState.canManageVisibility;
   if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !worldState.canManage;
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !worldState.canManage;
+  if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !worldState.canManage;
+  if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
 }
 
@@ -913,8 +923,10 @@ async function loadWorldState() {
     if (worldUploadButton) worldUploadButton.disabled = true;
     if (worldModelFileInput) worldModelFileInput.disabled = true;
     if (worldModelNameInput) worldModelNameInput.disabled = true;
+    if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+    if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
     syncWorldVisibilityControls();
     return;
@@ -954,8 +966,10 @@ async function loadWorldState() {
   if (worldUploadButton) worldUploadButton.disabled = !payload.canManage;
   if (worldModelFileInput) worldModelFileInput.disabled = !payload.canManage;
   if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
+  if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !payload.canManage;
   if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !payload.canManage;
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
+  if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !payload.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
 
   const worldOwnerLabel =
@@ -1065,7 +1079,48 @@ function renderWorldAssets() {
       downloadButton.style.opacity = "0.5";
     }
 
+    const visibilitySelect = document.createElement("select");
+    visibilitySelect.className = "party-search-input world-asset-visibility";
+    visibilitySelect.innerHTML = `
+      <option value="public">Public</option>
+      <option value="private">Private</option>
+    `;
+    visibilitySelect.value = asset.visibility;
+    visibilitySelect.disabled = !asset.canManageVisibility || !asset.canChangeVisibility;
+    visibilitySelect.title = asset.canChangeVisibility
+      ? "Mesh visibility"
+      : "Cannot change visibility after instances exist";
+    visibilitySelect.addEventListener("change", () => {
+      const visibility = visibilitySelect.value;
+      void (async () => {
+        const response = await fetch(
+          apiUrl(`/api/v1/world/assets/${encodeURIComponent(asset.id)}/visibility`),
+          {
+            method: "PATCH",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ visibility })
+          }
+        );
+        if (!response.ok) {
+          visibilitySelect.value = asset.visibility;
+          setWorldNotice(
+            response.status === 409
+              ? "Visibility cannot change after instances exist"
+              : "Visibility update failed"
+          );
+          await loadWorldState();
+          return;
+        }
+
+        await loadWorldState();
+      })();
+    });
+
     row.appendChild(label);
+    row.appendChild(visibilitySelect);
     row.appendChild(placeButton);
     row.appendChild(replaceButton);
     row.appendChild(downloadButton);
@@ -1157,6 +1212,8 @@ const auth = createAuthController({
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
       if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
       if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
+      if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
+      if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
       syncWorldVisibilityControls();
       return;
     }
@@ -1436,7 +1493,8 @@ worldGenerateForm?.addEventListener("submit", (event) => {
       },
       body: JSON.stringify({
         prompt,
-        name: worldGenerateNameInput?.value?.trim() ?? ""
+        name: worldGenerateNameInput?.value?.trim() ?? "",
+        visibility: worldGenerateVisibilityInput?.value === "private" ? "private" : "public"
       })
     });
 
@@ -1450,6 +1508,9 @@ worldGenerateForm?.addEventListener("submit", (event) => {
     }
     if (worldGenerateNameInput) {
       worldGenerateNameInput.value = "";
+    }
+    if (worldGenerateVisibilityInput) {
+      worldGenerateVisibilityInput.value = "public";
     }
 
     setWorldNotice("Text-to-3D job queued. It will continue if you go offline.");
@@ -1475,6 +1536,10 @@ worldUploadForm?.addEventListener("submit", (event) => {
     const formData = new FormData();
     formData.set("file", file);
     formData.set("name", worldModelNameInput?.value?.trim() || file.name.replace(/\.glb$/i, ""));
+    formData.set(
+      "visibility",
+      worldModelVisibilityInput?.value === "private" ? "private" : "public"
+    );
 
     const response = await fetch(apiUrl("/api/v1/world/assets"), {
       method: "POST",
@@ -1492,6 +1557,9 @@ worldUploadForm?.addEventListener("submit", (event) => {
     }
     if (worldModelNameInput) {
       worldModelNameInput.value = "";
+    }
+    if (worldModelVisibilityInput) {
+      worldModelVisibilityInput.value = "public";
     }
 
     await loadWorldState();
@@ -1559,8 +1627,10 @@ setWorldNotice("Sign in to load world");
 if (worldUploadButton) worldUploadButton.disabled = true;
 if (worldModelFileInput) worldModelFileInput.disabled = true;
 if (worldModelNameInput) worldModelNameInput.disabled = true;
+if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
 if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
 if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
 if (worldGenerateButton) worldGenerateButton.disabled = true;
 syncWorldVisibilityControls();
 renderWorldPlacements();
