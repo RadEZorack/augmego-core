@@ -85,7 +85,11 @@ export type WorldAssetVersion = {
 
 export type WorldAsset = {
   id: string;
+  ownerId: string;
   name: string;
+  visibility: "public" | "private";
+  canManageVisibility: boolean;
+  canChangeVisibility: boolean;
   createdAt: string;
   updatedAt: string;
   currentVersion: WorldAssetVersion | null;

@@ -1,6 +1,6 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient, WorldAssetVisibility } from "@prisma/client";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import jwt from "jsonwebtoken";
 import path from "node:path";
@@ -285,6 +285,18 @@ function normalizeAssetName(value: string, fallback: string) {
   return trimmed.slice(0, 80);
 }
 
+function parseWorldAssetVisibility(value: unknown) {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "private") return WorldAssetVisibility.PRIVATE;
+  if (normalized === "public") return WorldAssetVisibility.PUBLIC;
+  return null;
+}
+
+function normalizeWorldAssetVisibility(value: unknown) {
+  return parseWorldAssetVisibility(value) ?? WorldAssetVisibility.PUBLIC;
+}
+
 function deriveModelNameFromPrompt(prompt: string) {
   const compact = prompt.replace(/\s+/g, " ").trim();
   if (!compact) return "Generated Model";
@@ -430,6 +442,7 @@ async function createWorldAssetWithInitialVersion(options: {
   worldOwnerId: string;
   createdById: string;
   modelName: string;
+  visibility: WorldAssetVisibility;
   file: File;
 }) {
   const assetId = crypto.randomUUID();
@@ -447,7 +460,8 @@ async function createWorldAssetWithInitialVersion(options: {
         id: assetId,
         worldOwnerId: options.worldOwnerId,
         createdById: options.createdById,
-        name: options.modelName
+        name: options.modelName,
+        visibility: options.visibility
       }
     });
 
@@ -756,6 +770,7 @@ async function processWorldAssetGenerationTask(taskId: string) {
     worldOwnerId: task.worldOwnerId,
     createdById: task.createdById,
     modelName: task.modelName,
+    visibility: task.visibility,
     file
   });
 
@@ -1534,11 +1549,21 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     const [assets, placements] = await Promise.all([
       prisma.worldAsset.findMany({
-        where: { worldOwnerId },
+        where: {
+          OR: [
+            { visibility: WorldAssetVisibility.PUBLIC },
+            { worldOwnerId }
+          ]
+        },
         include: {
           currentVersion: true,
           versions: {
             orderBy: { version: "desc" }
+          },
+          _count: {
+            select: {
+              placements: true
+            }
           }
         },
         orderBy: { updatedAt: "desc" }
@@ -1567,7 +1592,13 @@ const api = new Elysia({ prefix: "/api/v1" })
       canManageVisibility: (activeWorld?.leaderId ?? "") === user.id,
       assets: assets.map((asset) => ({
         id: asset.id,
+        ownerId: asset.worldOwnerId,
         name: asset.name,
+        visibility: asset.visibility === WorldAssetVisibility.PRIVATE ? "private" : "public",
+        canManageVisibility:
+          asset.worldOwnerId === user.id ||
+          (asset.worldOwnerId === worldOwnerId && canManage),
+        canChangeVisibility: asset._count.placements === 0,
         createdAt: asset.createdAt.toISOString(),
         updatedAt: asset.updatedAt.toISOString(),
         currentVersion: asset.currentVersion
@@ -1734,6 +1765,7 @@ const api = new Elysia({ prefix: "/api/v1" })
     }
 
     const rawName = String(formData.get("name") ?? "").trim();
+    const visibility = normalizeWorldAssetVisibility(formData.get("visibility"));
     const fallbackName = sanitizeFilename(
       fileValue.name.replace(/\.glb$/i, "")
     ).replace(/_/g, " ");
@@ -1742,6 +1774,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       worldOwnerId,
       createdById: user.id,
       modelName,
+      visibility,
       file: fileValue
     });
 
@@ -1780,6 +1813,7 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     const requestedName =
       typeof payload?.name === "string" ? payload.name.trim() : "";
+    const visibility = normalizeWorldAssetVisibility(payload?.visibility);
     const modelName = normalizeAssetName(
       requestedName,
       deriveModelNameFromPrompt(prompt)
@@ -1790,7 +1824,8 @@ const api = new Elysia({ prefix: "/api/v1" })
         worldOwnerId,
         createdById: user.id,
         prompt,
-        modelName
+        modelName,
+        visibility
       },
       select: {
         id: true,
@@ -1887,11 +1922,6 @@ const api = new Elysia({ prefix: "/api/v1" })
       return jsonResponse({ error: "ASSET_NOT_FOUND" }, { status: 404 });
     }
 
-    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
-    if (worldOwnerId !== asset.worldOwnerId) {
-      return jsonResponse({ error: "WORLD_ACCESS_DENIED" }, { status: 403 });
-    }
-
     const canManage = await canManageWorldOwner(user.id, asset.worldOwnerId);
     if (!canManage) {
       return jsonResponse(
@@ -1944,6 +1974,68 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     return jsonResponse({ ok: true, assetId: asset.id, versionId, nextVersion });
   })
+  .patch("/world/assets/:assetId/visibility", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const assetId = String((params as Record<string, unknown>).assetId ?? "");
+    if (!assetId) {
+      return jsonResponse({ error: "ASSET_ID_REQUIRED" }, { status: 400 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      visibility?: unknown;
+    } | null;
+    const nextVisibility = parseWorldAssetVisibility(body?.visibility);
+    if (!nextVisibility) {
+      return jsonResponse({ error: "INVALID_VISIBILITY" }, { status: 400 });
+    }
+
+    const asset = await prisma.worldAsset.findUnique({
+      where: { id: assetId },
+      select: {
+        id: true,
+        visibility: true,
+        worldOwnerId: true,
+        _count: {
+          select: {
+            placements: true
+          }
+        }
+      }
+    });
+    if (!asset) {
+      return jsonResponse({ error: "ASSET_NOT_FOUND" }, { status: 404 });
+    }
+
+    const canManage = await canManageWorldOwner(user.id, asset.worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    if (asset._count.placements > 0 && asset.visibility !== nextVisibility) {
+      return jsonResponse(
+        { error: "ASSET_VISIBILITY_LOCKED_BY_INSTANCES" },
+        { status: 409 }
+      );
+    }
+
+    await prisma.worldAsset.update({
+      where: { id: asset.id },
+      data: { visibility: nextVisibility }
+    });
+
+    return jsonResponse({
+      ok: true,
+      assetId: asset.id,
+      visibility: nextVisibility === WorldAssetVisibility.PRIVATE ? "private" : "public"
+    });
+  })
   .post("/world/placements", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
     if (!user) {
@@ -1970,7 +2062,10 @@ const api = new Elysia({ prefix: "/api/v1" })
     const asset = await prisma.worldAsset.findFirst({
       where: {
         id: assetId,
-        worldOwnerId
+        OR: [
+          { visibility: WorldAssetVisibility.PUBLIC },
+          { worldOwnerId }
+        ]
       },
       select: { id: true }
     });
@@ -2129,7 +2224,8 @@ const api = new Elysia({ prefix: "/api/v1" })
       include: {
         asset: {
           select: {
-            worldOwnerId: true
+            worldOwnerId: true,
+            visibility: true
           }
         }
       }
@@ -2140,7 +2236,10 @@ const api = new Elysia({ prefix: "/api/v1" })
     }
 
     const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
-    if (activeWorldOwnerId !== version.asset.worldOwnerId) {
+    const canAccess =
+      version.asset.visibility === WorldAssetVisibility.PUBLIC ||
+      activeWorldOwnerId === version.asset.worldOwnerId;
+    if (!canAccess) {
       return new Response("Forbidden", { status: 403 });
     }
 

@@ -65,7 +65,7 @@
       <div class="dock-header">
         <div class="dock-tabs" role="tablist" aria-label="Panel tabs">
           <button id="tab-chat" class="dock-tab active" type="button" role="tab" aria-selected="true">
-            Global Chat
+            Chat
           </button>
           <button id="tab-party" class="dock-tab" type="button" role="tab" aria-selected="false">
             Worlds
@@ -74,12 +74,30 @@
             Media
           </button>
         </div>
-        <button id="dock-minimize" class="panel-close-button" type="button" aria-label="Minimize panel">x</button>
+        <div class="dock-controls">
+          <button
+            id="dock-height-toggle"
+            class="panel-close-button panel-size-button"
+            type="button"
+            aria-label="Set panel height to half"
+          >
+            1/4
+          </button>
+          <button id="dock-minimize" class="panel-close-button" type="button" aria-label="Minimize panel">x</button>
+        </div>
       </div>
 
       <div id="pane-chat" class="dock-pane active" role="tabpanel" aria-labelledby="tab-chat">
         <div class="chat-header">
-          <span>Global Chat</span>
+          <span>Chat</span>
+          <div class="chat-channel-toggles">
+            <button id="chat-toggle-global" class="chat-channel-toggle active" type="button">
+              Global
+            </button>
+            <button id="chat-toggle-world" class="chat-channel-toggle active" type="button">
+              World
+            </button>
+          </div>
           <span class="chat-status" id="chat-status">Connecting...</span>
         </div>
         <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
@@ -206,6 +224,13 @@
               Generate 3D
             </button>
           </form>
+          <div class="party-search">
+            <label for="world-generate-visibility" class="party-result-label">Generated mesh visibility</label>
+            <select id="world-generate-visibility" class="party-search-input">
+              <option value="public" selected>Public</option>
+              <option value="private">Private</option>
+            </select>
+          </div>
           <form id="world-upload-form" class="party-search">
             <input
               id="world-model-name"
@@ -216,6 +241,13 @@
             />
             <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
           </form>
+          <div class="party-search">
+            <label for="world-model-visibility" class="party-result-label">Uploaded mesh visibility</label>
+            <select id="world-model-visibility" class="party-search-input">
+              <option value="public" selected>Public</option>
+              <option value="private">Private</option>
+            </select>
+          </div>
           <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
           <div class="party-search-results" id="world-assets"></div>
         </div>
@@ -226,24 +258,6 @@
           <div id="world-placement-editor" class="world-placement-editor"></div>
         </div>
 
-        <div class="world-section world-section-chat">
-          <div class="chat-header">
-            <span>World Chat</span>
-            <span class="chat-status" id="party-chat-status">Join a world to chat</span>
-          </div>
-          <div class="chat-log" id="party-chat-log" role="log" aria-live="polite"></div>
-          <form class="chat-form" id="party-chat-form">
-            <input
-              id="party-chat-input"
-              class="chat-input"
-              type="text"
-              maxlength="500"
-              placeholder="Join a world to chat"
-              autocomplete="off"
-            />
-            <button id="party-chat-send" class="chat-send" type="submit">Send</button>
-          </form>
-        </div>
       </div>
     </aside>
 

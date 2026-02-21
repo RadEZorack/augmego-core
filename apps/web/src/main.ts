@@ -4,6 +4,7 @@ import "./style.css";
 import { createGameScene } from "./game/scene";
 import { createApiUrlResolver, resolveWsUrl } from "./lib/urls";
 import type {
+  ChatMessage,
   CurrentUser,
   PartyState,
   PlayerPayload,
@@ -27,6 +28,9 @@ if (!app) {
 
 const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
 const dockMinimizeButton = document.getElementById("dock-minimize") as HTMLButtonElement | null;
+const dockHeightToggleButton = document.getElementById(
+  "dock-height-toggle"
+) as HTMLButtonElement | null;
 const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
 const partyTabButton = document.getElementById("tab-party") as HTMLButtonElement | null;
 const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
@@ -38,6 +42,55 @@ const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
 
 const apiUrl = createApiUrlResolver(apiBase);
+
+type DockHeightState = "quarter" | "half" | "full";
+
+function setDockHeightState(
+  panel: HTMLElement | null,
+  button: HTMLButtonElement | null,
+  state: DockHeightState
+) {
+  if (!panel || !button) return;
+
+  panel.classList.remove("height-quarter", "height-half", "height-full");
+  panel.classList.add(
+    state === "quarter"
+      ? "height-quarter"
+      : state === "half"
+        ? "height-half"
+        : "height-full"
+  );
+
+  if (state === "quarter") {
+    button.textContent = "1/4";
+    button.setAttribute("aria-label", "Set panel height to half");
+    return;
+  }
+  if (state === "half") {
+    button.textContent = "1/2";
+    button.setAttribute("aria-label", "Set panel height to full");
+    return;
+  }
+
+  button.textContent = "Full";
+  button.setAttribute("aria-label", "Set panel height to quarter");
+}
+
+function setupDockHeightToggle(
+  panel: HTMLElement | null,
+  button: HTMLButtonElement | null
+) {
+  if (!panel || !button) return;
+
+  const states: DockHeightState[] = ["quarter", "half", "full"];
+  let index = 0;
+  setDockHeightState(panel, button, states[index]!);
+
+  button.addEventListener("click", () => {
+    index = (index + 1) % states.length;
+    setDockHeightState(panel, button, states[index]!);
+  });
+}
 
 function setupPanelToggle(
   panel: HTMLElement | null,
@@ -101,6 +154,24 @@ function setPanelMinimized(
   );
 }
 
+function setupChatChannelToggles() {
+  chatToggleGlobalButton?.addEventListener("click", () => {
+    chatGlobalEnabled = !chatGlobalEnabled;
+    syncChatToggleButtons();
+    syncChatCanPost();
+    renderCombinedChat();
+  });
+
+  chatToggleWorldButton?.addEventListener("click", () => {
+    chatWorldEnabled = !chatWorldEnabled;
+    syncChatToggleButtons();
+    syncChatCanPost();
+    renderCombinedChat();
+  });
+
+  syncChatToggleButtons();
+}
+
 const chat = createChatController({
   chatLog: document.getElementById("chat-log") as HTMLDivElement | null,
   chatStatus: document.getElementById("chat-status") as HTMLSpanElement | null,
@@ -108,20 +179,22 @@ const chat = createChatController({
   chatSendButton: document.getElementById("chat-send") as HTMLButtonElement | null,
   chatForm: document.getElementById("chat-form") as HTMLFormElement | null
 });
-
-const partyChat = createChatController({
-  chatLog: document.getElementById("party-chat-log") as HTMLDivElement | null,
-  chatStatus: document.getElementById("party-chat-status") as HTMLSpanElement | null,
-  chatInput: document.getElementById("party-chat-input") as HTMLInputElement | null,
-  chatSendButton: document.getElementById("party-chat-send") as HTMLButtonElement | null,
-  chatForm: document.getElementById("party-chat-form") as HTMLFormElement | null
-});
+const chatToggleGlobalButton = document.getElementById(
+  "chat-toggle-global"
+) as HTMLButtonElement | null;
+const chatToggleWorldButton = document.getElementById(
+  "chat-toggle-world"
+) as HTMLButtonElement | null;
 
 let selfClientId: string | null = null;
 let partyState: PartyState = {
   party: null,
   pendingInvites: []
 };
+let globalChatMessages: ChatMessage[] = [];
+let worldChatMessages: ChatMessage[] = [];
+let chatGlobalEnabled = true;
+let chatWorldEnabled = true;
 let worldState: WorldState | null = null;
 let worldGenerationTasks: WorldAssetGenerationTask[] = [];
 let worldGenerationPollTimer: number | null = null;
@@ -134,6 +207,9 @@ const placementPersistTimers = new Map<string, number>();
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
 const worldModelNameInput = document.getElementById("world-model-name") as HTMLInputElement | null;
+const worldModelVisibilityInput = document.getElementById(
+  "world-model-visibility"
+) as HTMLSelectElement | null;
 const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
 const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
 const worldGenerateForm = document.getElementById("world-generate-form") as HTMLFormElement | null;
@@ -141,6 +217,9 @@ const worldGeneratePromptInput = document.getElementById(
   "world-generate-prompt"
 ) as HTMLInputElement | null;
 const worldGenerateNameInput = document.getElementById("world-generate-name") as HTMLInputElement | null;
+const worldGenerateVisibilityInput = document.getElementById(
+  "world-generate-visibility"
+) as HTMLSelectElement | null;
 const worldGenerateButton = document.getElementById(
   "world-generate-button"
 ) as HTMLButtonElement | null;
@@ -236,6 +315,63 @@ function getGenerationStatusLabel(task: WorldAssetGenerationTask) {
   return task.status === "IN_PROGRESS" ? "In progress" : "Queued";
 }
 
+function renderCombinedChat() {
+  const entries = [
+    ...(chatGlobalEnabled
+      ? globalChatMessages.map((message) => ({ channel: "global" as const, message }))
+      : []),
+    ...(chatWorldEnabled
+      ? worldChatMessages.map((message) => ({ channel: "world" as const, message }))
+      : [])
+  ].sort(
+    (a, b) =>
+      new Date(a.message.createdAt).getTime() - new Date(b.message.createdAt).getTime()
+  );
+
+  chat.replaceCombinedHistory(entries);
+}
+
+function syncChatToggleButtons() {
+  if (chatToggleGlobalButton) {
+    chatToggleGlobalButton.classList.toggle("active", chatGlobalEnabled);
+    chatToggleGlobalButton.setAttribute(
+      "aria-pressed",
+      chatGlobalEnabled ? "true" : "false"
+    );
+  }
+  if (chatToggleWorldButton) {
+    chatToggleWorldButton.classList.toggle("active", chatWorldEnabled);
+    chatToggleWorldButton.setAttribute(
+      "aria-pressed",
+      chatWorldEnabled ? "true" : "false"
+    );
+  }
+}
+
+function syncChatCanPost() {
+  const user = auth.getCurrentUser();
+  if (!user) {
+    chat.setCanPost(false, "Sign in to chat");
+    return;
+  }
+
+  const canSendGlobal = chatGlobalEnabled;
+  const canSendWorld = chatWorldEnabled && Boolean(partyState.party);
+  const canPost = canSendGlobal || canSendWorld;
+
+  if (canPost) {
+    chat.setCanPost(true);
+    return;
+  }
+
+  if (!chatGlobalEnabled && !chatWorldEnabled) {
+    chat.setCanPost(false, "Enable Global or World");
+    return;
+  }
+
+  chat.setCanPost(false, "Join a world to send world chat");
+}
+
 function stopWorldGenerationPolling() {
   if (worldGenerationPollTimer !== null) {
     window.clearInterval(worldGenerationPollTimer);
@@ -320,6 +456,8 @@ function syncWorldVisibilityControls() {
     worldSettingsSaveButton.disabled = true;
     if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+    if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
+    if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
     return;
   }
@@ -333,6 +471,8 @@ function syncWorldVisibilityControls() {
   worldSettingsSaveButton.disabled = !worldState.canManageVisibility;
   if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !worldState.canManage;
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !worldState.canManage;
+  if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !worldState.canManage;
+  if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
 }
 
@@ -913,8 +1053,10 @@ async function loadWorldState() {
     if (worldUploadButton) worldUploadButton.disabled = true;
     if (worldModelFileInput) worldModelFileInput.disabled = true;
     if (worldModelNameInput) worldModelNameInput.disabled = true;
+    if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+    if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
     syncWorldVisibilityControls();
     return;
@@ -954,8 +1096,10 @@ async function loadWorldState() {
   if (worldUploadButton) worldUploadButton.disabled = !payload.canManage;
   if (worldModelFileInput) worldModelFileInput.disabled = !payload.canManage;
   if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
+  if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !payload.canManage;
   if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !payload.canManage;
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
+  if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !payload.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
 
   const worldOwnerLabel =
@@ -1007,9 +1151,19 @@ function renderWorldAssets() {
     row.className = "world-asset-row";
 
     const label = document.createElement("div");
-    label.className = "party-result-label";
+    label.className = "party-result-label world-asset-name";
     label.textContent = getWorldAssetLabel(asset);
     label.title = `${asset.name} (${asset.versions.length} versions)`;
+
+    const options = document.createElement("details");
+    options.className = "world-asset-options";
+
+    const optionsSummary = document.createElement("summary");
+    optionsSummary.className = "party-secondary-button world-asset-options-toggle";
+    optionsSummary.textContent = "Options";
+
+    const optionsMenu = document.createElement("div");
+    optionsMenu.className = "world-asset-options-menu";
 
     const placeButton = document.createElement("button");
     placeButton.className = "party-secondary-button";
@@ -1017,6 +1171,7 @@ function renderWorldAssets() {
     placeButton.textContent = selectedPlacementAssetId === asset.id ? "Placing..." : "Place";
     placeButton.disabled = !worldState?.canManage;
     placeButton.addEventListener("click", () => {
+      options.open = false;
       selectedPlacementAssetId = asset.id;
       isPlacingModel = true;
       setWorldNotice(`Placement mode: ${asset.name}. Click the floor to place.`);
@@ -1029,6 +1184,7 @@ function renderWorldAssets() {
     replaceButton.textContent = "Replace";
     replaceButton.disabled = !worldState?.canManage;
     replaceButton.addEventListener("click", () => {
+      options.open = false;
       createReplaceInput(async (file) => {
         const formData = new FormData();
         formData.set("file", file);
@@ -1065,10 +1221,64 @@ function renderWorldAssets() {
       downloadButton.style.opacity = "0.5";
     }
 
+    const visibilityLabel = document.createElement("label");
+    visibilityLabel.className = "world-asset-options-field";
+    visibilityLabel.textContent = "Visibility";
+
+    const visibilitySelect = document.createElement("select");
+    visibilitySelect.className = "party-search-input world-asset-visibility";
+    visibilitySelect.innerHTML = `
+      <option value="public">Public</option>
+      <option value="private">Private</option>
+    `;
+    visibilitySelect.value = asset.visibility;
+    visibilitySelect.disabled = !asset.canManageVisibility || !asset.canChangeVisibility;
+    visibilitySelect.title = asset.canChangeVisibility
+      ? "Mesh visibility"
+      : "Cannot change visibility after instances exist";
+    visibilitySelect.addEventListener("change", () => {
+      const visibility = visibilitySelect.value;
+      void (async () => {
+        const response = await fetch(
+          apiUrl(`/api/v1/world/assets/${encodeURIComponent(asset.id)}/visibility`),
+          {
+            method: "PATCH",
+            credentials: "include",
+            headers: {
+              "Content-Type": "application/json"
+            },
+            body: JSON.stringify({ visibility })
+          }
+        );
+        if (!response.ok) {
+          visibilitySelect.value = asset.visibility;
+          setWorldNotice(
+            response.status === 409
+              ? "Visibility cannot change after instances exist"
+              : "Visibility update failed"
+          );
+          await loadWorldState();
+          return;
+        }
+        options.open = false;
+        await loadWorldState();
+      })();
+    });
+
+    const actionRow = document.createElement("div");
+    actionRow.className = "world-asset-options-actions";
+    actionRow.appendChild(placeButton);
+    actionRow.appendChild(replaceButton);
+    actionRow.appendChild(downloadButton);
+
+    optionsMenu.appendChild(visibilityLabel);
+    optionsMenu.appendChild(visibilitySelect);
+    optionsMenu.appendChild(actionRow);
+    options.appendChild(optionsSummary);
+    options.appendChild(optionsMenu);
+
     row.appendChild(label);
-    row.appendChild(placeButton);
-    row.appendChild(replaceButton);
-    row.appendChild(downloadButton);
+    row.appendChild(options);
     worldAssetsContainer.appendChild(row);
   }
 }
@@ -1137,12 +1347,9 @@ const auth = createAuthController({
   },
   apiUrl,
   onUserChange(user: CurrentUser | null) {
-    chat.setCanPost(Boolean(user));
     game.setLocalIdentity(user?.name ?? user?.email ?? "Guest", user?.avatarUrl ?? null);
     party.setCurrentUser(user);
-
-    const canPartyChat = Boolean(user) && Boolean(partyState.party);
-    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a world to chat");
+    syncChatCanPost();
 
     if (!user) {
       worldState = null;
@@ -1157,6 +1364,8 @@ const auth = createAuthController({
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
       if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
       if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
+      if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
+      if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
       syncWorldVisibilityControls();
       return;
     }
@@ -1304,10 +1513,12 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     }
   },
   onChatHistory(messages) {
-    chat.replaceHistory(messages);
+    globalChatMessages = messages;
+    renderCombinedChat();
   },
   onChatMessage(message) {
-    chat.appendMessage(message);
+    globalChatMessages = [...globalChatMessages.filter((item) => item.id !== message.id), message];
+    renderCombinedChat();
   },
   onPlayerSnapshot(players) {
     playersByClientId.clear();
@@ -1347,10 +1558,7 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onPartyState(state) {
     partyState = state;
     party.setPartyState(state);
-
-    const canPartyChat = Boolean(auth.getCurrentUser()) && Boolean(state.party);
-    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a world to chat");
-    partyChat.setStatus(state.party ? "Connected" : "Join a world to chat");
+    syncChatCanPost();
 
     syncMediaPeersAndVolumes();
     void loadWorldState();
@@ -1359,10 +1567,12 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     party.addIncomingInvite(invite);
   },
   onPartyChatHistory(messages) {
-    partyChat.replaceHistory(messages);
+    worldChatMessages = messages;
+    renderCombinedChat();
   },
   onPartyChatMessage(message) {
-    partyChat.appendMessage(message);
+    worldChatMessages = [...worldChatMessages.filter((item) => item.id !== message.id), message];
+    renderCombinedChat();
   },
   onRtcSignal(fromClientId, signal) {
     void webrtc.handleSignal(fromClientId, signal);
@@ -1402,16 +1612,22 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
 
 chat.onSubmit((text) => {
   if (!auth.getCurrentUser()) return;
-  realtime.sendChat(text);
-});
-
-partyChat.onSubmit((text) => {
-  if (!auth.getCurrentUser() || !partyState.party) return;
-  realtime.sendPartyChat(text);
+  let sent = false;
+  if (chatGlobalEnabled) {
+    sent = realtime.sendChat(text) || sent;
+  }
+  if (chatWorldEnabled && partyState.party) {
+    sent = realtime.sendPartyChat(text) || sent;
+  }
+  if (!sent) {
+    chat.setStatus("Enable Global or join a world for World chat");
+  }
 });
 
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
+setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
+setupChatChannelToggles();
 
 worldGenerateForm?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1436,7 +1652,8 @@ worldGenerateForm?.addEventListener("submit", (event) => {
       },
       body: JSON.stringify({
         prompt,
-        name: worldGenerateNameInput?.value?.trim() ?? ""
+        name: worldGenerateNameInput?.value?.trim() ?? "",
+        visibility: worldGenerateVisibilityInput?.value === "private" ? "private" : "public"
       })
     });
 
@@ -1450,6 +1667,9 @@ worldGenerateForm?.addEventListener("submit", (event) => {
     }
     if (worldGenerateNameInput) {
       worldGenerateNameInput.value = "";
+    }
+    if (worldGenerateVisibilityInput) {
+      worldGenerateVisibilityInput.value = "public";
     }
 
     setWorldNotice("Text-to-3D job queued. It will continue if you go offline.");
@@ -1475,6 +1695,10 @@ worldUploadForm?.addEventListener("submit", (event) => {
     const formData = new FormData();
     formData.set("file", file);
     formData.set("name", worldModelNameInput?.value?.trim() || file.name.replace(/\.glb$/i, ""));
+    formData.set(
+      "visibility",
+      worldModelVisibilityInput?.value === "private" ? "private" : "public"
+    );
 
     const response = await fetch(apiUrl("/api/v1/world/assets"), {
       method: "POST",
@@ -1492,6 +1716,9 @@ worldUploadForm?.addEventListener("submit", (event) => {
     }
     if (worldModelNameInput) {
       worldModelNameInput.value = "";
+    }
+    if (worldModelVisibilityInput) {
+      worldModelVisibilityInput.value = "public";
     }
 
     await loadWorldState();
@@ -1554,13 +1781,16 @@ media.setMicMuted(webrtc.getMicMuted());
 media.setCameraEnabled(webrtc.getCameraEnabled());
 game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 media.setPermissionState("not_requested");
-partyChat.setCanPost(false, "Join a world to chat");
+syncChatCanPost();
+renderCombinedChat();
 setWorldNotice("Sign in to load world");
 if (worldUploadButton) worldUploadButton.disabled = true;
 if (worldModelFileInput) worldModelFileInput.disabled = true;
 if (worldModelNameInput) worldModelNameInput.disabled = true;
+if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
 if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
 if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
+if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
 if (worldGenerateButton) worldGenerateButton.disabled = true;
 syncWorldVisibilityControls();
 renderWorldPlacements();
