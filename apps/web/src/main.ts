@@ -4,6 +4,7 @@ import "./style.css";
 import { createGameScene } from "./game/scene";
 import { createApiUrlResolver, resolveWsUrl } from "./lib/urls";
 import type {
+  ChatMessage,
   CurrentUser,
   PartyState,
   PlayerPayload,
@@ -153,6 +154,24 @@ function setPanelMinimized(
   );
 }
 
+function setupChatChannelToggles() {
+  chatToggleGlobalButton?.addEventListener("click", () => {
+    chatGlobalEnabled = !chatGlobalEnabled;
+    syncChatToggleButtons();
+    syncChatCanPost();
+    renderCombinedChat();
+  });
+
+  chatToggleWorldButton?.addEventListener("click", () => {
+    chatWorldEnabled = !chatWorldEnabled;
+    syncChatToggleButtons();
+    syncChatCanPost();
+    renderCombinedChat();
+  });
+
+  syncChatToggleButtons();
+}
+
 const chat = createChatController({
   chatLog: document.getElementById("chat-log") as HTMLDivElement | null,
   chatStatus: document.getElementById("chat-status") as HTMLSpanElement | null,
@@ -160,20 +179,22 @@ const chat = createChatController({
   chatSendButton: document.getElementById("chat-send") as HTMLButtonElement | null,
   chatForm: document.getElementById("chat-form") as HTMLFormElement | null
 });
-
-const partyChat = createChatController({
-  chatLog: document.getElementById("party-chat-log") as HTMLDivElement | null,
-  chatStatus: document.getElementById("party-chat-status") as HTMLSpanElement | null,
-  chatInput: document.getElementById("party-chat-input") as HTMLInputElement | null,
-  chatSendButton: document.getElementById("party-chat-send") as HTMLButtonElement | null,
-  chatForm: document.getElementById("party-chat-form") as HTMLFormElement | null
-});
+const chatToggleGlobalButton = document.getElementById(
+  "chat-toggle-global"
+) as HTMLButtonElement | null;
+const chatToggleWorldButton = document.getElementById(
+  "chat-toggle-world"
+) as HTMLButtonElement | null;
 
 let selfClientId: string | null = null;
 let partyState: PartyState = {
   party: null,
   pendingInvites: []
 };
+let globalChatMessages: ChatMessage[] = [];
+let worldChatMessages: ChatMessage[] = [];
+let chatGlobalEnabled = true;
+let chatWorldEnabled = true;
 let worldState: WorldState | null = null;
 let worldGenerationTasks: WorldAssetGenerationTask[] = [];
 let worldGenerationPollTimer: number | null = null;
@@ -292,6 +313,63 @@ function getGenerationStatusLabel(task: WorldAssetGenerationTask) {
   if (task.status === "FAILED") return "Failed";
   if (task.meshyStatus) return task.meshyStatus.replace(/_/g, " ");
   return task.status === "IN_PROGRESS" ? "In progress" : "Queued";
+}
+
+function renderCombinedChat() {
+  const entries = [
+    ...(chatGlobalEnabled
+      ? globalChatMessages.map((message) => ({ channel: "global" as const, message }))
+      : []),
+    ...(chatWorldEnabled
+      ? worldChatMessages.map((message) => ({ channel: "world" as const, message }))
+      : [])
+  ].sort(
+    (a, b) =>
+      new Date(a.message.createdAt).getTime() - new Date(b.message.createdAt).getTime()
+  );
+
+  chat.replaceCombinedHistory(entries);
+}
+
+function syncChatToggleButtons() {
+  if (chatToggleGlobalButton) {
+    chatToggleGlobalButton.classList.toggle("active", chatGlobalEnabled);
+    chatToggleGlobalButton.setAttribute(
+      "aria-pressed",
+      chatGlobalEnabled ? "true" : "false"
+    );
+  }
+  if (chatToggleWorldButton) {
+    chatToggleWorldButton.classList.toggle("active", chatWorldEnabled);
+    chatToggleWorldButton.setAttribute(
+      "aria-pressed",
+      chatWorldEnabled ? "true" : "false"
+    );
+  }
+}
+
+function syncChatCanPost() {
+  const user = auth.getCurrentUser();
+  if (!user) {
+    chat.setCanPost(false, "Sign in to chat");
+    return;
+  }
+
+  const canSendGlobal = chatGlobalEnabled;
+  const canSendWorld = chatWorldEnabled && Boolean(partyState.party);
+  const canPost = canSendGlobal || canSendWorld;
+
+  if (canPost) {
+    chat.setCanPost(true);
+    return;
+  }
+
+  if (!chatGlobalEnabled && !chatWorldEnabled) {
+    chat.setCanPost(false, "Enable Global or World");
+    return;
+  }
+
+  chat.setCanPost(false, "Join a world to send world chat");
 }
 
 function stopWorldGenerationPolling() {
@@ -1269,12 +1347,9 @@ const auth = createAuthController({
   },
   apiUrl,
   onUserChange(user: CurrentUser | null) {
-    chat.setCanPost(Boolean(user));
     game.setLocalIdentity(user?.name ?? user?.email ?? "Guest", user?.avatarUrl ?? null);
     party.setCurrentUser(user);
-
-    const canPartyChat = Boolean(user) && Boolean(partyState.party);
-    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a world to chat");
+    syncChatCanPost();
 
     if (!user) {
       worldState = null;
@@ -1438,10 +1513,12 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     }
   },
   onChatHistory(messages) {
-    chat.replaceHistory(messages);
+    globalChatMessages = messages;
+    renderCombinedChat();
   },
   onChatMessage(message) {
-    chat.appendMessage(message);
+    globalChatMessages = [...globalChatMessages.filter((item) => item.id !== message.id), message];
+    renderCombinedChat();
   },
   onPlayerSnapshot(players) {
     playersByClientId.clear();
@@ -1481,10 +1558,7 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onPartyState(state) {
     partyState = state;
     party.setPartyState(state);
-
-    const canPartyChat = Boolean(auth.getCurrentUser()) && Boolean(state.party);
-    partyChat.setCanPost(canPartyChat, canPartyChat ? "Type a message" : "Join a world to chat");
-    partyChat.setStatus(state.party ? "Connected" : "Join a world to chat");
+    syncChatCanPost();
 
     syncMediaPeersAndVolumes();
     void loadWorldState();
@@ -1493,10 +1567,12 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     party.addIncomingInvite(invite);
   },
   onPartyChatHistory(messages) {
-    partyChat.replaceHistory(messages);
+    worldChatMessages = messages;
+    renderCombinedChat();
   },
   onPartyChatMessage(message) {
-    partyChat.appendMessage(message);
+    worldChatMessages = [...worldChatMessages.filter((item) => item.id !== message.id), message];
+    renderCombinedChat();
   },
   onRtcSignal(fromClientId, signal) {
     void webrtc.handleSignal(fromClientId, signal);
@@ -1536,17 +1612,22 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
 
 chat.onSubmit((text) => {
   if (!auth.getCurrentUser()) return;
-  realtime.sendChat(text);
-});
-
-partyChat.onSubmit((text) => {
-  if (!auth.getCurrentUser() || !partyState.party) return;
-  realtime.sendPartyChat(text);
+  let sent = false;
+  if (chatGlobalEnabled) {
+    sent = realtime.sendChat(text) || sent;
+  }
+  if (chatWorldEnabled && partyState.party) {
+    sent = realtime.sendPartyChat(text) || sent;
+  }
+  if (!sent) {
+    chat.setStatus("Enable Global or join a world for World chat");
+  }
 });
 
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
 setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
+setupChatChannelToggles();
 
 worldGenerateForm?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -1700,7 +1781,8 @@ media.setMicMuted(webrtc.getMicMuted());
 media.setCameraEnabled(webrtc.getCameraEnabled());
 game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 media.setPermissionState("not_requested");
-partyChat.setCanPost(false, "Join a world to chat");
+syncChatCanPost();
+renderCombinedChat();
 setWorldNotice("Sign in to load world");
 if (worldUploadButton) worldUploadButton.disabled = true;
 if (worldModelFileInput) worldModelFileInput.disabled = true;

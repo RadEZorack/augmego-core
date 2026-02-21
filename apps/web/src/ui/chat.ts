@@ -1,4 +1,9 @@
 import type { ChatMessage } from "../lib/types";
+type ChatChannel = "global" | "world";
+type CombinedChatMessage = {
+  channel: ChatChannel;
+  message: ChatMessage;
+};
 
 type ChatElements = {
   chatLog: HTMLDivElement | null;
@@ -26,16 +31,23 @@ export function createChatController(elements: ChatElements) {
     }
   }
 
-  function appendMessage(message: ChatMessage) {
+  function appendMessage(message: ChatMessage, channel: ChatChannel = "global") {
     if (!elements.chatLog) return;
 
     const row = document.createElement("div");
-    row.className = "chat-row";
+    row.className = `chat-row chat-row-${channel}`;
+    const channelBadge = document.createElement("span");
+    channelBadge.className = `chat-channel-badge chat-channel-${channel}`;
+    channelBadge.textContent = channel === "world" ? "WORLD" : "GLOBAL";
+    row.appendChild(channelBadge);
+
+    const messageText = document.createElement("span");
     const timestamp = new Date(message.createdAt).toLocaleTimeString([], {
       hour: "2-digit",
       minute: "2-digit"
     });
-    row.textContent = `[${timestamp}] ${message.user.name}: ${message.text}`;
+    messageText.textContent = `[${timestamp}] ${message.user.name}: ${message.text}`;
+    row.appendChild(messageText);
     elements.chatLog.appendChild(row);
     elements.chatLog.scrollTop = elements.chatLog.scrollHeight;
 
@@ -44,13 +56,23 @@ export function createChatController(elements: ChatElements) {
     }
   }
 
-  function replaceHistory(messages: ChatMessage[]) {
+  function replaceHistory(messages: ChatMessage[], channel: ChatChannel = "global") {
     if (elements.chatLog) {
       elements.chatLog.innerHTML = "";
     }
 
     for (const message of messages) {
-      appendMessage(message);
+      appendMessage(message, channel);
+    }
+  }
+
+  function replaceCombinedHistory(entries: CombinedChatMessage[]) {
+    if (elements.chatLog) {
+      elements.chatLog.innerHTML = "";
+    }
+
+    for (const entry of entries) {
+      appendMessage(entry.message, entry.channel);
     }
   }
 
@@ -74,6 +96,7 @@ export function createChatController(elements: ChatElements) {
     setStatus,
     appendMessage,
     replaceHistory,
+    replaceCombinedHistory,
     onSubmit
   };
 }

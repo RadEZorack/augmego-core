@@ -65,7 +65,7 @@
       <div class="dock-header">
         <div class="dock-tabs" role="tablist" aria-label="Panel tabs">
           <button id="tab-chat" class="dock-tab active" type="button" role="tab" aria-selected="true">
-            Global Chat
+            Chat
           </button>
           <button id="tab-party" class="dock-tab" type="button" role="tab" aria-selected="false">
             Worlds
@@ -89,7 +89,15 @@
 
       <div id="pane-chat" class="dock-pane active" role="tabpanel" aria-labelledby="tab-chat">
         <div class="chat-header">
-          <span>Global Chat</span>
+          <span>Chat</span>
+          <div class="chat-channel-toggles">
+            <button id="chat-toggle-global" class="chat-channel-toggle active" type="button">
+              Global
+            </button>
+            <button id="chat-toggle-world" class="chat-channel-toggle active" type="button">
+              World
+            </button>
+          </div>
           <span class="chat-status" id="chat-status">Connecting...</span>
         </div>
         <div class="chat-log" id="chat-log" role="log" aria-live="polite"></div>
@@ -250,24 +258,6 @@
           <div id="world-placement-editor" class="world-placement-editor"></div>
         </div>
 
-        <div class="world-section world-section-chat">
-          <div class="chat-header">
-            <span>World Chat</span>
-            <span class="chat-status" id="party-chat-status">Join a world to chat</span>
-          </div>
-          <div class="chat-log" id="party-chat-log" role="log" aria-live="polite"></div>
-          <form class="chat-form" id="party-chat-form">
-            <input
-              id="party-chat-input"
-              class="chat-input"
-              type="text"
-              maxlength="500"
-              placeholder="Join a world to chat"
-              autocomplete="off"
-            />
-            <button id="party-chat-send" class="chat-send" type="submit">Send</button>
-          </form>
-        </div>
       </div>
     </aside>
 
