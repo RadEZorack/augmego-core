@@ -49,6 +49,7 @@ export function createGameScene(options: GameSceneOptions) {
   const gltfLoader = new GLTFLoader();
   const worldRoot = new THREE.Group();
   const modelTemplateCache = new Map<string, Promise<any>>();
+  const loadingSpinners = new Set<any>();
   let worldState: WorldState | null = null;
   let worldRenderEpoch = 0;
 
@@ -494,6 +495,54 @@ export function createGameScene(options: GameSceneOptions) {
       const child = worldRoot.children[0];
       if (!child) break;
       worldRoot.remove(child);
+      child.traverse((node: any) => {
+        if (node.geometry) node.geometry.dispose();
+        const material = node.material;
+        if (Array.isArray(material)) {
+          for (const item of material) item.dispose();
+        } else if (material) {
+          material.dispose();
+        }
+      });
+    }
+    loadingSpinners.clear();
+  }
+
+  function createWorldLoadingSpinner() {
+    const spinner = new THREE.Group();
+
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.45, 0.06, 12, 28),
+      new THREE.MeshStandardMaterial({
+        color: 0x84d7ff,
+        emissive: 0x10394e,
+        roughness: 0.35,
+        metalness: 0.2
+      })
+    );
+    ring.rotation.x = Math.PI / 2;
+    spinner.add(ring);
+
+    const marker = new THREE.Mesh(
+      new THREE.SphereGeometry(0.09, 16, 16),
+      new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        emissive: 0x2f6078,
+        roughness: 0.2,
+        metalness: 0.1
+      })
+    );
+    marker.position.set(0.45, 0, 0);
+    spinner.add(marker);
+
+    loadingSpinners.add(spinner);
+    return spinner;
+  }
+
+  function updateLoadingSpinners(deltaSeconds: number) {
+    for (const spinner of loadingSpinners) {
+      spinner.rotation.y += deltaSeconds * 3.2;
+      spinner.rotation.x += deltaSeconds * 0.8;
     }
   }
 
@@ -529,9 +578,30 @@ export function createGameScene(options: GameSceneOptions) {
         const modelUrl = asset?.currentVersion?.fileUrl;
         if (!modelUrl) return;
 
+        const spinner = createWorldLoadingSpinner();
+        spinner.position.set(
+          placement.position.x,
+          placement.position.y,
+          placement.position.z
+        );
+        spinner.rotation.set(
+          placement.rotation.x,
+          placement.rotation.y,
+          placement.rotation.z
+        );
+        spinner.scale.set(placement.scale.x, placement.scale.y, placement.scale.z);
+        spinner.userData = {
+          placementId: placement.id,
+          assetId: placement.assetId
+        };
+        worldRoot.add(spinner);
+
         const template = await loadModelTemplate(modelUrl);
-        if (!template) return;
-        if (renderEpoch !== worldRenderEpoch) return;
+        if (!template || renderEpoch !== worldRenderEpoch) {
+          worldRoot.remove(spinner);
+          loadingSpinners.delete(spinner);
+          return;
+        }
 
         const instance = template.clone(true);
         instance.position.set(
@@ -549,6 +619,8 @@ export function createGameScene(options: GameSceneOptions) {
           placementId: placement.id,
           assetId: placement.assetId
         };
+        worldRoot.remove(spinner);
+        loadingSpinners.delete(spinner);
         worldRoot.add(instance);
       })
     );
@@ -659,6 +731,7 @@ export function createGameScene(options: GameSceneOptions) {
     moveLocalPlayer(deltaSeconds);
     localBadge.renderFrame();
     updateRemotePlayers(deltaSeconds);
+    updateLoadingSpinners(deltaSeconds);
 
     camera.position.x = localPlayer.position.x;
     camera.position.z = localPlayer.position.z + 7;
