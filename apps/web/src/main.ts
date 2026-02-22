@@ -1150,10 +1150,24 @@ function renderWorldAssets() {
     const row = document.createElement("div");
     row.className = "world-asset-row";
 
-    const label = document.createElement("div");
-    label.className = "party-result-label world-asset-name";
+    const startPlacement = () => {
+      if (!worldState?.canManage) return;
+      selectedPlacementAssetId = asset.id;
+      isPlacingModel = true;
+      setWorldNotice(`Placement mode: ${asset.name}. Click the floor to place.`);
+      renderWorldAssets();
+    };
+
+    const label = document.createElement("button");
+    label.type = "button";
+    label.className = "party-result-label world-asset-name world-asset-name-button";
+    if (selectedPlacementAssetId === asset.id && isPlacingModel) {
+      label.classList.add("active");
+    }
     label.textContent = getWorldAssetLabel(asset);
     label.title = `${asset.name} (${asset.versions.length} versions)`;
+    label.disabled = !worldState?.canManage;
+    label.addEventListener("click", startPlacement);
 
     const options = document.createElement("details");
     options.className = "world-asset-options";
@@ -1172,10 +1186,7 @@ function renderWorldAssets() {
     placeButton.disabled = !worldState?.canManage;
     placeButton.addEventListener("click", () => {
       options.open = false;
-      selectedPlacementAssetId = asset.id;
-      isPlacingModel = true;
-      setWorldNotice(`Placement mode: ${asset.name}. Click the floor to place.`);
-      renderWorldAssets();
+      startPlacement();
     });
 
     const replaceButton = document.createElement("button");
