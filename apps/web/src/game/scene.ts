@@ -843,18 +843,39 @@ export function createGameScene(options: GameSceneOptions) {
         ctx.font = "500 18px Space Grotesk, sans-serif";
         ctx.fillText("No comments yet", 36, commentsTop + 24);
       } else {
+        const fitTextToWidth = (
+          text: string,
+          maxWidth: number,
+          font: string
+        ) => {
+          ctx.font = font;
+          if (ctx.measureText(text).width <= maxWidth) return text;
+          let trimmed = text;
+          while (trimmed.length > 1) {
+            trimmed = trimmed.slice(0, -1);
+            const candidate = `${trimmed}...`;
+            if (ctx.measureText(candidate).width <= maxWidth) {
+              return candidate;
+            }
+          }
+          return "...";
+        };
+        const nameX = 36;
+        const nameColWidth = 104;
+        const commentX = nameX + nameColWidth + 14;
+        const commentColWidth = canvas.width - commentX - 34;
         let commentY = commentsTop + 18;
         for (const comment of preview) {
           ctx.fillStyle = "#e8f5ff";
-          ctx.font = "600 17px Space Grotesk, sans-serif";
-          const name = comment.author.name.length > 18
-            ? `${comment.author.name.slice(0, 18)}...`
-            : comment.author.name;
-          ctx.fillText(name, 36, commentY);
+          const nameFont = "600 17px Space Grotesk, sans-serif";
+          ctx.font = nameFont;
+          const name = fitTextToWidth(comment.author.name, nameColWidth, nameFont);
+          ctx.fillText(name, nameX, commentY);
           ctx.fillStyle = "rgba(232, 245, 255, 0.78)";
-          ctx.font = "500 16px Space Grotesk, sans-serif";
-          const line = wrapText(ctx, comment.message, canvas.width - 180, 1)[0] ?? "";
-          ctx.fillText(line, 150, commentY);
+          const commentFont = "500 16px Space Grotesk, sans-serif";
+          ctx.font = commentFont;
+          const line = fitTextToWidth(comment.message, commentColWidth, commentFont);
+          ctx.fillText(line, commentX, commentY);
           commentY += 24;
         }
       }
@@ -1111,6 +1132,40 @@ export function createGameScene(options: GameSceneOptions) {
 
     if (postHit) {
       let node: any = postHit.object;
+      let postIdFromHit: string | null = null;
+      while (node) {
+        if (typeof node.userData?.postId === "string") {
+          postIdFromHit = node.userData.postId;
+          break;
+        }
+        node = node.parent;
+      }
+
+      const bodyHitObject = postHit.object as any;
+      const uv = postHit.uv as { x: number; y: number } | undefined;
+      if (
+        uv &&
+        bodyHitObject?.userData?.type === "world-post-body" &&
+        typeof postIdFromHit === "string"
+      ) {
+        const post = worldState?.posts.find((item) => item.id === postIdFromHit) ?? null;
+        if (post && !post.isMinimized) {
+          const canvasW = 640;
+          const canvasH = 740;
+          const px = uv.x * canvasW;
+          const pyA = uv.y * canvasH;
+          const pyB = (1 - uv.y) * canvasH;
+          const inButtonX = px >= 380 && px <= 616;
+          const inButtonY =
+            (pyA >= 662 && pyA <= 714) || (pyB >= 662 && pyB <= 714);
+          if (inButtonX && inButtonY) {
+            options.onWorldPostOpenComments?.(postIdFromHit);
+            return;
+          }
+        }
+      }
+
+      node = postHit.object;
       while (node) {
         if (typeof node.userData?.postId === "string") {
           options.onWorldPostSelect?.(node.userData.postId);

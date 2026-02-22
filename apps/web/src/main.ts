@@ -82,6 +82,8 @@ const apiUrl = createApiUrlResolver(apiBase);
 
 type DockHeightState = "quarter" | "half" | "full";
 type PartySubtabKey = "world" | "objects" | "posts";
+type MainTabKey = "chat" | "party" | "media" | "controls";
+let setActiveMainTab: ((tab: MainTabKey) => void) | null = null;
 let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
 
 function setDockHeightState(
@@ -174,6 +176,7 @@ function setupTabs() {
       panes[i]!.classList.toggle("active", i === activeIndex);
     }
   };
+  setActiveMainTab = setActive;
 
   chatTabButton.addEventListener("click", () => setActive("chat"));
   partyTabButton.addEventListener("click", () => setActive("party"));
@@ -1876,6 +1879,8 @@ const game = createGameScene({
     void toggleSelectedWorldPostMinimized();
   },
   onWorldPostOpenComments(postId) {
+    setPanelMinimized(dockPanel, dockMinimizeButton, "panel", false);
+    setActiveMainTab?.("party");
     setActivePartySubtab?.("posts");
     setSelectedWorldPost(postId);
     if (worldPostCommentsContainer) {
