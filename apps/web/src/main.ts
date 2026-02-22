@@ -39,6 +39,16 @@ const chatPane = document.getElementById("pane-chat") as HTMLElement | null;
 const partyPane = document.getElementById("pane-party") as HTMLElement | null;
 const mediaPane = document.getElementById("pane-media") as HTMLElement | null;
 const controlsPane = document.getElementById("pane-controls") as HTMLElement | null;
+const partyWorldSubtabButton = document.getElementById(
+  "party-subtab-world"
+) as HTMLButtonElement | null;
+const partyObjectsSubtabButton = document.getElementById(
+  "party-subtab-objects"
+) as HTMLButtonElement | null;
+const partyWorldSubpane = document.getElementById("party-subpane-world") as HTMLElement | null;
+const partyObjectsSubpane = document.getElementById(
+  "party-subpane-objects"
+) as HTMLElement | null;
 
 const cameraZoomSlider = document.getElementById(
   "camera-zoom-slider"
@@ -159,6 +169,34 @@ function setupTabs() {
   partyTabButton.addEventListener("click", () => setActive("party"));
   mediaTabButton.addEventListener("click", () => setActive("media"));
   controlsTabButton.addEventListener("click", () => setActive("controls"));
+}
+
+function setupPartySubtabs() {
+  if (
+    !partyWorldSubtabButton ||
+    !partyObjectsSubtabButton ||
+    !partyWorldSubpane ||
+    !partyObjectsSubpane
+  ) {
+    return;
+  }
+
+  const tabs = [partyWorldSubtabButton, partyObjectsSubtabButton];
+  const panes = [partyWorldSubpane, partyObjectsSubpane];
+
+  const setActive = (tab: "world" | "objects") => {
+    const activeIndex = tab === "world" ? 0 : 1;
+    for (let i = 0; i < tabs.length; i += 1) {
+      const active = i === activeIndex;
+      tabs[i]!.classList.toggle("active", active);
+      tabs[i]!.setAttribute("aria-selected", active ? "true" : "false");
+      panes[i]!.classList.toggle("active", active);
+      panes[i]!.hidden = !active;
+    }
+  };
+
+  partyWorldSubtabButton.addEventListener("click", () => setActive("world"));
+  partyObjectsSubtabButton.addEventListener("click", () => setActive("objects"));
 }
 
 function setPanelMinimized(
@@ -1721,6 +1759,7 @@ chat.onSubmit((text) => {
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
 setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
+setupPartySubtabs();
 setupCameraControlsTab();
 setupChatChannelToggles();
 

@@ -217,123 +217,160 @@
 
       <div id="pane-party" class="dock-pane" role="tabpanel" aria-labelledby="tab-party">
         <div class="party-status" id="party-status">No world</div>
-        <div class="world-section">
-          <div class="party-members-title">Find Worlds</div>
-          <div class="party-search">
-            <input
-              id="party-search-input"
-              class="party-search-input"
-              type="text"
-              placeholder="Search worlds or owners"
-              autocomplete="off"
-            />
-            <button id="party-search-button" class="party-search-button" type="button">Find</button>
-          </div>
-          <div class="party-search-results" id="party-search-results"></div>
-        </div>
-
-        <div class="world-section">
-          <div class="party-members-title">Current World Visitors</div>
-          <div class="party-members" id="party-members"></div>
-          <button id="party-leave-button" class="party-leave-button" type="button" disabled>
-            Leave World
+        <div class="party-subtabs" role="tablist" aria-label="World tools">
+          <button
+            id="party-subtab-world"
+            class="party-subtab active"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="party-subpane-world"
+          >
+            World
+          </button>
+          <button
+            id="party-subtab-objects"
+            class="party-subtab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="party-subpane-objects"
+          >
+            Objects
           </button>
         </div>
 
-        <div class="world-section">
-          <div class="party-members-title">World Settings</div>
-          <form id="world-settings-form" class="party-search">
-            <input
-              id="world-name-input"
-              class="party-search-input"
-              type="text"
-              maxlength="80"
-              placeholder="World name"
-              autocomplete="off"
-            />
-            <button id="world-settings-save" class="party-secondary-button" type="submit" disabled>
-              Save
+        <div
+          id="party-subpane-world"
+          class="party-subpane active"
+          role="tabpanel"
+          aria-labelledby="party-subtab-world"
+        >
+          <div class="world-section">
+            <div class="party-members-title">Find Worlds</div>
+            <div class="party-search">
+              <input
+                id="party-search-input"
+                class="party-search-input"
+                type="text"
+                placeholder="Search worlds or owners"
+                autocomplete="off"
+              />
+              <button id="party-search-button" class="party-search-button" type="button">Find</button>
+            </div>
+            <div class="party-search-results" id="party-search-results"></div>
+          </div>
+
+          <div class="world-section">
+            <div class="party-members-title">Current World Visitors</div>
+            <div class="party-members" id="party-members"></div>
+            <button id="party-leave-button" class="party-leave-button" type="button" disabled>
+              Leave World
             </button>
-          </form>
-          <input
-            id="world-description-input"
-            class="party-search-input"
-            type="text"
-            maxlength="240"
-            placeholder="World description"
-            autocomplete="off"
-          />
-          <div class="party-search">
-            <label for="world-public-toggle" class="party-result-label">Public world</label>
-            <input id="world-public-toggle" type="checkbox" />
           </div>
-        </div>
 
-        <div class="world-section">
-          <div class="party-members-title">Generate Model</div>
-          <div id="world-status" class="party-status">Sign in to load world</div>
-          <input
-            id="world-generate-name"
-            class="party-search-input"
-            type="text"
-            placeholder="Generated model name (optional)"
-            autocomplete="off"
-          />
-          <form id="world-generate-form" class="party-search">
+          <div class="world-section">
+            <div class="party-members-title">World Settings</div>
+            <form id="world-settings-form" class="party-search">
+              <input
+                id="world-name-input"
+                class="party-search-input"
+                type="text"
+                maxlength="80"
+                placeholder="World name"
+                autocomplete="off"
+              />
+              <button id="world-settings-save" class="party-secondary-button" type="submit" disabled>
+                Save
+              </button>
+            </form>
             <input
-              id="world-generate-prompt"
+              id="world-description-input"
               class="party-search-input"
               type="text"
-              maxlength="600"
-              placeholder="Describe the 3D model to generate"
+              maxlength="240"
+              placeholder="World description"
               autocomplete="off"
             />
-            <button id="world-generate-button" class="party-search-button" type="submit">
-              Generate 3D
-            </button>
-          </form>
-          <div class="party-search">
-            <label for="world-generate-visibility" class="party-result-label">Generated mesh visibility</label>
-            <select id="world-generate-visibility" class="party-search-input">
-              <option value="public" selected>Public</option>
-              <option value="private">Private</option>
-            </select>
+            <div class="party-search">
+              <label for="world-public-toggle" class="party-result-label">Public world</label>
+              <input id="world-public-toggle" type="checkbox" />
+            </div>
           </div>
         </div>
 
-        <div class="world-section">
-          <div class="party-members-title">Upload Model</div>
-          <form id="world-upload-form" class="party-search">
+        <div
+          id="party-subpane-objects"
+          class="party-subpane"
+          role="tabpanel"
+          aria-labelledby="party-subtab-objects"
+          hidden
+        >
+          <div class="world-section">
+            <div class="party-members-title">Generate Model</div>
+            <div id="world-status" class="party-status">Sign in to load world</div>
             <input
-              id="world-model-name"
+              id="world-generate-name"
               class="party-search-input"
               type="text"
-              placeholder="Model name"
+              placeholder="Generated model name (optional)"
               autocomplete="off"
             />
-            <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
-          </form>
-          <div class="party-search">
-            <label for="world-model-visibility" class="party-result-label">Uploaded mesh visibility</label>
-            <select id="world-model-visibility" class="party-search-input">
-              <option value="public" selected>Public</option>
-              <option value="private">Private</option>
-            </select>
+            <form id="world-generate-form" class="party-search">
+              <input
+                id="world-generate-prompt"
+                class="party-search-input"
+                type="text"
+                maxlength="600"
+                placeholder="Describe the 3D model to generate"
+                autocomplete="off"
+              />
+              <button id="world-generate-button" class="party-search-button" type="submit">
+                Generate 3D
+              </button>
+            </form>
+            <div class="party-search">
+              <label for="world-generate-visibility" class="party-result-label">Generated mesh visibility</label>
+              <select id="world-generate-visibility" class="party-search-input">
+                <option value="public" selected>Public</option>
+                <option value="private">Private</option>
+              </select>
+            </div>
           </div>
-          <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
-        </div>
 
-        <div class="world-section">
-          <div class="party-members-title">Use Model</div>
-          <div class="party-search-results" id="world-assets"></div>
-        </div>
+          <div class="world-section">
+            <div class="party-members-title">Upload Model</div>
+            <form id="world-upload-form" class="party-search">
+              <input
+                id="world-model-name"
+                class="party-search-input"
+                type="text"
+                placeholder="Model name"
+                autocomplete="off"
+              />
+              <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
+            </form>
+            <div class="party-search">
+              <label for="world-model-visibility" class="party-result-label">Uploaded mesh visibility</label>
+              <select id="world-model-visibility" class="party-search-input">
+                <option value="public" selected>Public</option>
+                <option value="private">Private</option>
+              </select>
+            </div>
+            <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
+          </div>
 
-        <div class="world-section">
-          <div class="party-members-title">World Instances</div>
-          <div class="party-search-results" id="world-placements"></div>
-          <div id="world-placement-editor" class="world-placement-editor"></div>
-        </div>
+          <div class="world-section">
+            <div class="party-members-title">Use Model</div>
+            <div class="party-search-results" id="world-assets"></div>
+          </div>
 
+          <div class="world-section">
+            <div class="party-members-title">World Instances</div>
+            <div class="party-search-results" id="world-placements"></div>
+            <div id="world-placement-editor" class="world-placement-editor"></div>
+          </div>
+        </div>
       </div>
     </aside>
 
