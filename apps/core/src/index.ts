@@ -276,6 +276,13 @@ function resolveWorldPostImageFileUrl(postId: string, storageKey: string) {
   );
 }
 
+function resolveWorldPhotoWallImageFileUrl(photoWallId: string, storageKey: string) {
+  return (
+    resolveWorldAssetPublicUrl(storageKey) ??
+    `/api/v1/world/photo-walls/${photoWallId}/image`
+  );
+}
+
 function toNumberOrDefault(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -506,6 +513,47 @@ async function saveWorldPostImageFile(
       })
     );
 
+    return { storageKey };
+  }
+
+  const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, file);
+  return { storageKey };
+}
+
+async function saveWorldPhotoWallImageFile(
+  file: File,
+  worldOwnerId: string,
+  photoWallId: string
+) {
+  const extensionFromType = file.type.split("/")[1]?.trim().toLowerCase() || "bin";
+  const baseName = sanitizeFilename(file.name || `photo_wall.${extensionFromType}`);
+  const storageKey = path
+    .join(
+      WORLD_STORAGE_NAMESPACE,
+      worldOwnerId,
+      "photo-walls",
+      photoWallId,
+      `${crypto.randomUUID()}_${baseName}`
+    )
+    .replace(/\\/g, "/");
+
+  if (effectiveWorldStorageProvider === "spaces") {
+    if (!spacesClient) {
+      throw new Error("DigitalOcean Spaces client not configured");
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await spacesClient.send(
+      new PutObjectCommand({
+        Bucket: DO_SPACES_BUCKET,
+        Key: storageKey,
+        Body: bytes,
+        ACL: "public-read",
+        ContentType: file.type || "application/octet-stream"
+      })
+    );
     return { storageKey };
   }
 
@@ -1624,7 +1672,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       select: { id: true, isPublic: true, leaderId: true, name: true, description: true }
     });
 
-    const [assets, placements, posts] = await Promise.all([
+    const [assets, placements, posts, photoWalls] = await Promise.all([
       prisma.worldAsset.findMany({
         where: {
           OR: [
@@ -1688,6 +1736,10 @@ const api = new Elysia({ prefix: "/api/v1" })
             take: 5
           }
         },
+        orderBy: { createdAt: "asc" }
+      }),
+      prisma.worldPhotoWall.findMany({
+        where: { worldOwnerId },
         orderBy: { createdAt: "asc" }
       })
     ]);
@@ -1787,6 +1839,27 @@ const api = new Elysia({ prefix: "/api/v1" })
         },
         createdAt: post.createdAt.toISOString(),
         updatedAt: post.updatedAt.toISOString()
+      })),
+      photoWalls: photoWalls.map((photoWall) => ({
+        id: photoWall.id,
+        imageUrl: photoWall.imageUrl,
+        position: {
+          x: photoWall.positionX,
+          y: photoWall.positionY,
+          z: photoWall.positionZ
+        },
+        rotation: {
+          x: photoWall.rotationX,
+          y: photoWall.rotationY,
+          z: photoWall.rotationZ
+        },
+        scale: {
+          x: photoWall.scaleX,
+          y: photoWall.scaleY,
+          z: photoWall.scaleZ
+        },
+        createdAt: photoWall.createdAt.toISOString(),
+        updatedAt: photoWall.updatedAt.toISOString()
       }))
     });
   })
@@ -2353,6 +2426,209 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     return jsonResponse({ ok: true });
   })
+  .post("/world/photo-walls", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse({ error: "NOT_PARTY_MANAGER_OR_LEADER" }, { status: 403 });
+    }
+
+    const contentType = request.headers.get("content-type") ?? "";
+    if (contentType.toLowerCase().includes("multipart/form-data")) {
+      const formData = await request.formData();
+      const fileValue = formData.get("file");
+      if (!(fileValue instanceof File)) {
+        return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+      }
+      if (!isValidImageUpload(fileValue)) {
+        return jsonResponse({ error: "INVALID_IMAGE_FILE" }, { status: 400 });
+      }
+      const photoWallId = crypto.randomUUID();
+      const saved = await saveWorldPhotoWallImageFile(fileValue, worldOwnerId, photoWallId);
+      const imageUrl = resolveWorldPhotoWallImageFileUrl(photoWallId, saved.storageKey);
+      await prisma.worldPhotoWall.create({
+        data: {
+          id: photoWallId,
+          worldOwnerId,
+          createdById: user.id,
+          imageUrl,
+          imageStorageKey: saved.storageKey,
+          imageContentType: fileValue.type || "application/octet-stream",
+          positionX: Number(formData.get("positionX") ?? 0) || 0,
+          positionY: Number(formData.get("positionY") ?? 1.2) || 1.2,
+          positionZ: Number(formData.get("positionZ") ?? 0) || 0,
+          rotationX: Number(formData.get("rotationX") ?? 0) || 0,
+          rotationY: Number(formData.get("rotationY") ?? 0) || 0,
+          rotationZ: Number(formData.get("rotationZ") ?? 0) || 0,
+          scaleX: Number(formData.get("scaleX") ?? 1.6) || 1.6,
+          scaleY: Number(formData.get("scaleY") ?? 1.2) || 1.2,
+          scaleZ: Number(formData.get("scaleZ") ?? 0.05) || 0.05
+        }
+      });
+      return jsonResponse({ ok: true, photoWallId });
+    }
+
+    const payload = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const imageUrl = normalizeWorldPostImageUrl(payload?.imageUrl);
+    if (!imageUrl) return jsonResponse({ error: "IMAGE_URL_REQUIRED" }, { status: 400 });
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : {};
+    const rotation =
+      payload?.rotation && typeof payload.rotation === "object"
+        ? (payload.rotation as Record<string, unknown>)
+        : {};
+    const scale =
+      payload?.scale && typeof payload.scale === "object"
+        ? (payload.scale as Record<string, unknown>)
+        : {};
+
+    const wall = await prisma.worldPhotoWall.create({
+      data: {
+        worldOwnerId,
+        createdById: user.id,
+        imageUrl,
+        positionX: toNumberOrDefault(position.x, 0),
+        positionY: toNumberOrDefault(position.y, 1.2),
+        positionZ: toNumberOrDefault(position.z, 0),
+        rotationX: toNumberOrDefault(rotation.x, 0),
+        rotationY: toNumberOrDefault(rotation.y, 0),
+        rotationZ: toNumberOrDefault(rotation.z, 0),
+        scaleX: toNumberOrDefault(scale.x, 1.6),
+        scaleY: toNumberOrDefault(scale.y, 1.2),
+        scaleZ: toNumberOrDefault(scale.z, 0.05)
+      }
+    });
+    return jsonResponse({ ok: true, photoWallId: wall.id });
+  })
+  .patch("/world/photo-walls/:photoWallId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse({ error: "NOT_PARTY_MANAGER_OR_LEADER" }, { status: 403 });
+    }
+
+    const photoWallId = String((params as Record<string, unknown>).photoWallId ?? "");
+    const wall = await prisma.worldPhotoWall.findUnique({
+      where: { id: photoWallId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!wall || wall.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "PHOTO_WALL_NOT_FOUND" }, { status: 404 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : null;
+    const rotation =
+      payload?.rotation && typeof payload.rotation === "object"
+        ? (payload.rotation as Record<string, unknown>)
+        : null;
+    const scale =
+      payload?.scale && typeof payload.scale === "object"
+        ? (payload.scale as Record<string, unknown>)
+        : null;
+    const imageUrl =
+      typeof payload?.imageUrl === "string"
+        ? normalizeWorldPostImageUrl(payload.imageUrl)
+        : null;
+
+    await prisma.worldPhotoWall.update({
+      where: { id: photoWallId },
+      data: {
+        ...(position
+          ? {
+              positionX: toNumberOrDefault(position.x, 0),
+              positionY: toNumberOrDefault(position.y, 1.2),
+              positionZ: toNumberOrDefault(position.z, 0)
+            }
+          : {}),
+        ...(rotation
+          ? {
+              rotationX: toNumberOrDefault(rotation.x, 0),
+              rotationY: toNumberOrDefault(rotation.y, 0),
+              rotationZ: toNumberOrDefault(rotation.z, 0)
+            }
+          : {}),
+        ...(scale
+          ? {
+              scaleX: Math.max(0.01, toNumberOrDefault(scale.x, 1)),
+              scaleY: Math.max(0.01, toNumberOrDefault(scale.y, 1)),
+              scaleZ: Math.max(0.01, toNumberOrDefault(scale.z, 0.05))
+            }
+          : {}),
+        ...(imageUrl ? { imageUrl, imageStorageKey: null, imageContentType: null } : {})
+      }
+    });
+
+    return jsonResponse({ ok: true });
+  })
+  .post("/world/photo-walls/:photoWallId/image", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse({ error: "NOT_PARTY_MANAGER_OR_LEADER" }, { status: 403 });
+    }
+    const photoWallId = String((params as Record<string, unknown>).photoWallId ?? "");
+    const wall = await prisma.worldPhotoWall.findUnique({
+      where: { id: photoWallId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!wall || wall.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "PHOTO_WALL_NOT_FOUND" }, { status: 404 });
+    }
+
+    const formData = await request.formData();
+    const fileValue = formData.get("file");
+    if (!(fileValue instanceof File)) {
+      return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+    }
+    if (!isValidImageUpload(fileValue)) {
+      return jsonResponse({ error: "INVALID_IMAGE_FILE" }, { status: 400 });
+    }
+    const saved = await saveWorldPhotoWallImageFile(fileValue, worldOwnerId, photoWallId);
+    const imageUrl = resolveWorldPhotoWallImageFileUrl(photoWallId, saved.storageKey);
+    await prisma.worldPhotoWall.update({
+      where: { id: photoWallId },
+      data: {
+        imageUrl,
+        imageStorageKey: saved.storageKey,
+        imageContentType: fileValue.type || "application/octet-stream"
+      }
+    });
+    return jsonResponse({ ok: true, photoWallId, imageUrl });
+  })
+  .delete("/world/photo-walls/:photoWallId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse({ error: "NOT_PARTY_MANAGER_OR_LEADER" }, { status: 403 });
+    }
+    const photoWallId = String((params as Record<string, unknown>).photoWallId ?? "");
+    const wall = await prisma.worldPhotoWall.findUnique({
+      where: { id: photoWallId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!wall || wall.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "PHOTO_WALL_NOT_FOUND" }, { status: 404 });
+    }
+    await prisma.worldPhotoWall.delete({ where: { id: photoWallId } });
+    return jsonResponse({ ok: true });
+  })
   .post("/world/posts", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
     if (!user) {
@@ -2732,6 +3008,50 @@ const api = new Elysia({ prefix: "/api/v1" })
     return new Response(file, {
       headers: {
         "Content-Type": post.imageContentType || "application/octet-stream",
+        "Cache-Control": "private, max-age=120"
+      }
+    });
+  })
+  .get("/world/photo-walls/:photoWallId/image", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return new Response("Auth required", { status: 401 });
+    }
+
+    const photoWallId = String((params as Record<string, unknown>).photoWallId ?? "");
+    const wall = await prisma.worldPhotoWall.findUnique({
+      where: { id: photoWallId },
+      select: {
+        id: true,
+        worldOwnerId: true,
+        imageStorageKey: true,
+        imageContentType: true
+      }
+    });
+    if (!wall || !wall.imageStorageKey) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    if (activeWorldOwnerId !== wall.worldOwnerId) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const publicUrl = resolveWorldAssetPublicUrl(wall.imageStorageKey);
+    if (publicUrl) {
+      return Response.redirect(publicUrl, 302);
+    }
+
+    const filePath = path.join(WORLD_STORAGE_ROOT, wall.imageStorageKey);
+    const file = Bun.file(filePath);
+    const exists = await file.exists();
+    if (!exists) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    return new Response(file, {
+      headers: {
+        "Content-Type": wall.imageContentType || "application/octet-stream",
         "Cache-Control": "private, max-age=120"
       }
     });
