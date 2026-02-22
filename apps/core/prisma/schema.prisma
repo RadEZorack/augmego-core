@@ -48,6 +48,10 @@ model User {
   createdWorldAssetVersions WorldAssetVersion[] @relation("WorldAssetVersionCreator")
   ownedWorldPlacements WorldPlacement[] @relation("WorldPlacementOwner")
   createdWorldPlacements WorldPlacement[] @relation("WorldPlacementCreator")
+  ownedWorldPosts WorldPost[] @relation("WorldPostOwner")
+  createdWorldPosts WorldPost[] @relation("WorldPostCreator")
+  ownedWorldPostComments WorldPostComment[]
+  createdWorldPostComments WorldPostComment[] @relation("WorldPostCommentCreator")
   ownedWorldAssetGenerationTasks WorldAssetGenerationTask[] @relation("WorldAssetGenerationOwner")
   createdWorldAssetGenerationTasks WorldAssetGenerationTask[] @relation("WorldAssetGenerationCreator")
 }
@@ -143,6 +147,43 @@ model WorldPlacement {
 
   @@index([worldOwnerId, updatedAt])
   @@index([assetId])
+}
+
+model WorldPost {
+  id           String   @id @default(uuid()) @db.Uuid
+  worldOwnerId String   @db.Uuid
+  createdById  String   @db.Uuid
+  imageUrl     String
+  imageStorageKey String?
+  imageContentType String?
+  message      String
+  positionX    Float
+  positionY    Float
+  positionZ    Float
+  isMinimized  Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  worldOwner   User     @relation("WorldPostOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
+  createdBy    User     @relation("WorldPostCreator", fields: [createdById], references: [id], onDelete: Cascade)
+  comments     WorldPostComment[]
+
+  @@index([worldOwnerId, updatedAt])
+}
+
+model WorldPostComment {
+  id           String   @id @default(uuid()) @db.Uuid
+  postId       String   @db.Uuid
+  worldOwnerId String   @db.Uuid
+  createdById  String   @db.Uuid
+  message      String
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  post         WorldPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+  worldOwner   User      @relation(fields: [worldOwnerId], references: [id], onDelete: Cascade)
+  createdBy    User      @relation("WorldPostCommentCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
+  @@index([worldOwnerId, createdAt])
 }
 
 model WorldAssetGenerationTask {

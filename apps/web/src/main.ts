@@ -10,6 +10,8 @@ import type {
   PlayerPayload,
   WorldAsset,
   WorldAssetGenerationTask,
+  WorldPost,
+  WorldPostComment,
   WorldPlacement,
   WorldState
 } from "./lib/types";
@@ -45,9 +47,15 @@ const partyWorldSubtabButton = document.getElementById(
 const partyObjectsSubtabButton = document.getElementById(
   "party-subtab-objects"
 ) as HTMLButtonElement | null;
+const partyPostsSubtabButton = document.getElementById(
+  "party-subtab-posts"
+) as HTMLButtonElement | null;
 const partyWorldSubpane = document.getElementById("party-subpane-world") as HTMLElement | null;
 const partyObjectsSubpane = document.getElementById(
   "party-subpane-objects"
+) as HTMLElement | null;
+const partyPostsSubpane = document.getElementById(
+  "party-subpane-posts"
 ) as HTMLElement | null;
 
 const cameraZoomSlider = document.getElementById(
@@ -73,6 +81,8 @@ const wsBase = import.meta.env.VITE_WS_URL;
 const apiUrl = createApiUrlResolver(apiBase);
 
 type DockHeightState = "quarter" | "half" | "full";
+type PartySubtabKey = "world" | "objects" | "posts";
+let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
 
 function setDockHeightState(
   panel: HTMLElement | null,
@@ -175,17 +185,19 @@ function setupPartySubtabs() {
   if (
     !partyWorldSubtabButton ||
     !partyObjectsSubtabButton ||
+    !partyPostsSubtabButton ||
     !partyWorldSubpane ||
-    !partyObjectsSubpane
+    !partyObjectsSubpane ||
+    !partyPostsSubpane
   ) {
     return;
   }
 
-  const tabs = [partyWorldSubtabButton, partyObjectsSubtabButton];
-  const panes = [partyWorldSubpane, partyObjectsSubpane];
+  const tabs = [partyWorldSubtabButton, partyObjectsSubtabButton, partyPostsSubtabButton];
+  const panes = [partyWorldSubpane, partyObjectsSubpane, partyPostsSubpane];
 
-  const setActive = (tab: "world" | "objects") => {
-    const activeIndex = tab === "world" ? 0 : 1;
+  const setActive = (tab: PartySubtabKey) => {
+    const activeIndex = tab === "world" ? 0 : tab === "objects" ? 1 : 2;
     for (let i = 0; i < tabs.length; i += 1) {
       const active = i === activeIndex;
       tabs[i]!.classList.toggle("active", active);
@@ -194,9 +206,11 @@ function setupPartySubtabs() {
       panes[i]!.hidden = !active;
     }
   };
+  setActivePartySubtab = setActive;
 
   partyWorldSubtabButton.addEventListener("click", () => setActive("world"));
   partyObjectsSubtabButton.addEventListener("click", () => setActive("objects"));
+  partyPostsSubtabButton.addEventListener("click", () => setActive("posts"));
 }
 
 function setPanelMinimized(
@@ -263,6 +277,17 @@ let selectedPlacementAssetId: string | null = null;
 let selectedWorldPlacementId: string | null = null;
 let pendingSelectedWorldPlacementId: string | null = null;
 let isPlacingModel = false;
+let selectedWorldPostId: string | null = null;
+let pendingSelectedWorldPostId: string | null = null;
+let isPlacingPost = false;
+let isSubmittingWorldPostPlacement = false;
+let pendingWorldPostDraft:
+  | { imageUrl: string | null; imageFile: File | null; message: string }
+  | null = null;
+let editingWorldPostId: string | null = null;
+let worldPostComments: WorldPostComment[] = [];
+let worldPostCommentsForPostId: string | null = null;
+let worldPostCommentsLoading = false;
 const placementPersistTimers = new Map<string, number>();
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
@@ -289,6 +314,42 @@ const worldPlacementsContainer = document.getElementById("world-placements") as 
 const worldPlacementEditor = document.getElementById(
   "world-placement-editor"
 ) as HTMLDivElement | null;
+const worldPostForm = document.getElementById("world-post-form") as HTMLFormElement | null;
+const worldPostImageUrlInput = document.getElementById(
+  "world-post-image-url"
+) as HTMLInputElement | null;
+const worldPostImageFileInput = document.getElementById(
+  "world-post-image-file"
+) as HTMLInputElement | null;
+const worldPostMessageInput = document.getElementById(
+  "world-post-message"
+) as HTMLInputElement | null;
+const worldPostButton = document.getElementById("world-post-button") as HTMLButtonElement | null;
+const worldPostEditButton = document.getElementById(
+  "world-post-edit-button"
+) as HTMLButtonElement | null;
+const worldPostSaveEditButton = document.getElementById(
+  "world-post-save-edit-button"
+) as HTMLButtonElement | null;
+const worldPostCancelEditButton = document.getElementById(
+  "world-post-cancel-edit-button"
+) as HTMLButtonElement | null;
+const worldPostsContainer = document.getElementById("world-posts") as HTMLDivElement | null;
+const worldPostCommentsStatus = document.getElementById(
+  "world-post-comments-status"
+) as HTMLDivElement | null;
+const worldPostCommentsContainer = document.getElementById(
+  "world-post-comments"
+) as HTMLDivElement | null;
+const worldPostCommentForm = document.getElementById(
+  "world-post-comment-form"
+) as HTMLFormElement | null;
+const worldPostCommentInput = document.getElementById(
+  "world-post-comment-input"
+) as HTMLInputElement | null;
+const worldPostCommentSendButton = document.getElementById(
+  "world-post-comment-send"
+) as HTMLButtonElement | null;
 const worldSettingsForm = document.getElementById("world-settings-form") as HTMLFormElement | null;
 const worldNameInput = document.getElementById("world-name-input") as HTMLInputElement | null;
 const worldDescriptionInput = document.getElementById(
@@ -454,6 +515,7 @@ async function loadWorldGenerationTasks() {
     worldGenerationTasks = [];
     renderWorldAssets();
     renderWorldPlacements();
+    renderWorldPosts();
     renderWorldPlacementEditor();
     stopWorldGenerationPolling();
     return;
@@ -520,6 +582,15 @@ function syncWorldVisibilityControls() {
     if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
+    if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
+    if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
+    if (worldPostMessageInput) worldPostMessageInput.disabled = true;
+    if (worldPostButton) worldPostButton.disabled = true;
+    if (worldPostCommentInput) worldPostCommentInput.disabled = true;
+    if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
+    if (worldPostEditButton) worldPostEditButton.disabled = true;
+    if (worldPostSaveEditButton) worldPostSaveEditButton.disabled = true;
+    if (worldPostCancelEditButton) worldPostCancelEditButton.disabled = true;
     return;
   }
 
@@ -535,6 +606,11 @@ function syncWorldVisibilityControls() {
   if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
+  if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = !worldState.canManage;
+  if (worldPostImageFileInput) worldPostImageFileInput.disabled = !worldState.canManage;
+  if (worldPostMessageInput) worldPostMessageInput.disabled = !worldState.canManage;
+  if (worldPostButton) worldPostButton.disabled = !worldState.canManage;
+  syncWorldPostFormMode();
 }
 
 function getWorldAssetLabel(asset: WorldAsset) {
@@ -547,11 +623,190 @@ function getPlacementById(placementId: string | null) {
   return worldState.placements.find((placement) => placement.id === placementId) ?? null;
 }
 
+function getWorldPostById(postId: string | null) {
+  if (!postId || !worldState) return null;
+  return worldState.posts.find((post) => post.id === postId) ?? null;
+}
+
+function resetWorldPostForm() {
+  if (worldPostImageUrlInput) worldPostImageUrlInput.value = "";
+  if (worldPostImageFileInput) worldPostImageFileInput.value = "";
+  if (worldPostMessageInput) worldPostMessageInput.value = "";
+}
+
+function syncWorldPostFormMode() {
+  const editing = Boolean(editingWorldPostId);
+  if (worldPostButton) worldPostButton.textContent = editing ? "Place New Post" : "Place Post";
+  if (worldPostSaveEditButton) worldPostSaveEditButton.disabled = !editing || !worldState?.canManage;
+  if (worldPostCancelEditButton) worldPostCancelEditButton.disabled = !editing;
+  if (worldPostEditButton) {
+    worldPostEditButton.disabled = !worldState?.canManage || !selectedWorldPostId;
+  }
+}
+
+function beginEditSelectedWorldPost() {
+  const post = getWorldPostById(selectedWorldPostId);
+  if (!post || !worldState?.canManage) return;
+  cancelPostPlacementMode();
+  editingWorldPostId = post.id;
+  if (worldPostImageUrlInput) worldPostImageUrlInput.value = post.imageUrl;
+  if (worldPostImageFileInput) worldPostImageFileInput.value = "";
+  if (worldPostMessageInput) worldPostMessageInput.value = post.message;
+  syncWorldPostFormMode();
+  setWorldNotice("Editing selected post. Save Edit to apply changes.");
+}
+
+function cancelWorldPostEdit() {
+  editingWorldPostId = null;
+  resetWorldPostForm();
+  syncWorldPostFormMode();
+}
+
+function setWorldPostCommentsStatus(message: string) {
+  if (worldPostCommentsStatus) worldPostCommentsStatus.textContent = message;
+}
+
+function renderWorldPostComments() {
+  if (!worldPostCommentsContainer) return;
+  worldPostCommentsContainer.innerHTML = "";
+
+  const selectedPost = getWorldPostById(selectedWorldPostId);
+  if (!selectedPost) {
+    setWorldPostCommentsStatus("Select a post to view comments");
+    if (worldPostCommentInput) worldPostCommentInput.disabled = true;
+    if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
+    return;
+  }
+
+  if (worldPostCommentsLoading) {
+    setWorldPostCommentsStatus(`Loading comments for ${selectedPost.author.name}...`);
+  } else {
+    setWorldPostCommentsStatus(
+      `${selectedPost.author.name} • ${selectedPost.commentCount} comment${
+        selectedPost.commentCount === 1 ? "" : "s"
+      }`
+    );
+  }
+
+  const canComment = Boolean(auth.getCurrentUser());
+  if (worldPostCommentInput) worldPostCommentInput.disabled = !canComment || worldPostCommentsLoading;
+  if (worldPostCommentSendButton) {
+    worldPostCommentSendButton.disabled = !canComment || worldPostCommentsLoading;
+  }
+
+  if (worldPostCommentsForPostId !== selectedPost.id && !worldPostCommentsLoading) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Comments not loaded";
+    worldPostCommentsContainer.appendChild(empty);
+    return;
+  }
+
+  if (worldPostCommentsLoading && worldPostComments.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Loading comments...";
+    worldPostCommentsContainer.appendChild(empty);
+    return;
+  }
+
+  if (worldPostComments.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "No comments yet";
+    worldPostCommentsContainer.appendChild(empty);
+    return;
+  }
+
+  for (const comment of worldPostComments) {
+    const row = document.createElement("div");
+    row.className = "world-comment-row";
+
+    const label = document.createElement("div");
+    label.className = "party-result-label";
+    const timestamp = new Date(comment.createdAt).toLocaleString();
+    label.textContent = `${comment.author.name} • ${timestamp}`;
+    label.title = timestamp;
+
+    const body = document.createElement("div");
+    body.className = "world-comment-body";
+    body.textContent = comment.message;
+
+    row.appendChild(label);
+    row.appendChild(body);
+    worldPostCommentsContainer.appendChild(row);
+  }
+}
+
+async function loadCommentsForSelectedPost(force = false) {
+  const post = getWorldPostById(selectedWorldPostId);
+  if (!post || !auth.getCurrentUser()) {
+    worldPostComments = [];
+    worldPostCommentsForPostId = null;
+    worldPostCommentsLoading = false;
+    renderWorldPostComments();
+    return;
+  }
+  if (!force && worldPostCommentsForPostId === post.id) {
+    renderWorldPostComments();
+    return;
+  }
+
+  worldPostCommentsLoading = true;
+  worldPostComments = [];
+  worldPostCommentsForPostId = post.id;
+  renderWorldPostComments();
+
+  const response = await fetch(
+    apiUrl(`/api/v1/world/posts/${encodeURIComponent(post.id)}/comments`),
+    { credentials: "include" }
+  );
+  if (!response.ok) {
+    worldPostCommentsLoading = false;
+    worldPostComments = [];
+    renderWorldPostComments();
+    setWorldNotice("Failed to load post comments");
+    return;
+  }
+
+  const payload = (await response.json()) as { comments: WorldPostComment[] };
+  if (worldPostCommentsForPostId !== post.id) return;
+  worldPostComments = payload.comments;
+  worldPostCommentsLoading = false;
+  renderWorldPostComments();
+}
+
+function cancelPostPlacementMode() {
+  if (!isPlacingPost && !pendingWorldPostDraft) return;
+  isPlacingPost = false;
+  pendingWorldPostDraft = null;
+  game.setPendingWorldPostPlacement(null);
+  renderWorldPosts();
+}
+
 function cancelPlacementMode() {
   if (!isPlacingModel && !selectedPlacementAssetId) return;
   isPlacingModel = false;
   selectedPlacementAssetId = null;
   renderWorldAssets();
+}
+
+function setSelectedWorldPost(postId: string | null) {
+  if (!worldState) {
+    selectedWorldPostId = null;
+  } else {
+    selectedWorldPostId = worldState.posts.some((post) => post.id === postId) ? postId : null;
+  }
+  if (selectedWorldPostId) {
+    cancelPlacementMode();
+    cancelPostPlacementMode();
+    selectedWorldPlacementId = null;
+  }
+  renderWorldPlacements();
+  renderWorldPlacementEditor();
+  renderWorldPosts();
+  syncWorldPostFormMode();
+  void loadCommentsForSelectedPost();
 }
 
 function setSelectedWorldPlacement(placementId: string | null) {
@@ -566,9 +821,13 @@ function setSelectedWorldPlacement(placementId: string | null) {
   }
   if (selectedWorldPlacementId) {
     cancelPlacementMode();
+    cancelPostPlacementMode();
+    selectedWorldPostId = null;
   }
   renderWorldPlacements();
   renderWorldPlacementEditor();
+  renderWorldPosts();
+  syncWorldPostFormMode();
 }
 
 function applyPlacementLocally(
@@ -622,6 +881,116 @@ function schedulePlacementTransformPersist(placement: WorldPlacement, delayMs = 
     void persistPlacementTransform(placement);
   }, delayMs);
   placementPersistTimers.set(placement.id, timeoutId);
+}
+
+async function persistWorldPostPatch(
+  postId: string,
+  patch: Partial<{
+    position: { x: number; y: number; z: number };
+    isMinimized: boolean;
+    imageUrl: string;
+    message: string;
+  }>
+) {
+  const response = await fetch(apiUrl(`/api/v1/world/posts/${encodeURIComponent(postId)}`), {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(patch)
+  });
+  if (!response.ok) {
+    setWorldNotice("Post update failed");
+    await loadWorldState();
+    return false;
+  }
+  return true;
+}
+
+async function replaceWorldPostImage(postId: string, file: File) {
+  const formData = new FormData();
+  formData.set("file", file);
+  const response = await fetch(apiUrl(`/api/v1/world/posts/${encodeURIComponent(postId)}/image`), {
+    method: "POST",
+    credentials: "include",
+    body: formData
+  });
+  if (!response.ok) {
+    setWorldNotice("Post image upload failed");
+    return false;
+  }
+  return true;
+}
+
+async function saveWorldPostEdit() {
+  const post = getWorldPostById(editingWorldPostId);
+  if (!post || !worldState?.canManage) return;
+
+  const message = worldPostMessageInput?.value.trim() ?? "";
+  const imageUrlInput = worldPostImageUrlInput?.value.trim() ?? "";
+  const imageFile = worldPostImageFileInput?.files?.[0] ?? null;
+  if (!message) {
+    setWorldNotice("Post message is required");
+    return;
+  }
+  if (!imageFile && !imageUrlInput) {
+    setWorldNotice("Provide an image URL or choose an image file");
+    return;
+  }
+
+  if (imageFile) {
+    const uploaded = await replaceWorldPostImage(post.id, imageFile);
+    if (!uploaded) return;
+  } else if (imageUrlInput !== post.imageUrl) {
+    const ok = await persistWorldPostPatch(post.id, { imageUrl: imageUrlInput });
+    if (!ok) return;
+  }
+
+  if (message !== post.message) {
+    const ok = await persistWorldPostPatch(post.id, { message });
+    if (!ok) return;
+  }
+
+  editingWorldPostId = null;
+  if (worldPostImageFileInput) worldPostImageFileInput.value = "";
+  await loadWorldState();
+  setWorldNotice("Post updated");
+  syncWorldPostFormMode();
+}
+
+async function toggleSelectedWorldPostMinimized() {
+  const post = getWorldPostById(selectedWorldPostId);
+  if (!post || !worldState?.canManage) return;
+  const ok = await persistWorldPostPatch(post.id, { isMinimized: !post.isMinimized });
+  if (!ok) return;
+  await loadWorldState();
+}
+
+async function deleteSelectedWorldPost() {
+  const post = getWorldPostById(selectedWorldPostId);
+  if (!post || !worldState?.canManage) return;
+  const response = await fetch(apiUrl(`/api/v1/world/posts/${encodeURIComponent(post.id)}`), {
+    method: "DELETE",
+    credentials: "include"
+  });
+  if (!response.ok) {
+    setWorldNotice("Post delete failed");
+    return;
+  }
+  selectedWorldPostId = null;
+  await loadWorldState();
+  setWorldNotice("Post deleted");
+}
+
+async function moveSelectedWorldPostTo(position: { x: number; y: number; z: number }) {
+  const post = getWorldPostById(selectedWorldPostId);
+  if (!post || !worldState?.canManage) return false;
+  const ok = await persistWorldPostPatch(post.id, { position });
+  if (!ok) return false;
+  await loadWorldState();
+  setWorldNotice("Post moved");
+  return true;
 }
 
 function commitPlacementTransform(
@@ -748,6 +1117,94 @@ function renderWorldPlacements() {
 
     row.appendChild(button);
     worldPlacementsContainer.appendChild(row);
+  }
+}
+
+function renderWorldPosts() {
+  if (!worldPostsContainer) return;
+  worldPostsContainer.innerHTML = "";
+
+  const posts = worldState?.posts ?? [];
+  if (posts.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "No posts placed";
+    worldPostsContainer.appendChild(empty);
+    return;
+  }
+
+  for (const post of posts) {
+    const row = document.createElement("div");
+    row.className = "world-placement-row";
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "world-placement-select";
+    if (post.id === selectedWorldPostId) {
+      button.classList.add("active");
+    }
+    const stateLabel = post.isMinimized ? "Min" : "Open";
+    button.textContent = `Post • ${stateLabel} • ${post.author.name} • ${post.commentCount}c`;
+    button.title = `${post.message}\nPosition: ${post.position.x.toFixed(2)}, ${post.position.y.toFixed(
+      2
+    )}, ${post.position.z.toFixed(2)}`;
+    button.addEventListener("click", () => {
+      setSelectedWorldPost(post.id);
+    });
+    row.appendChild(button);
+
+    if (worldState?.canManage) {
+      const actions = document.createElement("div");
+      actions.className = "world-asset-options-actions";
+
+      const toggleButton = document.createElement("button");
+      toggleButton.type = "button";
+      toggleButton.className = "party-secondary-button";
+      toggleButton.textContent = post.isMinimized ? "Expand" : "Minimize";
+      toggleButton.addEventListener("click", () => {
+        setSelectedWorldPost(post.id);
+        void toggleSelectedWorldPostMinimized();
+      });
+
+      const moveButton = document.createElement("button");
+      moveButton.type = "button";
+      moveButton.className = "party-secondary-button";
+      moveButton.textContent = isPlacingPost && selectedWorldPostId === post.id ? "Moving..." : "Move";
+      moveButton.addEventListener("click", () => {
+        setSelectedWorldPost(post.id);
+        cancelPlacementMode();
+        isPlacingPost = true;
+        pendingWorldPostDraft = null;
+        setWorldNotice("Post move mode: click the floor to reposition.");
+        renderWorldPosts();
+      });
+
+      const deleteButton = document.createElement("button");
+      const editButton = document.createElement("button");
+      editButton.type = "button";
+      editButton.className = "party-secondary-button";
+      editButton.textContent = "Edit";
+      editButton.addEventListener("click", () => {
+        setSelectedWorldPost(post.id);
+        beginEditSelectedWorldPost();
+      });
+
+      deleteButton.type = "button";
+      deleteButton.className = "party-secondary-button";
+      deleteButton.textContent = "Delete";
+      deleteButton.addEventListener("click", () => {
+        setSelectedWorldPost(post.id);
+        void deleteSelectedWorldPost();
+      });
+
+      actions.appendChild(toggleButton);
+      actions.appendChild(moveButton);
+      actions.appendChild(editButton);
+      actions.appendChild(deleteButton);
+      row.appendChild(actions);
+    }
+
+    worldPostsContainer.appendChild(row);
   }
 }
 
@@ -1104,13 +1561,26 @@ async function loadWorldState() {
     worldState = null;
     worldGenerationTasks = [];
     selectedWorldPlacementId = null;
+    selectedWorldPostId = null;
     pendingSelectedWorldPlacementId = null;
+    pendingSelectedWorldPostId = null;
+    editingWorldPostId = null;
+    worldPostComments = [];
+    worldPostCommentsForPostId = null;
+    worldPostCommentsLoading = false;
+    isPlacingPost = false;
+    isSubmittingWorldPostPlacement = false;
+    pendingWorldPostDraft = null;
     stopWorldGenerationPolling();
     game.setWorldData(null);
+    game.setPendingWorldPostPlacement(null);
     setWorldNotice("Sign in to load world");
     if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
     if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
     if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
+    if (worldPostsContainer) worldPostsContainer.innerHTML = "";
+    if (worldPostCommentsContainer) worldPostCommentsContainer.innerHTML = "";
+    setWorldPostCommentsStatus("Select a post to view comments");
     if (worldUploadButton) worldUploadButton.disabled = true;
     if (worldModelFileInput) worldModelFileInput.disabled = true;
     if (worldModelNameInput) worldModelNameInput.disabled = true;
@@ -1119,7 +1589,15 @@ async function loadWorldState() {
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
+    if (worldPostButton) worldPostButton.disabled = true;
+    if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
+    if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
+    if (worldPostMessageInput) worldPostMessageInput.disabled = true;
+    if (worldPostCommentInput) worldPostCommentInput.disabled = true;
+    if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
+    syncWorldPostFormMode();
     syncWorldVisibilityControls();
+    renderWorldPostComments();
     return;
   }
 
@@ -1128,6 +1606,7 @@ async function loadWorldState() {
   });
 
   if (!response.ok) {
+    game.setPendingWorldPostPlacement(null);
     setWorldNotice("Failed to load world");
     return;
   }
@@ -1135,12 +1614,21 @@ async function loadWorldState() {
   const payload = (await response.json()) as WorldState;
   worldState = payload;
   const requestedPlacementId = pendingSelectedWorldPlacementId ?? selectedWorldPlacementId;
+  const requestedPostId = pendingSelectedWorldPostId ?? selectedWorldPostId;
   pendingSelectedWorldPlacementId = null;
+  pendingSelectedWorldPostId = null;
   selectedWorldPlacementId =
     requestedPlacementId &&
     payload.placements.some((placement) => placement.id === requestedPlacementId)
       ? requestedPlacementId
       : null;
+  selectedWorldPostId =
+    requestedPostId && payload.posts.some((post) => post.id === requestedPostId)
+      ? requestedPostId
+      : null;
+  if (editingWorldPostId && !payload.posts.some((post) => post.id === editingWorldPostId)) {
+    editingWorldPostId = null;
+  }
   if (partyState.party) {
     partyState = {
       ...partyState,
@@ -1154,6 +1642,7 @@ async function loadWorldState() {
     party.setPartyState(partyState);
   }
   game.setWorldData(payload);
+  game.setPendingWorldPostPlacement(null);
   if (worldUploadButton) worldUploadButton.disabled = !payload.canManage;
   if (worldModelFileInput) worldModelFileInput.disabled = !payload.canManage;
   if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
@@ -1162,13 +1651,17 @@ async function loadWorldState() {
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !payload.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
+  if (worldPostButton) worldPostButton.disabled = !payload.canManage;
+  if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = !payload.canManage;
+  if (worldPostImageFileInput) worldPostImageFileInput.disabled = !payload.canManage;
+  if (worldPostMessageInput) worldPostMessageInput.disabled = !payload.canManage;
 
   const worldOwnerLabel =
     payload.worldOwnerId === auth.getCurrentUser()?.id ? "Your world" : "Visited world";
   setWorldNotice(
     `${payload.worldName} • ${worldOwnerLabel} • ${payload.isPublic ? "Public" : "Private"} • ${
       payload.assets.length
-    } models • ${payload.placements.length} placements`
+    } models • ${payload.placements.length} placements • ${payload.posts.length} posts`
   );
 
   syncWorldVisibilityControls();
@@ -1176,7 +1669,10 @@ async function loadWorldState() {
   void loadWorldGenerationTasks();
   renderWorldAssets();
   renderWorldPlacements();
+  renderWorldPosts();
   renderWorldPlacementEditor();
+  syncWorldPostFormMode();
+  void loadCommentsForSelectedPost(true);
 }
 
 function renderWorldAssets() {
@@ -1213,10 +1709,13 @@ function renderWorldAssets() {
 
     const startPlacement = () => {
       if (!worldState?.canManage) return;
+      cancelPostPlacementMode();
+      selectedWorldPostId = null;
       selectedPlacementAssetId = asset.id;
       isPlacingModel = true;
       setWorldNotice(`Placement mode: ${asset.name}. Click the floor to place.`);
       renderWorldAssets();
+      renderWorldPosts();
     };
 
     const label = document.createElement("button");
@@ -1369,6 +1868,110 @@ const game = createGameScene({
   onWorldPlacementSelect(placementId) {
     setSelectedWorldPlacement(placementId);
   },
+  onWorldPostSelect(postId) {
+    setSelectedWorldPost(postId);
+  },
+  onWorldPostToggleMinimize(postId) {
+    setSelectedWorldPost(postId);
+    void toggleSelectedWorldPostMinimized();
+  },
+  onWorldPostOpenComments(postId) {
+    setActivePartySubtab?.("posts");
+    setSelectedWorldPost(postId);
+    if (worldPostCommentsContainer) {
+      worldPostCommentsContainer.scrollIntoView({ block: "nearest" });
+    }
+  },
+  onWorldPostPlacementRequest(position) {
+    if (!worldState?.canManage || !isPlacingPost || isSubmittingWorldPostPlacement) {
+      return false;
+    }
+
+    if (pendingWorldPostDraft) {
+      const draft = pendingWorldPostDraft;
+      const targetPosition = {
+        x: position.x,
+        y: Math.max(0.9, position.y + 1.6),
+        z: position.z
+      };
+      isPlacingPost = false;
+      isSubmittingWorldPostPlacement = true;
+      pendingWorldPostDraft = null;
+      game.setPendingWorldPostPlacement(targetPosition);
+      renderWorldPosts();
+
+      void (async () => {
+        try {
+          const response = draft.imageFile
+            ? await (async () => {
+                const imageFile = draft.imageFile;
+                if (!imageFile) {
+                  throw new Error("Missing post image file");
+                }
+                const formData = new FormData();
+                formData.set("file", imageFile);
+                formData.set("message", draft.message);
+                formData.set("positionX", String(targetPosition.x));
+                formData.set("positionY", String(targetPosition.y));
+                formData.set("positionZ", String(targetPosition.z));
+                return fetch(apiUrl("/api/v1/world/posts"), {
+                  method: "POST",
+                  credentials: "include",
+                  body: formData
+                });
+              })()
+            : await fetch(apiUrl("/api/v1/world/posts"), {
+                method: "POST",
+                credentials: "include",
+                headers: {
+                  "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                  imageUrl: draft.imageUrl,
+                  message: draft.message,
+                  position: targetPosition
+                })
+              });
+
+          if (!response.ok) {
+            setWorldNotice("Post placement failed");
+            return;
+          }
+
+          const payload = (await response.json().catch(() => null)) as
+            | { postId?: string }
+            | null;
+          pendingSelectedWorldPostId = payload?.postId ?? null;
+          resetWorldPostForm();
+          await loadWorldState();
+          setWorldNotice("Post placed");
+        } catch {
+          setWorldNotice("Post placement failed");
+        } finally {
+          isSubmittingWorldPostPlacement = false;
+          game.setPendingWorldPostPlacement(null);
+        }
+      })();
+      return true;
+    }
+
+    if (selectedWorldPostId) {
+      isPlacingPost = false;
+      renderWorldPosts();
+      void moveSelectedWorldPostTo({
+        x: position.x,
+        y: Math.max(0.9, position.y + 1.6),
+        z: position.z
+      }).then((moved) => {
+        if (moved) {
+          renderWorldPosts();
+        }
+      });
+      return true;
+    }
+
+    return false;
+  },
   onWorldPlacementRequest(position) {
     if (!isPlacingModel || !selectedPlacementAssetId || !worldState?.canManage) {
       return false;
@@ -1488,16 +2091,36 @@ const auth = createAuthController({
       worldGenerationTasks = [];
       stopWorldGenerationPolling();
       isPlacingModel = false;
+      isPlacingPost = false;
+      isSubmittingWorldPostPlacement = false;
       selectedPlacementAssetId = null;
+      pendingWorldPostDraft = null;
+      editingWorldPostId = null;
       selectedWorldPlacementId = null;
+      selectedWorldPostId = null;
       pendingSelectedWorldPlacementId = null;
+      pendingSelectedWorldPostId = null;
+      worldPostComments = [];
+      worldPostCommentsForPostId = null;
+      worldPostCommentsLoading = false;
       game.setWorldData(null);
+      game.setPendingWorldPostPlacement(null);
       setWorldNotice("Sign in to load world");
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
       if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
+      if (worldPostsContainer) worldPostsContainer.innerHTML = "";
+      if (worldPostCommentsContainer) worldPostCommentsContainer.innerHTML = "";
       if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
       if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
       if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
+      if (worldPostButton) worldPostButton.disabled = true;
+      if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
+      if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
+      if (worldPostMessageInput) worldPostMessageInput.disabled = true;
+      if (worldPostCommentInput) worldPostCommentInput.disabled = true;
+      if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
+      syncWorldPostFormMode();
+      renderWorldPostComments();
       syncWorldVisibilityControls();
       return;
     }
@@ -1859,6 +2482,91 @@ worldUploadForm?.addEventListener("submit", (event) => {
   })();
 });
 
+worldPostForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!worldState?.canManage) {
+    setWorldNotice("Only world owners/managers can modify this world");
+    return;
+  }
+
+  if (editingWorldPostId) {
+    void saveWorldPostEdit();
+    return;
+  }
+
+  const imageUrl = worldPostImageUrlInput?.value.trim() ?? "";
+  const imageFile = worldPostImageFileInput?.files?.[0] ?? null;
+  const message = worldPostMessageInput?.value.trim() ?? "";
+  if (!imageUrl && !imageFile) {
+    setWorldNotice("Enter an image URL or choose an image file");
+    return;
+  }
+  if (!message) {
+    setWorldNotice("Enter a post message first");
+    return;
+  }
+
+  cancelPlacementMode();
+  cancelWorldPostEdit();
+  selectedWorldPlacementId = null;
+  selectedWorldPostId = null;
+  pendingWorldPostDraft = { imageUrl: imageUrl || null, imageFile, message };
+  isPlacingPost = true;
+  setWorldNotice("Post placement mode: click the floor to place the billboard.");
+  renderWorldPlacements();
+  renderWorldPlacementEditor();
+  renderWorldPosts();
+});
+
+worldPostEditButton?.addEventListener("click", () => {
+  beginEditSelectedWorldPost();
+});
+
+worldPostSaveEditButton?.addEventListener("click", () => {
+  void saveWorldPostEdit();
+});
+
+worldPostCancelEditButton?.addEventListener("click", () => {
+  cancelWorldPostEdit();
+  syncWorldPostFormMode();
+});
+
+worldPostCommentForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const post = getWorldPostById(selectedWorldPostId);
+  const message = worldPostCommentInput?.value.trim() ?? "";
+  if (!post) {
+    setWorldNotice("Select a post first");
+    return;
+  }
+  if (!message) {
+    setWorldNotice("Enter a comment first");
+    return;
+  }
+
+  void (async () => {
+    const response = await fetch(
+      apiUrl(`/api/v1/world/posts/${encodeURIComponent(post.id)}/comments`),
+      {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ message })
+      }
+    );
+    if (!response.ok) {
+      setWorldNotice("Failed to add comment");
+      return;
+    }
+    if (worldPostCommentInput) worldPostCommentInput.value = "";
+    await loadWorldState();
+    await loadCommentsForSelectedPost(true);
+    setWorldNotice("Comment added");
+  })();
+});
+
 worldSettingsForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   if (
@@ -1926,8 +2634,20 @@ if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
 if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
 if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
 if (worldGenerateButton) worldGenerateButton.disabled = true;
+if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
+if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
+if (worldPostMessageInput) worldPostMessageInput.disabled = true;
+if (worldPostButton) worldPostButton.disabled = true;
+if (worldPostEditButton) worldPostEditButton.disabled = true;
+if (worldPostSaveEditButton) worldPostSaveEditButton.disabled = true;
+if (worldPostCancelEditButton) worldPostCancelEditButton.disabled = true;
+if (worldPostCommentInput) worldPostCommentInput.disabled = true;
+if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
 syncWorldVisibilityControls();
+syncWorldPostFormMode();
 renderWorldPlacements();
+renderWorldPosts();
+renderWorldPostComments();
 renderWorldPlacementEditor();
 void auth.loadCurrentUser();
 realtime.connect();

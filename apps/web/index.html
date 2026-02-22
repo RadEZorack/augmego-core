@@ -238,6 +238,16 @@
           >
             Objects
           </button>
+          <button
+            id="party-subtab-posts"
+            class="party-subtab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="party-subpane-posts"
+          >
+            Posts
+          </button>
         </div>
 
         <div
@@ -369,6 +379,80 @@
             <div class="party-members-title">World Instances</div>
             <div class="party-search-results" id="world-placements"></div>
             <div id="world-placement-editor" class="world-placement-editor"></div>
+          </div>
+        </div>
+
+        <div
+          id="party-subpane-posts"
+          class="party-subpane"
+          role="tabpanel"
+          aria-labelledby="party-subtab-posts"
+          hidden
+        >
+          <div class="world-section">
+            <div class="party-members-title">Post Message Billboard</div>
+            <form id="world-post-form" class="party-search">
+              <input
+                id="world-post-image-url"
+                class="party-search-input"
+                type="url"
+                maxlength="2000"
+                placeholder="Image URL (https://...)"
+                autocomplete="off"
+              />
+              <button id="world-post-button" class="party-search-button" type="submit">
+                Place Post
+              </button>
+            </form>
+            <input
+              id="world-post-image-file"
+              class="party-search-input"
+              type="file"
+              accept="image/*"
+            />
+            <input
+              id="world-post-message"
+              class="party-search-input"
+              type="text"
+              maxlength="500"
+              placeholder="Post message / caption"
+              autocomplete="off"
+            />
+            <div class="world-asset-options-actions">
+              <button id="world-post-edit-button" class="party-secondary-button" type="button">
+                Edit Selected
+              </button>
+              <button id="world-post-save-edit-button" class="party-secondary-button" type="button">
+                Save Edit
+              </button>
+              <button id="world-post-cancel-edit-button" class="party-secondary-button" type="button">
+                Cancel Edit
+              </button>
+            </div>
+          </div>
+
+          <div class="world-section">
+            <div class="party-members-title">World Posts</div>
+            <div class="party-search-results" id="world-posts"></div>
+          </div>
+
+          <div class="world-section">
+            <div class="party-members-title">Post Comments</div>
+            <div id="world-post-comments-status" class="party-status">Select a post to view comments</div>
+            <div class="party-search-results" id="world-post-comments"></div>
+            <form id="world-post-comment-form" class="party-search">
+              <input
+                id="world-post-comment-input"
+                class="party-search-input"
+                type="text"
+                maxlength="500"
+                placeholder="Write a comment"
+                autocomplete="off"
+              />
+              <button id="world-post-comment-send" class="party-search-button" type="submit">
+                Comment
+              </button>
+            </form>
           </div>
         </div>
       </div>

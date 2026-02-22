@@ -269,6 +269,13 @@ function resolveWorldAssetFileUrl(versionId: string, storageKey: string) {
   );
 }
 
+function resolveWorldPostImageFileUrl(postId: string, storageKey: string) {
+  return (
+    resolveWorldAssetPublicUrl(storageKey) ??
+    `/api/v1/world/posts/${postId}/image`
+  );
+}
+
 function toNumberOrDefault(value: unknown, fallback: number) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
@@ -295,6 +302,34 @@ function parseWorldAssetVisibility(value: unknown) {
 
 function normalizeWorldAssetVisibility(value: unknown) {
   return parseWorldAssetVisibility(value) ?? WorldAssetVisibility.PUBLIC;
+}
+
+function normalizeWorldPostMessage(value: unknown) {
+  const message = typeof value === "string" ? value.trim() : "";
+  return message.slice(0, 500);
+}
+
+function normalizeWorldPostCommentMessage(value: unknown) {
+  const message = typeof value === "string" ? value.trim() : "";
+  return message.slice(0, 500);
+}
+
+function normalizeWorldPostImageUrl(value: unknown) {
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!raw) return null;
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString().slice(0, 2000);
+  } catch {
+    return null;
+  }
+}
+
+function isValidImageUpload(file: File) {
+  return file.size > 0 && file.type.toLowerCase().startsWith("image/");
 }
 
 function deriveModelNameFromPrompt(prompt: string) {
@@ -426,6 +461,48 @@ async function saveWorldAssetFile(
         Body: bytes,
         ACL: "public-read",
         ContentType: file.type || "model/gltf-binary"
+      })
+    );
+
+    return { storageKey };
+  }
+
+  const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, file);
+  return { storageKey };
+}
+
+async function saveWorldPostImageFile(
+  file: File,
+  worldOwnerId: string,
+  postId: string
+) {
+  const extensionFromType = file.type.split("/")[1]?.trim().toLowerCase() || "bin";
+  const baseName = sanitizeFilename(file.name || `post_image.${extensionFromType}`);
+  const storageKey = path
+    .join(
+      WORLD_STORAGE_NAMESPACE,
+      worldOwnerId,
+      "post-images",
+      postId,
+      `${crypto.randomUUID()}_${baseName}`
+    )
+    .replace(/\\/g, "/");
+
+  if (effectiveWorldStorageProvider === "spaces") {
+    if (!spacesClient) {
+      throw new Error("DigitalOcean Spaces client not configured");
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await spacesClient.send(
+      new PutObjectCommand({
+        Bucket: DO_SPACES_BUCKET,
+        Key: storageKey,
+        Body: bytes,
+        ACL: "public-read",
+        ContentType: file.type || "application/octet-stream"
       })
     );
 
@@ -1547,7 +1624,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       select: { id: true, isPublic: true, leaderId: true, name: true, description: true }
     });
 
-    const [assets, placements] = await Promise.all([
+    const [assets, placements, posts] = await Promise.all([
       prisma.worldAsset.findMany({
         where: {
           OR: [
@@ -1576,6 +1653,39 @@ const api = new Elysia({ prefix: "/api/v1" })
               id: true,
               name: true
             }
+          }
+        },
+        orderBy: { createdAt: "asc" }
+      }),
+      prisma.worldPost.findMany({
+        where: { worldOwnerId },
+        include: {
+          createdBy: {
+            select: {
+              id: true,
+              name: true,
+              email: true,
+              avatarUrl: true
+            }
+          },
+          _count: {
+            select: {
+              comments: true
+            }
+          },
+          comments: {
+            include: {
+              createdBy: {
+                select: {
+                  id: true,
+                  name: true,
+                  email: true,
+                  avatarUrl: true
+                }
+              }
+            },
+            orderBy: { createdAt: "asc" },
+            take: 5
           }
         },
         orderBy: { createdAt: "asc" }
@@ -1646,6 +1756,37 @@ const api = new Elysia({ prefix: "/api/v1" })
         },
         createdAt: placement.createdAt.toISOString(),
         updatedAt: placement.updatedAt.toISOString()
+      })),
+      posts: posts.map((post) => ({
+        id: post.id,
+        imageUrl: post.imageUrl,
+        message: post.message,
+        position: {
+          x: post.positionX,
+          y: post.positionY,
+          z: post.positionZ
+        },
+        isMinimized: post.isMinimized,
+        commentCount: post._count.comments,
+        commentPreview: post.comments.map((comment) => ({
+          id: comment.id,
+          postId: comment.postId,
+          message: comment.message,
+          author: {
+            id: comment.createdBy.id,
+            name: comment.createdBy.name ?? comment.createdBy.email ?? "User",
+            avatarUrl: comment.createdBy.avatarUrl
+          },
+          createdAt: comment.createdAt.toISOString(),
+          updatedAt: comment.updatedAt.toISOString()
+        })),
+        author: {
+          id: post.createdBy.id,
+          name: post.createdBy.name ?? post.createdBy.email ?? "User",
+          avatarUrl: post.createdBy.avatarUrl
+        },
+        createdAt: post.createdAt.toISOString(),
+        updatedAt: post.updatedAt.toISOString()
       }))
     });
   })
@@ -2211,6 +2352,389 @@ const api = new Elysia({ prefix: "/api/v1" })
     });
 
     return jsonResponse({ ok: true });
+  })
+  .post("/world/posts", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const contentType = request.headers.get("content-type") ?? "";
+    if (contentType.toLowerCase().includes("multipart/form-data")) {
+      const formData = await request.formData();
+      const fileValue = formData.get("file");
+      if (!(fileValue instanceof File)) {
+        return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+      }
+      if (!isValidImageUpload(fileValue)) {
+        return jsonResponse({ error: "INVALID_IMAGE_FILE" }, { status: 400 });
+      }
+
+      const message = normalizeWorldPostMessage(formData.get("message"));
+      if (!message) {
+        return jsonResponse({ error: "MESSAGE_REQUIRED" }, { status: 400 });
+      }
+
+      const postId = crypto.randomUUID();
+      const saved = await saveWorldPostImageFile(fileValue, worldOwnerId, postId);
+      const imageUrl = resolveWorldPostImageFileUrl(postId, saved.storageKey);
+      await prisma.worldPost.create({
+        data: {
+          id: postId,
+          worldOwnerId,
+          createdById: user.id,
+          imageUrl,
+          imageStorageKey: saved.storageKey,
+          imageContentType: fileValue.type || "application/octet-stream",
+          message,
+          positionX: Number(formData.get("positionX") ?? 0) || 0,
+          positionY: Number(formData.get("positionY") ?? 1.4) || 1.4,
+          positionZ: Number(formData.get("positionZ") ?? 0) || 0,
+          isMinimized: String(formData.get("isMinimized") ?? "").toLowerCase() === "true"
+        }
+      });
+      return jsonResponse({ ok: true, postId });
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const imageUrl = normalizeWorldPostImageUrl(payload?.imageUrl);
+    const message = normalizeWorldPostMessage(payload?.message);
+    if (!imageUrl) {
+      return jsonResponse({ error: "IMAGE_URL_REQUIRED" }, { status: 400 });
+    }
+    if (!message) {
+      return jsonResponse({ error: "MESSAGE_REQUIRED" }, { status: 400 });
+    }
+
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : {};
+
+    const post = await prisma.worldPost.create({
+      data: {
+        worldOwnerId,
+        createdById: user.id,
+        imageUrl,
+        imageStorageKey: null,
+        imageContentType: null,
+        message,
+        positionX: toNumberOrDefault(position.x, 0),
+        positionY: toNumberOrDefault(position.y, 1.4),
+        positionZ: toNumberOrDefault(position.z, 0),
+        isMinimized: payload?.isMinimized === true
+      }
+    });
+
+    return jsonResponse({ ok: true, postId: post.id });
+  })
+  .patch("/world/posts/:postId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const postId = String((params as Record<string, unknown>).postId ?? "");
+    const post = await prisma.worldPost.findUnique({
+      where: { id: postId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!post || post.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "POST_NOT_FOUND" }, { status: 404 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : null;
+    const message =
+      typeof payload?.message === "string"
+        ? normalizeWorldPostMessage(payload.message)
+        : null;
+    const imageUrl =
+      typeof payload?.imageUrl === "string"
+        ? normalizeWorldPostImageUrl(payload.imageUrl)
+        : null;
+
+    await prisma.worldPost.update({
+      where: { id: postId },
+      data: {
+        ...(position
+          ? {
+              positionX: toNumberOrDefault(position.x, 0),
+              positionY: toNumberOrDefault(position.y, 1.4),
+              positionZ: toNumberOrDefault(position.z, 0)
+            }
+          : {}),
+        ...(typeof payload?.isMinimized === "boolean"
+          ? { isMinimized: payload.isMinimized }
+          : {}),
+        ...(message ? { message } : {}),
+        ...(imageUrl
+          ? { imageUrl, imageStorageKey: null, imageContentType: null }
+          : {})
+      }
+    });
+
+    return jsonResponse({ ok: true });
+  })
+  .post("/world/posts/:postId/image", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const postId = String((params as Record<string, unknown>).postId ?? "");
+    const post = await prisma.worldPost.findUnique({
+      where: { id: postId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!post || post.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "POST_NOT_FOUND" }, { status: 404 });
+    }
+
+    const formData = await request.formData();
+    const fileValue = formData.get("file");
+    if (!(fileValue instanceof File)) {
+      return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+    }
+    if (!isValidImageUpload(fileValue)) {
+      return jsonResponse({ error: "INVALID_IMAGE_FILE" }, { status: 400 });
+    }
+
+    const saved = await saveWorldPostImageFile(fileValue, worldOwnerId, postId);
+    const imageUrl = resolveWorldPostImageFileUrl(postId, saved.storageKey);
+    await prisma.worldPost.update({
+      where: { id: postId },
+      data: {
+        imageUrl,
+        imageStorageKey: saved.storageKey,
+        imageContentType: fileValue.type || "application/octet-stream"
+      }
+    });
+
+    return jsonResponse({ ok: true, postId, imageUrl });
+  })
+  .delete("/world/posts/:postId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const postId = String((params as Record<string, unknown>).postId ?? "");
+    const post = await prisma.worldPost.findUnique({
+      where: { id: postId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!post || post.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "POST_NOT_FOUND" }, { status: 404 });
+    }
+
+    await prisma.worldPost.delete({
+      where: { id: postId }
+    });
+
+    return jsonResponse({ ok: true });
+  })
+  .get("/world/posts/:postId/comments", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const postId = String((params as Record<string, unknown>).postId ?? "");
+    const post = await prisma.worldPost.findUnique({
+      where: { id: postId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!post) {
+      return jsonResponse({ error: "POST_NOT_FOUND" }, { status: 404 });
+    }
+
+    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    if (activeWorldOwnerId !== post.worldOwnerId) {
+      return jsonResponse({ error: "FORBIDDEN" }, { status: 403 });
+    }
+
+    const comments = await prisma.worldPostComment.findMany({
+      where: { postId: post.id },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        }
+      },
+      orderBy: { createdAt: "asc" },
+      take: 200
+    });
+
+    return jsonResponse({
+      comments: comments.map((comment) => ({
+        id: comment.id,
+        postId: comment.postId,
+        message: comment.message,
+        author: {
+          id: comment.createdBy.id,
+          name: comment.createdBy.name ?? comment.createdBy.email ?? "User",
+          avatarUrl: comment.createdBy.avatarUrl
+        },
+        createdAt: comment.createdAt.toISOString(),
+        updatedAt: comment.updatedAt.toISOString()
+      }))
+    });
+  })
+  .post("/world/posts/:postId/comments", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const postId = String((params as Record<string, unknown>).postId ?? "");
+    const post = await prisma.worldPost.findUnique({
+      where: { id: postId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!post) {
+      return jsonResponse({ error: "POST_NOT_FOUND" }, { status: 404 });
+    }
+
+    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    if (activeWorldOwnerId !== post.worldOwnerId) {
+      return jsonResponse({ error: "FORBIDDEN" }, { status: 403 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as
+      | Record<string, unknown>
+      | null;
+    const message = normalizeWorldPostCommentMessage(payload?.message);
+    if (!message) {
+      return jsonResponse({ error: "MESSAGE_REQUIRED" }, { status: 400 });
+    }
+
+    const comment = await prisma.worldPostComment.create({
+      data: {
+        postId: post.id,
+        worldOwnerId: post.worldOwnerId,
+        createdById: user.id,
+        message
+      },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        }
+      }
+    });
+
+    return jsonResponse({
+      ok: true,
+      comment: {
+        id: comment.id,
+        postId: comment.postId,
+        message: comment.message,
+        author: {
+          id: comment.createdBy.id,
+          name: comment.createdBy.name ?? comment.createdBy.email ?? "User",
+          avatarUrl: comment.createdBy.avatarUrl
+        },
+        createdAt: comment.createdAt.toISOString(),
+        updatedAt: comment.updatedAt.toISOString()
+      }
+    });
+  })
+  .get("/world/posts/:postId/image", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return new Response("Auth required", { status: 401 });
+    }
+
+    const postId = String((params as Record<string, unknown>).postId ?? "");
+    const post = await prisma.worldPost.findUnique({
+      where: { id: postId },
+      select: {
+        id: true,
+        worldOwnerId: true,
+        imageUrl: true,
+        imageStorageKey: true,
+        imageContentType: true
+      }
+    });
+    if (!post || !post.imageStorageKey) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    if (activeWorldOwnerId !== post.worldOwnerId) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const publicUrl = resolveWorldAssetPublicUrl(post.imageStorageKey);
+    if (publicUrl) {
+      return Response.redirect(publicUrl, 302);
+    }
+
+    const filePath = path.join(WORLD_STORAGE_ROOT, post.imageStorageKey);
+    const file = Bun.file(filePath);
+    const exists = await file.exists();
+    if (!exists) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    return new Response(file, {
+      headers: {
+        "Content-Type": post.imageContentType || "application/octet-stream",
+        "Cache-Control": "private, max-age=120"
+      }
+    });
   })
   .get("/world/assets/version/:versionId/file", async ({ request, params }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);

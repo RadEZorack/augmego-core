@@ -107,6 +107,36 @@ export type WorldPlacement = {
   updatedAt: string;
 };
 
+export type WorldPost = {
+  id: string;
+  imageUrl: string;
+  message: string;
+  position: { x: number; y: number; z: number };
+  isMinimized: boolean;
+  commentCount: number;
+  commentPreview: WorldPostComment[];
+  author: {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type WorldPostComment = {
+  id: string;
+  postId: string;
+  message: string;
+  author: {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+  };
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type WorldState = {
   worldId: string;
   worldName: string;
@@ -117,6 +147,7 @@ export type WorldState = {
   canManageVisibility: boolean;
   assets: WorldAsset[];
   placements: WorldPlacement[];
+  posts: WorldPost[];
 };
 
 export type WorldAssetGenerationTask = {

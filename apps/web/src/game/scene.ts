@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { PlayerPayload, PlayerState, WorldState } from "../lib/types";
+import type { PlayerPayload, PlayerState, WorldPost, WorldState } from "../lib/types";
 
 type PlayerBadge = {
   sprite: any;
@@ -27,7 +27,13 @@ type GameSceneOptions = {
   onRemoteInviteClick?: (clientId: string) => void;
   canShowRemoteInvite?: (clientId: string) => boolean;
   onWorldPlacementSelect?: (placementId: string) => void;
+  onWorldPostSelect?: (postId: string) => void;
+  onWorldPostToggleMinimize?: (postId: string) => void;
+  onWorldPostOpenComments?: (postId: string) => void;
   onWorldPlacementRequest?: (
+    position: { x: number; y: number; z: number }
+  ) => boolean;
+  onWorldPostPlacementRequest?: (
     position: { x: number; y: number; z: number }
   ) => boolean;
 };
@@ -54,6 +60,7 @@ export function createGameScene(options: GameSceneOptions) {
   const clock = new THREE.Clock();
   const gltfLoader = new GLTFLoader();
   const worldRoot = new THREE.Group();
+  const transientRoot = new THREE.Group();
   const cameraOffsetBase = new THREE.Vector3(0, 6, 7);
   const cameraOffset = new THREE.Vector3();
   const cameraTarget = new THREE.Vector3();
@@ -63,6 +70,7 @@ export function createGameScene(options: GameSceneOptions) {
   const loadingSpinners = new Set<any>();
   let worldState: WorldState | null = null;
   let worldRenderEpoch = 0;
+  let pendingWorldPostSpinner: any | null = null;
   let cameraControls: CameraControlState = {
     zoom: 1,
     rotateY: 0,
@@ -77,6 +85,7 @@ export function createGameScene(options: GameSceneOptions) {
 
   const scene = new THREE.Scene();
   scene.add(worldRoot);
+  scene.add(transientRoot);
 
   const camera = new THREE.PerspectiveCamera(
     60,
@@ -532,8 +541,12 @@ export function createGameScene(options: GameSceneOptions) {
         if (node.geometry) node.geometry.dispose();
         const material = node.material;
         if (Array.isArray(material)) {
-          for (const item of material) item.dispose();
+          for (const item of material) {
+            if (item?.map) item.map.dispose();
+            item.dispose();
+          }
         } else if (material) {
+          if (material.map) material.map.dispose();
           material.dispose();
         }
       });
@@ -572,6 +585,41 @@ export function createGameScene(options: GameSceneOptions) {
     return spinner;
   }
 
+  function disposeObject3D(root: any) {
+    root.traverse((node: any) => {
+      if (node.geometry) node.geometry.dispose();
+      const material = node.material;
+      if (Array.isArray(material)) {
+        for (const item of material) {
+          if (item?.map) item.map.dispose();
+          item.dispose();
+        }
+      } else if (material) {
+        if (material.map) material.map.dispose();
+        material.dispose();
+      }
+    });
+  }
+
+  function setPendingWorldPostPlacement(position: { x: number; y: number; z: number } | null) {
+    if (!position) {
+      if (pendingWorldPostSpinner) {
+        transientRoot.remove(pendingWorldPostSpinner);
+        loadingSpinners.delete(pendingWorldPostSpinner);
+        disposeObject3D(pendingWorldPostSpinner);
+        pendingWorldPostSpinner = null;
+      }
+      return;
+    }
+
+    if (!pendingWorldPostSpinner) {
+      pendingWorldPostSpinner = createWorldLoadingSpinner();
+      pendingWorldPostSpinner.scale.set(0.7, 0.7, 0.7);
+      transientRoot.add(pendingWorldPostSpinner);
+    }
+    pendingWorldPostSpinner.position.set(position.x, position.y, position.z);
+  }
+
   function updateLoadingSpinners(deltaSeconds: number) {
     for (const spinner of loadingSpinners) {
       spinner.rotation.y += deltaSeconds * 3.2;
@@ -595,6 +643,297 @@ export function createGameScene(options: GameSceneOptions) {
     });
     modelTemplateCache.set(url, promise);
     return promise;
+  }
+
+  function createPostControlButtonSprite(options: {
+    postId: string;
+    action: "toggle-minimize" | "open-comments";
+    label: string;
+    width?: number;
+    height?: number;
+    fontSize?: number;
+    rounded?: number;
+  }) {
+    const canvas = document.createElement("canvas");
+    canvas.width = options.width ?? 96;
+    canvas.height = options.height ?? 96;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) throw new Error("Unable to create post control canvas context");
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.beginPath();
+    if ((options.width ?? 96) === (options.height ?? 96)) {
+      ctx.arc(canvas.width / 2, canvas.height / 2, Math.min(canvas.width, canvas.height) / 2 - 14, 0, Math.PI * 2);
+      ctx.fillStyle = "rgba(8, 14, 24, 0.9)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(123, 201, 255, 0.8)";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    } else {
+      drawRoundedRect(ctx, 4, 4, canvas.width - 8, canvas.height - 8, options.rounded ?? 18);
+      ctx.fillStyle = "rgba(8, 14, 24, 0.9)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(123, 201, 255, 0.8)";
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+    ctx.fillStyle = "#e8f5ff";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.font = `bold ${options.fontSize ?? 34}px Space Grotesk, sans-serif`;
+    ctx.fillText(options.label, canvas.width / 2, canvas.height / 2 + 1);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false
+    });
+    const sprite = new THREE.Sprite(material);
+    const defaultScaleX = (options.width ?? 96) / 250;
+    const defaultScaleY = (options.height ?? 96) / 250;
+    sprite.scale.set(defaultScaleX, defaultScaleY, 1);
+    sprite.renderOrder = 11;
+    sprite.userData = {
+      type: "world-post-control",
+      action: options.action,
+      postId: options.postId
+    };
+    return sprite;
+  }
+
+  function createWorldPostBillboard(post: WorldPost) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 640;
+    canvas.height = post.isMinimized ? 120 : 740;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) {
+      throw new Error("Unable to create post billboard canvas context");
+    }
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    const material = new THREE.SpriteMaterial({
+      map: texture,
+      transparent: true,
+      depthWrite: false
+    });
+    const group = new THREE.Group();
+    group.position.set(post.position.x, post.position.y, post.position.z);
+    group.userData = { postId: post.id, type: "world-post" };
+
+    const sprite = new THREE.Sprite(material);
+    sprite.position.set(0, 0, 0);
+    sprite.renderOrder = 9;
+    sprite.scale.set(post.isMinimized ? 2.8 : 3.8, post.isMinimized ? 0.55 : 4.2, 1);
+    sprite.userData = { postId: post.id, type: "world-post-body" };
+    group.add(sprite);
+
+    const controlButton = createPostControlButtonSprite({
+      postId: post.id,
+      action: "toggle-minimize",
+      label: post.isMinimized ? "+" : "-"
+    });
+    controlButton.position.set(post.isMinimized ? 1.2 : 1.55, post.isMinimized ? 0.2 : 1.25, 0.01);
+    group.add(controlButton);
+
+    if (!post.isMinimized) {
+      const commentsButton = createPostControlButtonSprite({
+        postId: post.id,
+        action: "open-comments",
+        label: post.commentCount > 5 ? "Show more" : "Comments",
+        width: 220,
+        height: 64,
+        fontSize: 20
+      });
+      commentsButton.position.set(0.65, -1.88, 0.01);
+      group.add(commentsButton);
+    }
+
+    let image: HTMLImageElement | null = null;
+    let imageReady = false;
+
+    const draw = () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      drawRoundedRect(ctx, 12, 12, canvas.width - 24, canvas.height - 24, 24);
+      ctx.fillStyle = "rgba(8, 14, 24, 0.92)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(123, 201, 255, 0.55)";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+
+      ctx.fillStyle = "#e8f5ff";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "middle";
+      ctx.font = "600 26px Space Grotesk, sans-serif";
+      const authorLabel = `${post.author.name}`;
+      ctx.fillText(authorLabel, 32, 44);
+
+      if (post.isMinimized) {
+        ctx.fillStyle = "rgba(232, 245, 255, 0.75)";
+        ctx.font = "500 20px Space Grotesk, sans-serif";
+        const compactText =
+          post.message.length > 56 ? `${post.message.slice(0, 56)}...` : post.message;
+        ctx.fillText(compactText, 32, 84);
+        texture.needsUpdate = true;
+        return;
+      }
+
+      drawRoundedRect(ctx, 24, 70, canvas.width - 48, 300, 18);
+      ctx.fillStyle = "rgba(19, 29, 45, 0.95)";
+      ctx.fill();
+
+      if (image && imageReady) {
+        const srcWidth = image.naturalWidth || 1;
+        const srcHeight = image.naturalHeight || 1;
+        const targetX = 24;
+        const targetY = 70;
+        const targetW = canvas.width - 48;
+        const targetH = 300;
+        const scale = Math.max(targetW / srcWidth, targetH / srcHeight);
+        const drawW = srcWidth * scale;
+        const drawH = srcHeight * scale;
+        const dx = targetX + (targetW - drawW) / 2;
+        const dy = targetY + (targetH - drawH) / 2;
+        ctx.save();
+        drawRoundedRect(ctx, 24, 70, canvas.width - 48, 300, 18);
+        ctx.clip();
+        ctx.drawImage(image, dx, dy, drawW, drawH);
+        ctx.restore();
+      } else {
+        ctx.fillStyle = "rgba(34, 50, 76, 1)";
+        ctx.fillRect(24, 70, canvas.width - 48, 300);
+        ctx.fillStyle = "rgba(232, 245, 255, 0.75)";
+        ctx.font = "500 22px Space Grotesk, sans-serif";
+        ctx.textAlign = "center";
+        ctx.fillText("Loading image...", canvas.width / 2, 220);
+        ctx.textAlign = "left";
+      }
+
+      const maxWidth = canvas.width - 64;
+      const lineHeight = 30;
+      let y = 396;
+      ctx.fillStyle = "#f3fbff";
+      ctx.font = "500 24px Space Grotesk, sans-serif";
+      for (const line of wrapText(ctx, post.message, maxWidth, 3)) {
+        ctx.fillText(line, 32, y);
+        y += lineHeight;
+      }
+
+      const commentsTop = 500;
+      drawRoundedRect(ctx, 24, commentsTop - 28, canvas.width - 48, 162, 16);
+      ctx.fillStyle = "rgba(11, 20, 33, 0.9)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(123, 201, 255, 0.22)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      ctx.fillStyle = "#cfe8fb";
+      ctx.font = "600 18px Space Grotesk, sans-serif";
+      ctx.fillText(
+        `Comments (${post.commentCount})`,
+        36,
+        commentsTop - 5
+      );
+
+      const preview = post.commentPreview.slice(0, 5);
+      if (preview.length === 0) {
+        ctx.fillStyle = "rgba(232, 245, 255, 0.72)";
+        ctx.font = "500 18px Space Grotesk, sans-serif";
+        ctx.fillText("No comments yet", 36, commentsTop + 24);
+      } else {
+        let commentY = commentsTop + 18;
+        for (const comment of preview) {
+          ctx.fillStyle = "#e8f5ff";
+          ctx.font = "600 17px Space Grotesk, sans-serif";
+          const name = comment.author.name.length > 18
+            ? `${comment.author.name.slice(0, 18)}...`
+            : comment.author.name;
+          ctx.fillText(name, 36, commentY);
+          ctx.fillStyle = "rgba(232, 245, 255, 0.78)";
+          ctx.font = "500 16px Space Grotesk, sans-serif";
+          const line = wrapText(ctx, comment.message, canvas.width - 180, 1)[0] ?? "";
+          ctx.fillText(line, 150, commentY);
+          commentY += 24;
+        }
+      }
+
+      drawRoundedRect(ctx, 380, 662, 236, 52, 14);
+      ctx.fillStyle = "rgba(18, 40, 61, 0.95)";
+      ctx.fill();
+      ctx.strokeStyle = "rgba(123, 201, 255, 0.45)";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.fillStyle = "#e8f5ff";
+      ctx.textAlign = "center";
+      ctx.font = "600 19px Space Grotesk, sans-serif";
+      ctx.fillText(
+        post.commentCount > 5 ? "Show more comments" : "Open comments",
+        498,
+        688
+      );
+      ctx.textAlign = "left";
+
+      texture.needsUpdate = true;
+    };
+
+    const wrapText = (
+      context: CanvasRenderingContext2D,
+      text: string,
+      maxWidth: number,
+      maxLines: number
+    ) => {
+      const words = text.split(/\s+/).filter(Boolean);
+      if (words.length === 0) return [""];
+      const lines: string[] = [];
+      let current = "";
+      for (const word of words) {
+        const next = current ? `${current} ${word}` : word;
+        if (context.measureText(next).width <= maxWidth) {
+          current = next;
+          continue;
+        }
+        if (current) {
+          lines.push(current);
+          current = word;
+        } else {
+          lines.push(word);
+          current = "";
+        }
+        if (lines.length >= maxLines) break;
+      }
+      if (lines.length < maxLines && current) {
+        lines.push(current);
+      }
+      if (lines.length > maxLines) {
+        lines.length = maxLines;
+      }
+      if (lines.length === maxLines && words.length > 0) {
+        const joined = lines.join(" ");
+        if (joined.length < text.length) {
+          const lastIndex = lines.length - 1;
+          lines[lastIndex] = `${lines[lastIndex]!.replace(/\.\.\.$/, "")}...`;
+        }
+      }
+      return lines;
+    };
+
+    draw();
+
+    image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      imageReady = true;
+      draw();
+    };
+    image.onerror = () => {
+      imageReady = false;
+      draw();
+    };
+    image.src = post.imageUrl;
+
+    return group;
   }
 
   async function renderWorldModels() {
@@ -657,6 +996,12 @@ export function createGameScene(options: GameSceneOptions) {
         worldRoot.add(instance);
       })
     );
+
+    if (renderEpoch !== worldRenderEpoch) return;
+    for (const post of worldState.posts ?? []) {
+      const billboard = createWorldPostBillboard(post);
+      worldRoot.add(billboard);
+    }
   }
 
   function updateRemotePlayers(deltaSeconds: number) {
@@ -710,9 +1055,41 @@ export function createGameScene(options: GameSceneOptions) {
     }
 
     const modelIntersections = raycaster.intersectObjects(worldRoot.children, true);
+    const postControlHit = modelIntersections.find((intersection: any) => {
+      let node: any = intersection.object;
+      while (node) {
+        if (node.userData?.type === "world-post-control") {
+          return true;
+        }
+        node = node.parent;
+      }
+      return false;
+    });
+
+    if (postControlHit) {
+      let node: any = postControlHit.object;
+      while (node) {
+        if (
+          node.userData?.type === "world-post-control" &&
+          typeof node.userData.postId === "string"
+        ) {
+          if (node.userData?.action === "toggle-minimize") {
+            options.onWorldPostToggleMinimize?.(node.userData.postId);
+          } else if (node.userData?.action === "open-comments") {
+            options.onWorldPostOpenComments?.(node.userData.postId);
+          }
+          return;
+        }
+        node = node.parent;
+      }
+    }
+
     const placementHit = modelIntersections.find((intersection: any) => {
       let node: any = intersection.object;
       while (node) {
+        if (typeof node.userData?.postId === "string") {
+          return false;
+        }
         if (typeof node.userData?.placementId === "string") {
           return true;
         }
@@ -720,6 +1097,28 @@ export function createGameScene(options: GameSceneOptions) {
       }
       return false;
     });
+
+    const postHit = modelIntersections.find((intersection: any) => {
+      let node: any = intersection.object;
+      while (node) {
+        if (typeof node.userData?.postId === "string") {
+          return true;
+        }
+        node = node.parent;
+      }
+      return false;
+    });
+
+    if (postHit) {
+      let node: any = postHit.object;
+      while (node) {
+        if (typeof node.userData?.postId === "string") {
+          options.onWorldPostSelect?.(node.userData.postId);
+          return;
+        }
+        node = node.parent;
+      }
+    }
 
     if (placementHit) {
       let node: any = placementHit.object;
@@ -739,12 +1138,22 @@ export function createGameScene(options: GameSceneOptions) {
     if (!hitPoint) return;
 
     const consumedByPlacement =
-      options.onWorldPlacementRequest?.({
+      options.onWorldPostPlacementRequest?.({
         x: hitPoint.x,
         y: hitPoint.y,
         z: hitPoint.z
       }) ?? false;
     if (consumedByPlacement) {
+      return;
+    }
+
+    const consumedByModelPlacement =
+      options.onWorldPlacementRequest?.({
+        x: hitPoint.x,
+        y: hitPoint.y,
+        z: hitPoint.z
+      }) ?? false;
+    if (consumedByModelPlacement) {
       return;
     }
 
@@ -844,6 +1253,7 @@ export function createGameScene(options: GameSceneOptions) {
     getCameraControls,
     setCameraControls,
     setWorldData,
+    setPendingWorldPostPlacement,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,
     removeRemotePlayer
