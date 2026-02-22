@@ -73,6 +73,9 @@
           <button id="tab-media" class="dock-tab" type="button" role="tab" aria-selected="false">
             Media
           </button>
+          <button id="tab-controls" class="dock-tab" type="button" role="tab" aria-selected="false">
+            Controls
+          </button>
         </div>
         <div class="dock-controls">
           <button
@@ -144,6 +147,71 @@
         <div class="volume-section">
           <div class="volume-title">Remote Volume</div>
           <div id="remote-volume-list" class="volume-list"></div>
+        </div>
+      </div>
+
+      <div id="pane-controls" class="dock-pane" role="tabpanel" aria-labelledby="tab-controls">
+        <div class="media-header">Camera Controls</div>
+        <div class="camera-controls-grid">
+          <label class="camera-control-row" for="camera-zoom-slider">
+            <span class="camera-control-label">Zoom</span>
+            <input
+              id="camera-zoom-slider"
+              class="camera-control-range"
+              type="range"
+              min="0.5"
+              max="3"
+              step="0.05"
+            />
+            <input
+              id="camera-zoom-input"
+              class="camera-control-number"
+              type="number"
+              min="0.5"
+              max="3"
+              step="0.05"
+            />
+          </label>
+
+          <label class="camera-control-row" for="camera-rotate-y-slider">
+            <span class="camera-control-label">Rotate Left/Right (Y)</span>
+            <input
+              id="camera-rotate-y-slider"
+              class="camera-control-range"
+              type="range"
+              min="-180"
+              max="180"
+              step="1"
+            />
+            <input
+              id="camera-rotate-y-input"
+              class="camera-control-number"
+              type="number"
+              min="-180"
+              max="180"
+              step="1"
+            />
+          </label>
+
+          <label class="camera-control-row" for="camera-rotate-z-slider">
+            <span class="camera-control-label">Rotate Up/Down (Z)</span>
+            <input
+              id="camera-rotate-z-slider"
+              class="camera-control-range"
+              type="range"
+              min="-75"
+              max="75"
+              step="1"
+            />
+            <input
+              id="camera-rotate-z-input"
+              class="camera-control-number"
+              type="number"
+              min="-75"
+              max="75"
+              step="1"
+            />
+          </label>
         </div>
       </div>
 

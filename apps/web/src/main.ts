@@ -34,9 +34,28 @@ const dockHeightToggleButton = document.getElementById(
 const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
 const partyTabButton = document.getElementById("tab-party") as HTMLButtonElement | null;
 const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
+const controlsTabButton = document.getElementById("tab-controls") as HTMLButtonElement | null;
 const chatPane = document.getElementById("pane-chat") as HTMLElement | null;
 const partyPane = document.getElementById("pane-party") as HTMLElement | null;
 const mediaPane = document.getElementById("pane-media") as HTMLElement | null;
+const controlsPane = document.getElementById("pane-controls") as HTMLElement | null;
+
+const cameraZoomSlider = document.getElementById(
+  "camera-zoom-slider"
+) as HTMLInputElement | null;
+const cameraZoomInput = document.getElementById("camera-zoom-input") as HTMLInputElement | null;
+const cameraRotateYSlider = document.getElementById(
+  "camera-rotate-y-slider"
+) as HTMLInputElement | null;
+const cameraRotateYInput = document.getElementById(
+  "camera-rotate-y-input"
+) as HTMLInputElement | null;
+const cameraRotateZSlider = document.getElementById(
+  "camera-rotate-z-slider"
+) as HTMLInputElement | null;
+const cameraRotateZInput = document.getElementById(
+  "camera-rotate-z-input"
+) as HTMLInputElement | null;
 
 const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
@@ -114,18 +133,21 @@ function setupTabs() {
     !chatTabButton ||
     !partyTabButton ||
     !mediaTabButton ||
+    !controlsTabButton ||
     !chatPane ||
     !partyPane ||
-    !mediaPane
+    !mediaPane ||
+    !controlsPane
   ) {
     return;
   }
 
-  const tabs = [chatTabButton, partyTabButton, mediaTabButton];
-  const panes = [chatPane, partyPane, mediaPane];
+  const tabs = [chatTabButton, partyTabButton, mediaTabButton, controlsTabButton];
+  const panes = [chatPane, partyPane, mediaPane, controlsPane];
 
-  const setActive = (tab: "chat" | "party" | "media") => {
-    const activeIndex = tab === "chat" ? 0 : tab === "party" ? 1 : 2;
+  const setActive = (tab: "chat" | "party" | "media" | "controls") => {
+    const activeIndex =
+      tab === "chat" ? 0 : tab === "party" ? 1 : tab === "media" ? 2 : 3;
     for (let i = 0; i < tabs.length; i += 1) {
       tabs[i]!.classList.toggle("active", i === activeIndex);
       tabs[i]!.setAttribute("aria-selected", i === activeIndex ? "true" : "false");
@@ -136,6 +158,7 @@ function setupTabs() {
   chatTabButton.addEventListener("click", () => setActive("chat"));
   partyTabButton.addEventListener("click", () => setActive("party"));
   mediaTabButton.addEventListener("click", () => setActive("media"));
+  controlsTabButton.addEventListener("click", () => setActive("controls"));
 }
 
 function setPanelMinimized(
@@ -1342,6 +1365,66 @@ const game = createGameScene({
   }
 });
 
+function setupCameraControlsTab() {
+  if (
+    !cameraZoomSlider ||
+    !cameraZoomInput ||
+    !cameraRotateYSlider ||
+    !cameraRotateYInput ||
+    !cameraRotateZSlider ||
+    !cameraRotateZInput
+  ) {
+    return;
+  }
+
+  type CameraControlKey = "zoom" | "rotateY" | "rotateZ";
+  type CameraControlBinding = {
+    key: CameraControlKey;
+    slider: HTMLInputElement;
+    input: HTMLInputElement;
+    digits: number;
+  };
+
+  const bindings: CameraControlBinding[] = [
+    { key: "zoom", slider: cameraZoomSlider, input: cameraZoomInput, digits: 2 },
+    { key: "rotateY", slider: cameraRotateYSlider, input: cameraRotateYInput, digits: 0 },
+    { key: "rotateZ", slider: cameraRotateZSlider, input: cameraRotateZInput, digits: 0 }
+  ];
+
+  const syncUi = (state = game.getCameraControls()) => {
+    for (const binding of bindings) {
+      const value = state[binding.key];
+      binding.slider.value = String(value);
+      binding.input.value = value.toFixed(binding.digits);
+    }
+  };
+
+  const applyValue = (key: CameraControlKey, rawValue: number) => {
+    if (!Number.isFinite(rawValue)) {
+      syncUi();
+      return;
+    }
+
+    syncUi(game.setCameraControls({ [key]: rawValue }));
+  };
+
+  for (const binding of bindings) {
+    binding.slider.addEventListener("input", () => {
+      applyValue(binding.key, Number(binding.slider.value));
+    });
+
+    binding.input.addEventListener("input", () => {
+      applyValue(binding.key, Number(binding.input.value));
+    });
+
+    binding.input.addEventListener("blur", () => {
+      syncUi();
+    });
+  }
+
+  syncUi();
+}
+
 const auth = createAuthController({
   elements: {
     loginMenu: document.getElementById("login-menu") as HTMLElement | null,
@@ -1638,6 +1721,7 @@ chat.onSubmit((text) => {
 setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
 setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
+setupCameraControlsTab();
 setupChatChannelToggles();
 
 worldGenerateForm?.addEventListener("submit", (event) => {

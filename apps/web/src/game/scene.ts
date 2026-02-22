@@ -32,6 +32,12 @@ type GameSceneOptions = {
   ) => boolean;
 };
 
+type CameraControlState = {
+  zoom: number;
+  rotateY: number;
+  rotateZ: number;
+};
+
 export function createGameScene(options: GameSceneOptions) {
   const playerRadius = options.playerRadius ?? 0.35;
   const playerSpeed = options.playerSpeed ?? 3;
@@ -48,10 +54,20 @@ export function createGameScene(options: GameSceneOptions) {
   const clock = new THREE.Clock();
   const gltfLoader = new GLTFLoader();
   const worldRoot = new THREE.Group();
+  const cameraOffsetBase = new THREE.Vector3(0, 6, 7);
+  const cameraOffset = new THREE.Vector3();
+  const cameraTarget = new THREE.Vector3();
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const zAxis = new THREE.Vector3(0, 0, 1);
   const modelTemplateCache = new Map<string, Promise<any>>();
   const loadingSpinners = new Set<any>();
   let worldState: WorldState | null = null;
   let worldRenderEpoch = 0;
+  let cameraControls: CameraControlState = {
+    zoom: 1,
+    rotateY: 0,
+    rotateZ: 0
+  };
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -100,6 +116,23 @@ export function createGameScene(options: GameSceneOptions) {
   scene.add(localPlayer);
 
   const targetPosition = localPlayer.position.clone();
+
+  function clamp(value: number, min: number, max: number) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function setCameraControls(next: Partial<CameraControlState>) {
+    cameraControls = {
+      zoom: clamp(next.zoom ?? cameraControls.zoom, 0.5, 3),
+      rotateY: clamp(next.rotateY ?? cameraControls.rotateY, -180, 180),
+      rotateZ: clamp(next.rotateZ ?? cameraControls.rotateZ, -75, 75)
+    };
+    return { ...cameraControls };
+  }
+
+  function getCameraControls() {
+    return { ...cameraControls };
+  }
 
   function getInitials(name: string) {
     const words = name.trim().split(/\s+/).filter(Boolean);
@@ -733,9 +766,13 @@ export function createGameScene(options: GameSceneOptions) {
     updateRemotePlayers(deltaSeconds);
     updateLoadingSpinners(deltaSeconds);
 
-    camera.position.x = localPlayer.position.x;
-    camera.position.z = localPlayer.position.z + 7;
-    camera.lookAt(localPlayer.position.x, 0, localPlayer.position.z);
+    cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
+    cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));
+    cameraOffset.applyAxisAngle(zAxis, THREE.MathUtils.degToRad(cameraControls.rotateZ));
+    camera.position.copy(localPlayer.position).add(cameraOffset);
+
+    cameraTarget.set(localPlayer.position.x, 0, localPlayer.position.z);
+    camera.lookAt(cameraTarget);
 
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
@@ -804,6 +841,8 @@ export function createGameScene(options: GameSceneOptions) {
     setRemoteMediaState,
     setRemoteMediaStream,
     forceSyncLocalState,
+    getCameraControls,
+    setCameraControls,
     setWorldData,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,
