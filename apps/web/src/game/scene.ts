@@ -1209,7 +1209,7 @@ export function createGameScene(options: GameSceneOptions) {
       while (node) {
         if (typeof node.userData?.photoWallId === "string") {
           options.onWorldPhotoWallSelect?.(node.userData.photoWallId);
-          return;
+          break;
         }
         node = node.parent;
       }
@@ -1279,7 +1279,7 @@ export function createGameScene(options: GameSceneOptions) {
       while (node) {
         if (typeof node.userData?.postId === "string") {
           options.onWorldPostSelect?.(node.userData.postId);
-          return;
+          break;
         }
         node = node.parent;
       }
@@ -1290,7 +1290,7 @@ export function createGameScene(options: GameSceneOptions) {
       while (node) {
         if (typeof node.userData?.placementId === "string") {
           options.onWorldPlacementSelect?.(node.userData.placementId);
-          return;
+          break;
         }
         node = node.parent;
       }
