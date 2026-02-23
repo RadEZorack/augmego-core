@@ -248,6 +248,16 @@
           >
             Posts
           </button>
+          <button
+            id="party-subtab-walls"
+            class="party-subtab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="party-subpane-walls"
+          >
+            Walls
+          </button>
         </div>
 
         <div
@@ -371,31 +381,6 @@
           </div>
 
           <div class="world-section">
-            <div class="party-members-title">Photo Walls</div>
-            <form id="world-photo-wall-form" class="party-search">
-              <input
-                id="world-photo-wall-image-url"
-                class="party-search-input"
-                type="url"
-                maxlength="2000"
-                placeholder="Image URL (optional if uploading file)"
-                autocomplete="off"
-              />
-              <button id="world-photo-wall-button" class="party-search-button" type="submit">
-                Place Wall
-              </button>
-            </form>
-            <input
-              id="world-photo-wall-image-file"
-              class="party-search-input"
-              type="file"
-              accept="image/*"
-            />
-            <div class="party-search-results" id="world-photo-walls"></div>
-            <div id="world-photo-wall-editor" class="world-placement-editor"></div>
-          </div>
-
-          <div class="world-section">
             <div class="party-members-title">Use Model</div>
             <div class="party-search-results" id="world-assets"></div>
           </div>
@@ -478,6 +463,39 @@
                 Comment
               </button>
             </form>
+          </div>
+        </div>
+
+        <div
+          id="party-subpane-walls"
+          class="party-subpane"
+          role="tabpanel"
+          aria-labelledby="party-subtab-walls"
+          hidden
+        >
+          <div class="world-section">
+            <div class="party-members-title">Photo Walls</div>
+            <form id="world-photo-wall-form" class="party-search">
+              <input
+                id="world-photo-wall-image-url"
+                class="party-search-input"
+                type="url"
+                maxlength="2000"
+                placeholder="Image URL (optional if uploading file)"
+                autocomplete="off"
+              />
+              <button id="world-photo-wall-button" class="party-search-button" type="submit">
+                Place Wall
+              </button>
+            </form>
+            <input
+              id="world-photo-wall-image-file"
+              class="party-search-input"
+              type="file"
+              accept="image/*"
+            />
+            <div class="party-search-results" id="world-photo-walls"></div>
+            <div id="world-photo-wall-editor" class="world-placement-editor"></div>
           </div>
         </div>
       </div>

@@ -51,12 +51,18 @@ const partyObjectsSubtabButton = document.getElementById(
 const partyPostsSubtabButton = document.getElementById(
   "party-subtab-posts"
 ) as HTMLButtonElement | null;
+const partyWallsSubtabButton = document.getElementById(
+  "party-subtab-walls"
+) as HTMLButtonElement | null;
 const partyWorldSubpane = document.getElementById("party-subpane-world") as HTMLElement | null;
 const partyObjectsSubpane = document.getElementById(
   "party-subpane-objects"
 ) as HTMLElement | null;
 const partyPostsSubpane = document.getElementById(
   "party-subpane-posts"
+) as HTMLElement | null;
+const partyWallsSubpane = document.getElementById(
+  "party-subpane-walls"
 ) as HTMLElement | null;
 
 const cameraZoomSlider = document.getElementById(
@@ -82,7 +88,7 @@ const wsBase = import.meta.env.VITE_WS_URL;
 const apiUrl = createApiUrlResolver(apiBase);
 
 type DockHeightState = "quarter" | "half" | "full";
-type PartySubtabKey = "world" | "objects" | "posts";
+type PartySubtabKey = "world" | "objects" | "posts" | "walls";
 type MainTabKey = "chat" | "party" | "media" | "controls";
 let setActiveMainTab: ((tab: MainTabKey) => void) | null = null;
 let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
@@ -190,18 +196,31 @@ function setupPartySubtabs() {
     !partyWorldSubtabButton ||
     !partyObjectsSubtabButton ||
     !partyPostsSubtabButton ||
+    !partyWallsSubtabButton ||
     !partyWorldSubpane ||
     !partyObjectsSubpane ||
-    !partyPostsSubpane
+    !partyPostsSubpane ||
+    !partyWallsSubpane
   ) {
     return;
   }
 
-  const tabs = [partyWorldSubtabButton, partyObjectsSubtabButton, partyPostsSubtabButton];
-  const panes = [partyWorldSubpane, partyObjectsSubpane, partyPostsSubpane];
+  const tabs = [
+    partyWorldSubtabButton,
+    partyObjectsSubtabButton,
+    partyPostsSubtabButton,
+    partyWallsSubtabButton
+  ];
+  const panes = [
+    partyWorldSubpane,
+    partyObjectsSubpane,
+    partyPostsSubpane,
+    partyWallsSubpane
+  ];
 
   const setActive = (tab: PartySubtabKey) => {
-    const activeIndex = tab === "world" ? 0 : tab === "objects" ? 1 : 2;
+    const activeIndex =
+      tab === "world" ? 0 : tab === "objects" ? 1 : tab === "posts" ? 2 : 3;
     for (let i = 0; i < tabs.length; i += 1) {
       const active = i === activeIndex;
       tabs[i]!.classList.toggle("active", active);
@@ -215,6 +234,7 @@ function setupPartySubtabs() {
   partyWorldSubtabButton.addEventListener("click", () => setActive("world"));
   partyObjectsSubtabButton.addEventListener("click", () => setActive("objects"));
   partyPostsSubtabButton.addEventListener("click", () => setActive("posts"));
+  partyWallsSubtabButton.addEventListener("click", () => setActive("walls"));
 }
 
 function setPanelMinimized(
@@ -901,6 +921,7 @@ function setSelectedWorldPhotoWall(photoWallId: string | null) {
   renderWorldPlacementEditor();
   renderWorldPosts();
   renderWorldPhotoWalls();
+  renderWorldPhotoWallEditor();
   renderWorldPostComments();
 }
 
@@ -2264,7 +2285,13 @@ const game = createGameScene({
     setSelectedWorldPlacement(placementId);
   },
   onWorldPhotoWallSelect(photoWallId) {
+    setPanelMinimized(dockPanel, dockMinimizeButton, "panel", false);
+    setActiveMainTab?.("party");
+    setActivePartySubtab?.("walls");
     setSelectedWorldPhotoWall(photoWallId);
+    if (worldPhotoWallEditor) {
+      worldPhotoWallEditor.scrollIntoView({ block: "nearest" });
+    }
   },
   onWorldPostSelect(postId) {
     setSelectedWorldPost(postId);
