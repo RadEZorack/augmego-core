@@ -1,6 +1,12 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
-import type { PlayerPayload, PlayerState, WorldPost, WorldState } from "../lib/types";
+import type {
+  PlayerPayload,
+  PlayerState,
+  WorldPhotoWall,
+  WorldPost,
+  WorldState
+} from "../lib/types";
 
 type PlayerBadge = {
   sprite: any;
@@ -27,10 +33,14 @@ type GameSceneOptions = {
   onRemoteInviteClick?: (clientId: string) => void;
   canShowRemoteInvite?: (clientId: string) => boolean;
   onWorldPlacementSelect?: (placementId: string) => void;
+  onWorldPhotoWallSelect?: (photoWallId: string) => void;
   onWorldPostSelect?: (postId: string) => void;
   onWorldPostToggleMinimize?: (postId: string) => void;
   onWorldPostOpenComments?: (postId: string) => void;
   onWorldPlacementRequest?: (
+    position: { x: number; y: number; z: number }
+  ) => boolean;
+  onWorldPhotoWallPlacementRequest?: (
     position: { x: number; y: number; z: number }
   ) => boolean;
   onWorldPostPlacementRequest?: (
@@ -59,6 +69,7 @@ export function createGameScene(options: GameSceneOptions) {
   const raycaster = new THREE.Raycaster();
   const clock = new THREE.Clock();
   const gltfLoader = new GLTFLoader();
+  const textureLoader = new THREE.TextureLoader();
   const worldRoot = new THREE.Group();
   const transientRoot = new THREE.Group();
   const cameraOffsetBase = new THREE.Vector3(0, 6, 7);
@@ -67,6 +78,7 @@ export function createGameScene(options: GameSceneOptions) {
   const yAxis = new THREE.Vector3(0, 1, 0);
   const zAxis = new THREE.Vector3(0, 0, 1);
   const modelTemplateCache = new Map<string, Promise<any>>();
+  const imageTextureCache = new Map<string, Promise<any>>();
   const loadingSpinners = new Set<any>();
   let worldState: WorldState | null = null;
   let worldRenderEpoch = 0;
@@ -552,6 +564,7 @@ export function createGameScene(options: GameSceneOptions) {
       });
     }
     loadingSpinners.clear();
+    imageTextureCache.clear();
   }
 
   function createWorldLoadingSpinner() {
@@ -643,6 +656,69 @@ export function createGameScene(options: GameSceneOptions) {
     });
     modelTemplateCache.set(url, promise);
     return promise;
+  }
+
+  function loadImageTexture(url: string) {
+    const cached = imageTextureCache.get(url);
+    if (cached) return cached;
+    const promise = new Promise<any>((resolve) => {
+      textureLoader.load(
+        url,
+        (texture: any) => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          resolve(texture);
+        },
+        undefined,
+        () => resolve(null)
+      );
+    });
+    imageTextureCache.set(url, promise);
+    return promise;
+  }
+
+  async function createPhotoWallMesh(photoWall: WorldPhotoWall, renderEpoch: number) {
+    const group = new THREE.Group();
+    group.position.set(photoWall.position.x, photoWall.position.y, photoWall.position.z);
+    group.rotation.set(photoWall.rotation.x, photoWall.rotation.y, photoWall.rotation.z);
+    group.scale.set(photoWall.scale.x, photoWall.scale.y, photoWall.scale.z);
+    group.userData = { photoWallId: photoWall.id, type: "world-photo-wall" };
+
+    const backing = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 0.75, 0.05),
+      new THREE.MeshStandardMaterial({
+        color: 0x0f1727,
+        roughness: 0.75,
+        metalness: 0.05
+      })
+    );
+    backing.userData = { photoWallId: photoWall.id };
+    group.add(backing);
+
+    const front = new THREE.Mesh(
+      new THREE.PlaneGeometry(0.96, 0.71),
+      new THREE.MeshBasicMaterial({
+        color: 0x22344c,
+        transparent: false
+      })
+    );
+    front.position.z = 0.026;
+    front.userData = { photoWallId: photoWall.id, type: "world-photo-wall-face" };
+    group.add(front);
+
+    const texture = await loadImageTexture(photoWall.imageUrl);
+    if (renderEpoch !== worldRenderEpoch) {
+      disposeObject3D(group);
+      return null;
+    }
+    if (texture && front.material) {
+      const material = front.material as any;
+      if (material.map) material.map.dispose();
+      material.map = texture;
+      material.color = new THREE.Color(0xffffff);
+      material.needsUpdate = true;
+    }
+
+    return group;
   }
 
   function createPostControlButtonSprite(options: {
@@ -1019,6 +1095,21 @@ export function createGameScene(options: GameSceneOptions) {
     );
 
     if (renderEpoch !== worldRenderEpoch) return;
+    await Promise.all(
+      (worldState.photoWalls ?? []).map(async (photoWall) => {
+        const spinner = createWorldLoadingSpinner();
+        spinner.position.set(photoWall.position.x, photoWall.position.y, photoWall.position.z);
+        spinner.userData = { photoWallId: photoWall.id };
+        worldRoot.add(spinner);
+
+        const mesh = await createPhotoWallMesh(photoWall, renderEpoch);
+        worldRoot.remove(spinner);
+        loadingSpinners.delete(spinner);
+        if (!mesh || renderEpoch !== worldRenderEpoch) return;
+        worldRoot.add(mesh);
+      })
+    );
+    if (renderEpoch !== worldRenderEpoch) return;
     for (const post of worldState.posts ?? []) {
       const billboard = createWorldPostBillboard(post);
       worldRoot.add(billboard);
@@ -1105,6 +1196,25 @@ export function createGameScene(options: GameSceneOptions) {
       }
     }
 
+    const photoWallHit = modelIntersections.find((intersection: any) => {
+      let node: any = intersection.object;
+      while (node) {
+        if (typeof node.userData?.photoWallId === "string") return true;
+        node = node.parent;
+      }
+      return false;
+    });
+    if (photoWallHit) {
+      let node: any = photoWallHit.object;
+      while (node) {
+        if (typeof node.userData?.photoWallId === "string") {
+          options.onWorldPhotoWallSelect?.(node.userData.photoWallId);
+          break;
+        }
+        node = node.parent;
+      }
+    }
+
     const placementHit = modelIntersections.find((intersection: any) => {
       let node: any = intersection.object;
       while (node) {
@@ -1169,7 +1279,7 @@ export function createGameScene(options: GameSceneOptions) {
       while (node) {
         if (typeof node.userData?.postId === "string") {
           options.onWorldPostSelect?.(node.userData.postId);
-          return;
+          break;
         }
         node = node.parent;
       }
@@ -1180,7 +1290,7 @@ export function createGameScene(options: GameSceneOptions) {
       while (node) {
         if (typeof node.userData?.placementId === "string") {
           options.onWorldPlacementSelect?.(node.userData.placementId);
-          return;
+          break;
         }
         node = node.parent;
       }
@@ -1193,12 +1303,22 @@ export function createGameScene(options: GameSceneOptions) {
     if (!hitPoint) return;
 
     const consumedByPlacement =
-      options.onWorldPostPlacementRequest?.({
+      options.onWorldPhotoWallPlacementRequest?.({
         x: hitPoint.x,
         y: hitPoint.y,
         z: hitPoint.z
       }) ?? false;
     if (consumedByPlacement) {
+      return;
+    }
+
+    const consumedByPostPlacement =
+      options.onWorldPostPlacementRequest?.({
+        x: hitPoint.x,
+        y: hitPoint.y,
+        z: hitPoint.z
+      }) ?? false;
+    if (consumedByPostPlacement) {
       return;
     }
 

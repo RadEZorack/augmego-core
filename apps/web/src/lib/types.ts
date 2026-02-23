@@ -137,6 +137,16 @@ export type WorldPostComment = {
   updatedAt: string;
 };
 
+export type WorldPhotoWall = {
+  id: string;
+  imageUrl: string;
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type WorldState = {
   worldId: string;
   worldName: string;
@@ -148,6 +158,7 @@ export type WorldState = {
   assets: WorldAsset[];
   placements: WorldPlacement[];
   posts: WorldPost[];
+  photoWalls: WorldPhotoWall[];
 };
 
 export type WorldAssetGenerationTask = {

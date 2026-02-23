@@ -10,6 +10,7 @@ import type {
   PlayerPayload,
   WorldAsset,
   WorldAssetGenerationTask,
+  WorldPhotoWall,
   WorldPost,
   WorldPostComment,
   WorldPlacement,
@@ -280,6 +281,11 @@ let selectedPlacementAssetId: string | null = null;
 let selectedWorldPlacementId: string | null = null;
 let pendingSelectedWorldPlacementId: string | null = null;
 let isPlacingModel = false;
+let selectedWorldPhotoWallId: string | null = null;
+let pendingSelectedWorldPhotoWallId: string | null = null;
+let isPlacingPhotoWall = false;
+let isSubmittingPhotoWallPlacement = false;
+let pendingPhotoWallDraft: { imageUrl: string | null; imageFile: File | null } | null = null;
 let selectedWorldPostId: string | null = null;
 let pendingSelectedWorldPostId: string | null = null;
 let isPlacingPost = false;
@@ -292,6 +298,7 @@ let worldPostComments: WorldPostComment[] = [];
 let worldPostCommentsForPostId: string | null = null;
 let worldPostCommentsLoading = false;
 const placementPersistTimers = new Map<string, number>();
+const photoWallPersistTimers = new Map<string, number>();
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
@@ -316,6 +323,24 @@ const worldAssetsContainer = document.getElementById("world-assets") as HTMLDivE
 const worldPlacementsContainer = document.getElementById("world-placements") as HTMLDivElement | null;
 const worldPlacementEditor = document.getElementById(
   "world-placement-editor"
+) as HTMLDivElement | null;
+const worldPhotoWallForm = document.getElementById(
+  "world-photo-wall-form"
+) as HTMLFormElement | null;
+const worldPhotoWallImageUrlInput = document.getElementById(
+  "world-photo-wall-image-url"
+) as HTMLInputElement | null;
+const worldPhotoWallImageFileInput = document.getElementById(
+  "world-photo-wall-image-file"
+) as HTMLInputElement | null;
+const worldPhotoWallButton = document.getElementById(
+  "world-photo-wall-button"
+) as HTMLButtonElement | null;
+const worldPhotoWallsContainer = document.getElementById(
+  "world-photo-walls"
+) as HTMLDivElement | null;
+const worldPhotoWallEditor = document.getElementById(
+  "world-photo-wall-editor"
 ) as HTMLDivElement | null;
 const worldPostForm = document.getElementById("world-post-form") as HTMLFormElement | null;
 const worldPostImageUrlInput = document.getElementById(
@@ -585,6 +610,9 @@ function syncWorldVisibilityControls() {
     if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
+    if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
+    if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
+    if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = true;
     if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
     if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
     if (worldPostMessageInput) worldPostMessageInput.disabled = true;
@@ -609,6 +637,9 @@ function syncWorldVisibilityControls() {
   if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
+  if (worldPhotoWallButton) worldPhotoWallButton.disabled = !worldState.canManage;
+  if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = !worldState.canManage;
+  if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = !worldState.canManage;
   if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = !worldState.canManage;
   if (worldPostImageFileInput) worldPostImageFileInput.disabled = !worldState.canManage;
   if (worldPostMessageInput) worldPostMessageInput.disabled = !worldState.canManage;
@@ -624,6 +655,11 @@ function getWorldAssetLabel(asset: WorldAsset) {
 function getPlacementById(placementId: string | null) {
   if (!placementId || !worldState) return null;
   return worldState.placements.find((placement) => placement.id === placementId) ?? null;
+}
+
+function getPhotoWallById(photoWallId: string | null) {
+  if (!photoWallId || !worldState) return null;
+  return worldState.photoWalls.find((wall) => wall.id === photoWallId) ?? null;
 }
 
 function getWorldPostById(postId: string | null) {
@@ -779,6 +815,13 @@ async function loadCommentsForSelectedPost(force = false) {
   renderWorldPostComments();
 }
 
+function cancelPhotoWallPlacementMode() {
+  if (!isPlacingPhotoWall && !pendingPhotoWallDraft) return;
+  isPlacingPhotoWall = false;
+  pendingPhotoWallDraft = null;
+  renderWorldPhotoWalls();
+}
+
 function cancelPostPlacementMode() {
   if (!isPlacingPost && !pendingWorldPostDraft) return;
   isPlacingPost = false;
@@ -803,10 +846,13 @@ function setSelectedWorldPost(postId: string | null) {
   if (selectedWorldPostId) {
     cancelPlacementMode();
     cancelPostPlacementMode();
+    cancelPhotoWallPlacementMode();
     selectedWorldPlacementId = null;
+    selectedWorldPhotoWallId = null;
   }
   renderWorldPlacements();
   renderWorldPlacementEditor();
+  renderWorldPhotoWallEditor();
   renderWorldPosts();
   syncWorldPostFormMode();
   void loadCommentsForSelectedPost();
@@ -825,12 +871,37 @@ function setSelectedWorldPlacement(placementId: string | null) {
   if (selectedWorldPlacementId) {
     cancelPlacementMode();
     cancelPostPlacementMode();
+    cancelPhotoWallPlacementMode();
+    selectedWorldPostId = null;
+    selectedWorldPhotoWallId = null;
+  }
+  renderWorldPlacements();
+  renderWorldPlacementEditor();
+  renderWorldPhotoWallEditor();
+  renderWorldPosts();
+  syncWorldPostFormMode();
+}
+
+function setSelectedWorldPhotoWall(photoWallId: string | null) {
+  if (!worldState) {
+    selectedWorldPhotoWallId = null;
+  } else {
+    selectedWorldPhotoWallId = worldState.photoWalls.some((wall) => wall.id === photoWallId)
+      ? photoWallId
+      : null;
+  }
+  if (selectedWorldPhotoWallId) {
+    cancelPlacementMode();
+    cancelPostPlacementMode();
+    cancelPhotoWallPlacementMode();
+    selectedWorldPlacementId = null;
     selectedWorldPostId = null;
   }
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPosts();
-  syncWorldPostFormMode();
+  renderWorldPhotoWalls();
+  renderWorldPostComments();
 }
 
 function applyPlacementLocally(
@@ -1085,6 +1156,302 @@ async function deleteSelectedPlacement() {
   selectedWorldPlacementId = null;
   await loadWorldState();
   setWorldNotice("Instance deleted");
+}
+
+function applyPhotoWallLocally(photoWallId: string, nextWall: WorldPhotoWall, renderUi = true) {
+  if (!worldState) return;
+  worldState = {
+    ...worldState,
+    photoWalls: worldState.photoWalls.map((wall) => (wall.id === photoWallId ? nextWall : wall))
+  };
+  game.setWorldData(worldState);
+  if (renderUi) {
+    renderWorldPhotoWalls();
+    renderWorldPhotoWallEditor();
+  }
+}
+
+async function persistPhotoWallTransform(photoWall: WorldPhotoWall) {
+  const response = await fetch(
+    apiUrl(`/api/v1/world/photo-walls/${encodeURIComponent(photoWall.id)}`),
+    {
+      method: "PATCH",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        position: photoWall.position,
+        rotation: photoWall.rotation,
+        scale: photoWall.scale
+      })
+    }
+  );
+  if (!response.ok) {
+    setWorldNotice("Photo wall transform update failed");
+    await loadWorldState();
+  }
+}
+
+function schedulePhotoWallTransformPersist(photoWall: WorldPhotoWall, delayMs = 120) {
+  const existing = photoWallPersistTimers.get(photoWall.id);
+  if (existing !== undefined) window.clearTimeout(existing);
+  const timeoutId = window.setTimeout(() => {
+    photoWallPersistTimers.delete(photoWall.id);
+    void persistPhotoWallTransform(photoWall);
+  }, delayMs);
+  photoWallPersistTimers.set(photoWall.id, timeoutId);
+}
+
+function commitPhotoWallTransform(
+  photoWallId: string,
+  transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { x: number; y: number; z: number };
+    scale: { x: number; y: number; z: number };
+  },
+  options: { persistMode?: "immediate" | "debounced"; renderUi?: boolean } = {}
+) {
+  const current = getPhotoWallById(photoWallId);
+  if (!current) return null;
+  const nextWall: WorldPhotoWall = { ...current, ...transform };
+  applyPhotoWallLocally(photoWallId, nextWall, options.renderUi ?? true);
+  if (options.persistMode === "debounced") {
+    schedulePhotoWallTransformPersist(nextWall);
+  } else {
+    const existing = photoWallPersistTimers.get(nextWall.id);
+    if (existing !== undefined) {
+      window.clearTimeout(existing);
+      photoWallPersistTimers.delete(nextWall.id);
+    }
+    void persistPhotoWallTransform(nextWall);
+  }
+  return nextWall;
+}
+
+async function deleteSelectedPhotoWall() {
+  const wall = getPhotoWallById(selectedWorldPhotoWallId);
+  if (!wall || !worldState?.canManage) return;
+  const response = await fetch(
+    apiUrl(`/api/v1/world/photo-walls/${encodeURIComponent(wall.id)}`),
+    { method: "DELETE", credentials: "include" }
+  );
+  if (!response.ok) {
+    setWorldNotice("Photo wall delete failed");
+    return;
+  }
+  selectedWorldPhotoWallId = null;
+  await loadWorldState();
+  setWorldNotice("Photo wall deleted");
+}
+
+function renderWorldPhotoWalls() {
+  if (!worldPhotoWallsContainer) return;
+  worldPhotoWallsContainer.innerHTML = "";
+  const walls = worldState?.photoWalls ?? [];
+  if (walls.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "No photo walls placed";
+    worldPhotoWallsContainer.appendChild(empty);
+    return;
+  }
+  for (const wall of walls) {
+    const row = document.createElement("div");
+    row.className = "world-placement-row";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "world-placement-select";
+    if (wall.id === selectedWorldPhotoWallId) button.classList.add("active");
+    button.textContent = `Photo Wall • ${wall.id.slice(0, 8)}`;
+    button.title = `Position: ${wall.position.x.toFixed(2)}, ${wall.position.y.toFixed(2)}, ${wall.position.z.toFixed(2)}`;
+    button.addEventListener("click", () => setSelectedWorldPhotoWall(wall.id));
+    row.appendChild(button);
+    worldPhotoWallsContainer.appendChild(row);
+  }
+}
+
+function renderWorldPhotoWallEditor() {
+  if (!worldPhotoWallEditor) return;
+  worldPhotoWallEditor.innerHTML = "";
+  if (!worldState) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Sign in to edit photo walls";
+    worldPhotoWallEditor.appendChild(empty);
+    return;
+  }
+  const selectedWall = getPhotoWallById(selectedWorldPhotoWallId);
+  if (!selectedWall) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Select a photo wall from the list or world";
+    worldPhotoWallEditor.appendChild(empty);
+    return;
+  }
+
+  const canEdit = worldState.canManage;
+  const radToDeg = (value: number) => (value * 180) / Math.PI;
+  const degToRad = (value: number) => (value * Math.PI) / 180;
+
+  const heading = document.createElement("div");
+  heading.className = "party-result-label";
+  heading.textContent = `Photo Wall • ${selectedWall.id.slice(0, 8)}`;
+  worldPhotoWallEditor.appendChild(heading);
+
+  const actions = document.createElement("div");
+  actions.className = "world-placement-editor-actions";
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "party-secondary-button";
+  deleteButton.textContent = "Delete";
+  deleteButton.disabled = !canEdit;
+  deleteButton.addEventListener("click", () => void deleteSelectedPhotoWall());
+  actions.appendChild(deleteButton);
+  worldPhotoWallEditor.appendChild(actions);
+
+  const buildAxisRow = (opts: {
+    group: "position" | "rotation" | "scale";
+    axis: "x" | "y" | "z";
+    value: number;
+    inputStep: string;
+    sliderMin: number;
+    sliderMax: number;
+    sliderStep: number;
+    sliderMode: "absolute" | "delta";
+  }) => {
+    const row = document.createElement("div");
+    row.className = "world-placement-axis-row";
+    const label = document.createElement("span");
+    label.className = "world-placement-axis-label";
+    label.textContent = opts.axis.toUpperCase();
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "world-placement-axis-input";
+    input.step = opts.inputStep;
+    input.disabled = !canEdit;
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "world-placement-axis-slider";
+    slider.min = String(opts.sliderMin);
+    slider.max = String(opts.sliderMax);
+    slider.step = String(opts.sliderStep);
+    slider.disabled = !canEdit;
+    if (opts.group === "rotation") {
+      input.value = radToDeg(opts.value).toFixed(1);
+      slider.value = String(Math.max(opts.sliderMin, Math.min(opts.sliderMax, radToDeg(opts.value))));
+    } else {
+      input.value = opts.value.toFixed(2);
+      slider.value = opts.sliderMode === "delta" ? "0" : String(opts.value);
+    }
+    let lastSliderValue = Number(slider.value);
+
+    input.addEventListener("change", () => {
+      const parsed = Number(input.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPhotoWallById(selectedWorldPhotoWallId);
+      if (!latest) return;
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+      if (opts.group === "position") position[opts.axis] = parsed;
+      if (opts.group === "rotation") rotation[opts.axis] = degToRad(parsed);
+      if (opts.group === "scale") scale[opts.axis] = Math.max(0.01, parsed);
+      commitPhotoWallTransform(latest.id, { position, rotation, scale }, { persistMode: "immediate", renderUi: true });
+    });
+
+    slider.addEventListener("input", () => {
+      const parsed = Number(slider.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPhotoWallById(selectedWorldPhotoWallId);
+      if (!latest) return;
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+      if (opts.sliderMode === "absolute") {
+        if (opts.group === "rotation") rotation[opts.axis] = degToRad(parsed);
+        else if (opts.group === "position") position[opts.axis] = parsed;
+        else scale[opts.axis] = Math.max(0.01, parsed);
+      } else {
+        const delta = parsed - lastSliderValue;
+        if (Math.abs(delta) <= 0.00001) return;
+        if (opts.group === "position") position[opts.axis] += delta;
+        else scale[opts.axis] = Math.max(0.01, scale[opts.axis] + delta);
+      }
+      const updated = commitPhotoWallTransform(
+        latest.id,
+        { position, rotation, scale },
+        { persistMode: "debounced", renderUi: false }
+      );
+      if (!updated) return;
+      if (opts.group === "rotation") input.value = radToDeg(updated.rotation[opts.axis]).toFixed(1);
+      else if (opts.group === "position") input.value = updated.position[opts.axis].toFixed(2);
+      else input.value = updated.scale[opts.axis].toFixed(2);
+      lastSliderValue = parsed;
+    });
+
+    slider.addEventListener("change", () => {
+      const parsed = Number(slider.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPhotoWallById(selectedWorldPhotoWallId);
+      if (!latest) return;
+      if (opts.sliderMode === "delta") {
+        commitPhotoWallTransform(
+          latest.id,
+          {
+            position: { ...latest.position },
+            rotation: { ...latest.rotation },
+            scale: { ...latest.scale }
+          },
+          { persistMode: "immediate", renderUi: true }
+        );
+        slider.value = "0";
+        lastSliderValue = 0;
+        return;
+      }
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+      if (opts.group === "rotation") rotation[opts.axis] = degToRad(parsed);
+      else if (opts.group === "position") position[opts.axis] = parsed;
+      else scale[opts.axis] = Math.max(0.01, parsed);
+      commitPhotoWallTransform(latest.id, { position, rotation, scale }, { persistMode: "immediate", renderUi: true });
+    });
+
+    row.appendChild(label);
+    row.appendChild(input);
+    row.appendChild(slider);
+    return row;
+  };
+
+  const buildGroup = (titleText: string) => {
+    const group = document.createElement("div");
+    group.className = "world-placement-group";
+    const title = document.createElement("div");
+    title.className = "world-placement-group-title";
+    title.textContent = titleText;
+    group.appendChild(title);
+    return group;
+  };
+
+  const positionGroup = buildGroup("Position");
+  const rotationGroup = buildGroup("Rotation (Degrees)");
+  const scaleGroup = buildGroup("Scale");
+  (["x", "y", "z"] as const).forEach((axis) => {
+    positionGroup.appendChild(buildAxisRow({
+      group: "position", axis, value: selectedWall.position[axis], inputStep: "0.01",
+      sliderMin: -1.5, sliderMax: 1.5, sliderStep: 0.05, sliderMode: "delta"
+    }));
+    rotationGroup.appendChild(buildAxisRow({
+      group: "rotation", axis, value: selectedWall.rotation[axis], inputStep: "1",
+      sliderMin: -180, sliderMax: 180, sliderStep: 1, sliderMode: "absolute"
+    }));
+    scaleGroup.appendChild(buildAxisRow({
+      group: "scale", axis, value: selectedWall.scale[axis], inputStep: "0.01",
+      sliderMin: -0.5, sliderMax: 0.5, sliderStep: 0.02, sliderMode: "delta"
+    }));
+  });
+  worldPhotoWallEditor.appendChild(positionGroup);
+  worldPhotoWallEditor.appendChild(rotationGroup);
+  worldPhotoWallEditor.appendChild(scaleGroup);
 }
 
 function renderWorldPlacements() {
@@ -1564,16 +1931,21 @@ async function loadWorldState() {
     worldState = null;
     worldGenerationTasks = [];
     selectedWorldPlacementId = null;
+    selectedWorldPhotoWallId = null;
     selectedWorldPostId = null;
     pendingSelectedWorldPlacementId = null;
+    pendingSelectedWorldPhotoWallId = null;
     pendingSelectedWorldPostId = null;
     editingWorldPostId = null;
     worldPostComments = [];
     worldPostCommentsForPostId = null;
     worldPostCommentsLoading = false;
     isPlacingPost = false;
+    isPlacingPhotoWall = false;
+    isSubmittingPhotoWallPlacement = false;
     isSubmittingWorldPostPlacement = false;
     pendingWorldPostDraft = null;
+    pendingPhotoWallDraft = null;
     stopWorldGenerationPolling();
     game.setWorldData(null);
     game.setPendingWorldPostPlacement(null);
@@ -1581,6 +1953,8 @@ async function loadWorldState() {
     if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
     if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
     if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
+    if (worldPhotoWallsContainer) worldPhotoWallsContainer.innerHTML = "";
+    if (worldPhotoWallEditor) worldPhotoWallEditor.innerHTML = "";
     if (worldPostsContainer) worldPostsContainer.innerHTML = "";
     if (worldPostCommentsContainer) worldPostCommentsContainer.innerHTML = "";
     setWorldPostCommentsStatus("Select a post to view comments");
@@ -1592,6 +1966,9 @@ async function loadWorldState() {
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
+    if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
+    if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
+    if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = true;
     if (worldPostButton) worldPostButton.disabled = true;
     if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
     if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
@@ -1601,6 +1978,8 @@ async function loadWorldState() {
     syncWorldPostFormMode();
     syncWorldVisibilityControls();
     renderWorldPostComments();
+    renderWorldPhotoWalls();
+    renderWorldPhotoWallEditor();
     return;
   }
 
@@ -1617,8 +1996,10 @@ async function loadWorldState() {
   const payload = (await response.json()) as WorldState;
   worldState = payload;
   const requestedPlacementId = pendingSelectedWorldPlacementId ?? selectedWorldPlacementId;
+  const requestedPhotoWallId = pendingSelectedWorldPhotoWallId ?? selectedWorldPhotoWallId;
   const requestedPostId = pendingSelectedWorldPostId ?? selectedWorldPostId;
   pendingSelectedWorldPlacementId = null;
+  pendingSelectedWorldPhotoWallId = null;
   pendingSelectedWorldPostId = null;
   selectedWorldPlacementId =
     requestedPlacementId &&
@@ -1628,6 +2009,10 @@ async function loadWorldState() {
   selectedWorldPostId =
     requestedPostId && payload.posts.some((post) => post.id === requestedPostId)
       ? requestedPostId
+      : null;
+  selectedWorldPhotoWallId =
+    requestedPhotoWallId && payload.photoWalls.some((wall) => wall.id === requestedPhotoWallId)
+      ? requestedPhotoWallId
       : null;
   if (editingWorldPostId && !payload.posts.some((post) => post.id === editingWorldPostId)) {
     editingWorldPostId = null;
@@ -1654,6 +2039,9 @@ async function loadWorldState() {
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !payload.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
+  if (worldPhotoWallButton) worldPhotoWallButton.disabled = !payload.canManage;
+  if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = !payload.canManage;
+  if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = !payload.canManage;
   if (worldPostButton) worldPostButton.disabled = !payload.canManage;
   if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = !payload.canManage;
   if (worldPostImageFileInput) worldPostImageFileInput.disabled = !payload.canManage;
@@ -1664,7 +2052,7 @@ async function loadWorldState() {
   setWorldNotice(
     `${payload.worldName} • ${worldOwnerLabel} • ${payload.isPublic ? "Public" : "Private"} • ${
       payload.assets.length
-    } models • ${payload.placements.length} placements • ${payload.posts.length} posts`
+    } models • ${payload.placements.length} placements • ${payload.photoWalls.length} walls • ${payload.posts.length} posts`
   );
 
   syncWorldVisibilityControls();
@@ -1672,8 +2060,10 @@ async function loadWorldState() {
   void loadWorldGenerationTasks();
   renderWorldAssets();
   renderWorldPlacements();
+  renderWorldPhotoWalls();
   renderWorldPosts();
   renderWorldPlacementEditor();
+  renderWorldPhotoWallEditor();
   syncWorldPostFormMode();
   void loadCommentsForSelectedPost(true);
 }
@@ -1712,6 +2102,8 @@ function renderWorldAssets() {
 
     const startPlacement = () => {
       if (!worldState?.canManage) return;
+      cancelPhotoWallPlacementMode();
+      selectedWorldPhotoWallId = null;
       cancelPostPlacementMode();
       selectedWorldPostId = null;
       selectedPlacementAssetId = asset.id;
@@ -1871,6 +2263,9 @@ const game = createGameScene({
   onWorldPlacementSelect(placementId) {
     setSelectedWorldPlacement(placementId);
   },
+  onWorldPhotoWallSelect(photoWallId) {
+    setSelectedWorldPhotoWall(photoWallId);
+  },
   onWorldPostSelect(postId) {
     setSelectedWorldPost(postId);
   },
@@ -1886,6 +2281,79 @@ const game = createGameScene({
     if (worldPostCommentsContainer) {
       worldPostCommentsContainer.scrollIntoView({ block: "nearest" });
     }
+  },
+  onWorldPhotoWallPlacementRequest(position) {
+    if (!worldState?.canManage || !isPlacingPhotoWall || isSubmittingPhotoWallPlacement) {
+      return false;
+    }
+    if (!pendingPhotoWallDraft) return false;
+
+    const draft = pendingPhotoWallDraft;
+    const targetPosition = {
+      x: position.x,
+      y: Math.max(0.8, position.y + 1.2),
+      z: position.z
+    };
+    isPlacingPhotoWall = false;
+    isSubmittingPhotoWallPlacement = true;
+    pendingPhotoWallDraft = null;
+    renderWorldPhotoWalls();
+
+    void (async () => {
+      try {
+        const response = draft.imageFile
+          ? await (async () => {
+              const imageFile = draft.imageFile;
+              if (!imageFile) throw new Error("Missing image file");
+              const formData = new FormData();
+              formData.set("file", imageFile);
+              formData.set("positionX", String(targetPosition.x));
+              formData.set("positionY", String(targetPosition.y));
+              formData.set("positionZ", String(targetPosition.z));
+              formData.set("rotationX", "0");
+              formData.set("rotationY", "0");
+              formData.set("rotationZ", "0");
+              formData.set("scaleX", "1.6");
+              formData.set("scaleY", "1.2");
+              formData.set("scaleZ", "0.05");
+              return fetch(apiUrl("/api/v1/world/photo-walls"), {
+                method: "POST",
+                credentials: "include",
+                body: formData
+              });
+            })()
+          : await fetch(apiUrl("/api/v1/world/photo-walls"), {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                imageUrl: draft.imageUrl,
+                position: targetPosition,
+                rotation: { x: 0, y: 0, z: 0 },
+                scale: { x: 1.6, y: 1.2, z: 0.05 }
+              })
+            });
+
+        if (!response.ok) {
+          setWorldNotice("Photo wall placement failed");
+          return;
+        }
+        const payload = (await response.json().catch(() => null)) as
+          | { photoWallId?: string }
+          | null;
+        pendingSelectedWorldPhotoWallId = payload?.photoWallId ?? null;
+        if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.value = "";
+        if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.value = "";
+        await loadWorldState();
+        setWorldNotice("Photo wall placed");
+      } catch {
+        setWorldNotice("Photo wall placement failed");
+      } finally {
+        isSubmittingPhotoWallPlacement = false;
+      }
+    })();
+
+    return true;
   },
   onWorldPostPlacementRequest(position) {
     if (!worldState?.canManage || !isPlacingPost || isSubmittingWorldPostPlacement) {
@@ -2096,14 +2564,19 @@ const auth = createAuthController({
       worldGenerationTasks = [];
       stopWorldGenerationPolling();
       isPlacingModel = false;
+      isPlacingPhotoWall = false;
+      isSubmittingPhotoWallPlacement = false;
       isPlacingPost = false;
       isSubmittingWorldPostPlacement = false;
       selectedPlacementAssetId = null;
+      pendingPhotoWallDraft = null;
       pendingWorldPostDraft = null;
       editingWorldPostId = null;
       selectedWorldPlacementId = null;
+      selectedWorldPhotoWallId = null;
       selectedWorldPostId = null;
       pendingSelectedWorldPlacementId = null;
+      pendingSelectedWorldPhotoWallId = null;
       pendingSelectedWorldPostId = null;
       worldPostComments = [];
       worldPostCommentsForPostId = null;
@@ -2113,11 +2586,16 @@ const auth = createAuthController({
       setWorldNotice("Sign in to load world");
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
       if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
+      if (worldPhotoWallsContainer) worldPhotoWallsContainer.innerHTML = "";
       if (worldPostsContainer) worldPostsContainer.innerHTML = "";
       if (worldPostCommentsContainer) worldPostCommentsContainer.innerHTML = "";
       if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
+      if (worldPhotoWallEditor) worldPhotoWallEditor.innerHTML = "";
       if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
       if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
+      if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
+      if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
+      if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = true;
       if (worldPostButton) worldPostButton.disabled = true;
       if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
       if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
@@ -2126,6 +2604,8 @@ const auth = createAuthController({
       if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
       syncWorldPostFormMode();
       renderWorldPostComments();
+      renderWorldPhotoWalls();
+      renderWorldPhotoWallEditor();
       syncWorldVisibilityControls();
       return;
     }
@@ -2487,6 +2967,33 @@ worldUploadForm?.addEventListener("submit", (event) => {
   })();
 });
 
+worldPhotoWallForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!worldState?.canManage) {
+    setWorldNotice("Only world owners/managers can modify this world");
+    return;
+  }
+  const imageUrl = worldPhotoWallImageUrlInput?.value.trim() ?? "";
+  const imageFile = worldPhotoWallImageFileInput?.files?.[0] ?? null;
+  if (!imageUrl && !imageFile) {
+    setWorldNotice("Enter an image URL or choose an image file");
+    return;
+  }
+  cancelPlacementMode();
+  cancelPostPlacementMode();
+  selectedWorldPlacementId = null;
+  selectedWorldPostId = null;
+  selectedWorldPhotoWallId = null;
+  pendingPhotoWallDraft = { imageUrl: imageUrl || null, imageFile };
+  isPlacingPhotoWall = true;
+  setWorldNotice("Photo wall placement mode: click the floor to place.");
+  renderWorldPlacements();
+  renderWorldPosts();
+  renderWorldPhotoWalls();
+  renderWorldPlacementEditor();
+  renderWorldPhotoWallEditor();
+});
+
 worldPostForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!worldState?.canManage) {
@@ -2639,6 +3146,9 @@ if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
 if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
 if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
 if (worldGenerateButton) worldGenerateButton.disabled = true;
+if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
+if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
+if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = true;
 if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = true;
 if (worldPostImageFileInput) worldPostImageFileInput.disabled = true;
 if (worldPostMessageInput) worldPostMessageInput.disabled = true;
@@ -2651,9 +3161,11 @@ if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
 syncWorldVisibilityControls();
 syncWorldPostFormMode();
 renderWorldPlacements();
+renderWorldPhotoWalls();
 renderWorldPosts();
 renderWorldPostComments();
 renderWorldPlacementEditor();
+renderWorldPhotoWallEditor();
 void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();
