@@ -2281,11 +2281,8 @@ const game = createGameScene({
     setSelectedWorldPlacement(placementId);
   },
   onWorldPhotoWallSelect(photoWallId) {
-    setPanelMinimized(dockPanel, dockMinimizeButton, "panel", false);
-    setActiveMainTab?.("party");
-    setActivePartySubtab?.("walls");
     setSelectedWorldPhotoWall(photoWallId);
-    if (worldPhotoWallEditor) {
+    if (worldPhotoWallEditor && !dockPanel?.classList.contains("minimized")) {
       worldPhotoWallEditor.scrollIntoView({ block: "nearest" });
     }
   },
