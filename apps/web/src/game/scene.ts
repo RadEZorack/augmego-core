@@ -684,7 +684,7 @@ export function createGameScene(options: GameSceneOptions) {
     group.userData = { photoWallId: photoWall.id, type: "world-photo-wall" };
 
     const backing = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 0.75, 0.05),
+      new THREE.BoxGeometry(1, 0.75, 0.02),
       new THREE.MeshStandardMaterial({
         color: 0x0f1727,
         roughness: 0.75,
