@@ -1029,10 +1029,6 @@ async function saveWorldPostEdit() {
     setWorldNotice("Post message is required");
     return;
   }
-  if (!imageFile && !imageUrlInput) {
-    setWorldNotice("Provide an image URL or choose an image file");
-    return;
-  }
 
   if (imageFile) {
     const uploaded = await replaceWorldPostImage(post.id, imageFile);
@@ -3036,10 +3032,6 @@ worldPostForm?.addEventListener("submit", (event) => {
   const imageUrl = worldPostImageUrlInput?.value.trim() ?? "";
   const imageFile = worldPostImageFileInput?.files?.[0] ?? null;
   const message = worldPostMessageInput?.value.trim() ?? "";
-  if (!imageUrl && !imageFile) {
-    setWorldNotice("Enter an image URL or choose an image file");
-    return;
-  }
   if (!message) {
     setWorldNotice("Enter a post message first");
     return;

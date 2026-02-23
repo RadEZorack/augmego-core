@@ -779,9 +779,20 @@ export function createGameScene(options: GameSceneOptions) {
   }
 
   function createWorldPostBillboard(post: WorldPost) {
+    const hasImage = post.imageUrl.trim().length > 0;
+    const expandedCanvasHeight = hasImage ? 740 : 560;
+    const messageStartY = hasImage ? 396 : 112;
+    const commentsTop = hasImage ? 500 : 332;
+    const commentsButtonRect = {
+      x: 380,
+      y: hasImage ? 662 : 486,
+      width: 236,
+      height: 52
+    };
+
     const canvas = document.createElement("canvas");
     canvas.width = 640;
-    canvas.height = post.isMinimized ? 120 : 740;
+    canvas.height = post.isMinimized ? 120 : expandedCanvasHeight;
     const ctx = canvas.getContext("2d");
     if (!ctx) {
       throw new Error("Unable to create post billboard canvas context");
@@ -801,7 +812,9 @@ export function createGameScene(options: GameSceneOptions) {
     const sprite = new THREE.Sprite(material);
     sprite.position.set(0, 0, 0);
     sprite.renderOrder = 9;
-    sprite.scale.set(post.isMinimized ? 2.8 : 3.8, post.isMinimized ? 0.55 : 4.2, 1);
+    const expandedScaleY = 4.2 * (expandedCanvasHeight / 740);
+    const expandedScaleX = 3.8;
+    sprite.scale.set(post.isMinimized ? 2.8 : expandedScaleX, post.isMinimized ? 0.55 : expandedScaleY, 1);
     sprite.userData = { postId: post.id, type: "world-post-body" };
     group.add(sprite);
 
@@ -822,10 +835,15 @@ export function createGameScene(options: GameSceneOptions) {
         height: 64,
         fontSize: 20
       });
-      commentsButton.position.set(0.65, -1.88, 0.01);
+      const commentsButtonCenterX = commentsButtonRect.x + commentsButtonRect.width / 2;
+      const commentsButtonCenterY = commentsButtonRect.y + commentsButtonRect.height / 2;
+      commentsButton.position.set(
+        ((commentsButtonCenterX / canvas.width) - 0.5) * expandedScaleX,
+        (0.5 - commentsButtonCenterY / expandedCanvasHeight) * expandedScaleY,
+        0.01
+      );
       group.add(commentsButton);
     }
-
     let image: HTMLImageElement | null = null;
     let imageReady = false;
 
@@ -856,48 +874,61 @@ export function createGameScene(options: GameSceneOptions) {
         return;
       }
 
-      drawRoundedRect(ctx, 24, 70, canvas.width - 48, 300, 18);
-      ctx.fillStyle = "rgba(19, 29, 45, 0.95)";
-      ctx.fill();
-
-      if (image && imageReady) {
-        const srcWidth = image.naturalWidth || 1;
-        const srcHeight = image.naturalHeight || 1;
-        const targetX = 24;
-        const targetY = 70;
-        const targetW = canvas.width - 48;
-        const targetH = 300;
-        const scale = Math.max(targetW / srcWidth, targetH / srcHeight);
-        const drawW = srcWidth * scale;
-        const drawH = srcHeight * scale;
-        const dx = targetX + (targetW - drawW) / 2;
-        const dy = targetY + (targetH - drawH) / 2;
-        ctx.save();
+      if (hasImage) {
         drawRoundedRect(ctx, 24, 70, canvas.width - 48, 300, 18);
-        ctx.clip();
-        ctx.drawImage(image, dx, dy, drawW, drawH);
-        ctx.restore();
-      } else {
-        ctx.fillStyle = "rgba(34, 50, 76, 1)";
-        ctx.fillRect(24, 70, canvas.width - 48, 300);
-        ctx.fillStyle = "rgba(232, 245, 255, 0.75)";
-        ctx.font = "500 22px Space Grotesk, sans-serif";
-        ctx.textAlign = "center";
-        ctx.fillText("Loading image...", canvas.width / 2, 220);
-        ctx.textAlign = "left";
+        ctx.fillStyle = "rgba(19, 29, 45, 0.95)";
+        ctx.fill();
+
+        if (image && imageReady) {
+          const srcWidth = image.naturalWidth || 1;
+          const srcHeight = image.naturalHeight || 1;
+          const targetX = 24;
+          const targetY = 70;
+          const targetW = canvas.width - 48;
+          const targetH = 300;
+          const scale = Math.max(targetW / srcWidth, targetH / srcHeight);
+          const drawW = srcWidth * scale;
+          const drawH = srcHeight * scale;
+          const dx = targetX + (targetW - drawW) / 2;
+          const dy = targetY + (targetH - drawH) / 2;
+          ctx.save();
+          drawRoundedRect(ctx, 24, 70, canvas.width - 48, 300, 18);
+          ctx.clip();
+          ctx.drawImage(image, dx, dy, drawW, drawH);
+          ctx.restore();
+        } else {
+          ctx.fillStyle = "rgba(34, 50, 76, 1)";
+          ctx.fillRect(24, 70, canvas.width - 48, 300);
+          ctx.fillStyle = "rgba(232, 245, 255, 0.75)";
+          ctx.font = "500 22px Space Grotesk, sans-serif";
+          ctx.textAlign = "center";
+          ctx.fillText("Loading image...", canvas.width / 2, 220);
+          ctx.textAlign = "left";
+        }
       }
 
-      const maxWidth = canvas.width - 64;
-      const lineHeight = 30;
-      let y = 396;
+      if (!hasImage) {
+        drawRoundedRect(ctx, 24, 74, canvas.width - 48, 208, 18);
+        ctx.fillStyle = "rgba(16, 27, 42, 0.92)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(123, 201, 255, 0.2)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      const maxWidth = hasImage ? canvas.width - 64 : canvas.width - 84;
+      const lineHeight = hasImage ? 30 : 34;
+      let y = messageStartY;
       ctx.fillStyle = "#f3fbff";
-      ctx.font = "500 24px Space Grotesk, sans-serif";
-      for (const line of wrapText(ctx, post.message, maxWidth, 3)) {
-        ctx.fillText(line, 32, y);
+      ctx.font = hasImage
+        ? "500 24px Space Grotesk, sans-serif"
+        : "600 28px Space Grotesk, sans-serif";
+      const messageX = hasImage ? 32 : 42;
+      for (const line of wrapText(ctx, post.message, maxWidth, hasImage ? 3 : 5)) {
+        ctx.fillText(line, messageX, y);
         y += lineHeight;
       }
 
-      const commentsTop = 500;
       drawRoundedRect(ctx, 24, commentsTop - 28, canvas.width - 48, 162, 16);
       ctx.fillStyle = "rgba(11, 20, 33, 0.9)";
       ctx.fill();
@@ -956,7 +987,14 @@ export function createGameScene(options: GameSceneOptions) {
         }
       }
 
-      drawRoundedRect(ctx, 380, 662, 236, 52, 14);
+      drawRoundedRect(
+        ctx,
+        commentsButtonRect.x,
+        commentsButtonRect.y,
+        commentsButtonRect.width,
+        commentsButtonRect.height,
+        14
+      );
       ctx.fillStyle = "rgba(18, 40, 61, 0.95)";
       ctx.fill();
       ctx.strokeStyle = "rgba(123, 201, 255, 0.45)";
@@ -967,8 +1005,8 @@ export function createGameScene(options: GameSceneOptions) {
       ctx.font = "600 19px Space Grotesk, sans-serif";
       ctx.fillText(
         post.commentCount > 5 ? "Show more comments" : "Open comments",
-        498,
-        688
+        commentsButtonRect.x + commentsButtonRect.width / 2,
+        commentsButtonRect.y + commentsButtonRect.height / 2
       );
       ctx.textAlign = "left";
 
@@ -1018,17 +1056,19 @@ export function createGameScene(options: GameSceneOptions) {
 
     draw();
 
-    image = new Image();
-    image.crossOrigin = "anonymous";
-    image.onload = () => {
-      imageReady = true;
-      draw();
-    };
-    image.onerror = () => {
-      imageReady = false;
-      draw();
-    };
-    image.src = post.imageUrl;
+    if (hasImage) {
+      image = new Image();
+      image.crossOrigin = "anonymous";
+      image.onload = () => {
+        imageReady = true;
+        draw();
+      };
+      image.onerror = () => {
+        imageReady = false;
+        draw();
+      };
+      image.src = post.imageUrl;
+    }
 
     return group;
   }
@@ -1261,13 +1301,19 @@ export function createGameScene(options: GameSceneOptions) {
         const post = worldState?.posts.find((item) => item.id === postIdFromHit) ?? null;
         if (post && !post.isMinimized) {
           const canvasW = 640;
-          const canvasH = 740;
+          const hasImage = post.imageUrl.trim().length > 0;
+          const canvasH = hasImage ? 740 : 560;
+          const buttonX = 380;
+          const buttonY = hasImage ? 662 : 486;
+          const buttonW = 236;
+          const buttonH = 52;
           const px = uv.x * canvasW;
           const pyA = uv.y * canvasH;
           const pyB = (1 - uv.y) * canvasH;
-          const inButtonX = px >= 380 && px <= 616;
+          const inButtonX = px >= buttonX && px <= buttonX + buttonW;
           const inButtonY =
-            (pyA >= 662 && pyA <= 714) || (pyB >= 662 && pyB <= 714);
+            (pyA >= buttonY && pyA <= buttonY + buttonH) ||
+            (pyB >= buttonY && pyB <= buttonY + buttonH);
           if (inButtonX && inButtonY) {
             options.onWorldPostOpenComments?.(postIdFromHit);
             return;

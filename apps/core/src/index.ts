@@ -1732,7 +1732,7 @@ const api = new Elysia({ prefix: "/api/v1" })
                 }
               }
             },
-            orderBy: { createdAt: "asc" },
+            orderBy: { createdAt: "desc" },
             take: 5
           }
         },
@@ -1820,7 +1820,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         },
         isMinimized: post.isMinimized,
         commentCount: post._count.comments,
-        commentPreview: post.comments.map((comment) => ({
+        commentPreview: [...post.comments].reverse().map((comment) => ({
           id: comment.id,
           postId: comment.postId,
           message: comment.message,
@@ -2684,11 +2684,13 @@ const api = new Elysia({ prefix: "/api/v1" })
     const payload = (await request.json().catch(() => null)) as
       | Record<string, unknown>
       | null;
-    const imageUrl = normalizeWorldPostImageUrl(payload?.imageUrl);
+    const imageUrl =
+      payload && Object.prototype.hasOwnProperty.call(payload, "imageUrl")
+        ? (typeof payload.imageUrl === "string"
+            ? (normalizeWorldPostImageUrl(payload.imageUrl) ?? "")
+            : "")
+        : "";
     const message = normalizeWorldPostMessage(payload?.message);
-    if (!imageUrl) {
-      return jsonResponse({ error: "IMAGE_URL_REQUIRED" }, { status: 400 });
-    }
     if (!message) {
       return jsonResponse({ error: "MESSAGE_REQUIRED" }, { status: 400 });
     }
@@ -2752,7 +2754,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         : null;
     const imageUrl =
       typeof payload?.imageUrl === "string"
-        ? normalizeWorldPostImageUrl(payload.imageUrl)
+        ? (normalizeWorldPostImageUrl(payload.imageUrl) ?? "")
         : null;
 
     await prisma.worldPost.update({
@@ -2769,7 +2771,7 @@ const api = new Elysia({ prefix: "/api/v1" })
           ? { isMinimized: payload.isMinimized }
           : {}),
         ...(message ? { message } : {}),
-        ...(imageUrl
+        ...(imageUrl !== null
           ? { imageUrl, imageStorageKey: null, imageContentType: null }
           : {})
       }
