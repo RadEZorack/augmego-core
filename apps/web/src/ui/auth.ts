@@ -1,4 +1,8 @@
 import type { CurrentUser } from "../lib/types";
+import {
+  PENDING_WORLD_JOIN_STORAGE_KEY,
+  parseWorldIdFromUrl
+} from "../lib/urls";
 
 type AuthElements = {
   loginMenu: HTMLElement | null;
@@ -120,6 +124,17 @@ export function createAuthController(options: AuthControllerOptions) {
       logoutButton
     } = options.elements;
 
+    const persistPendingWorldJoin = () => {
+      try {
+        const worldId = parseWorldIdFromUrl(new URL(window.location.href));
+        if (worldId) {
+          window.sessionStorage.setItem(PENDING_WORLD_JOIN_STORAGE_KEY, worldId);
+        }
+      } catch {
+        // Ignore storage/url parsing failures and continue login flow.
+      }
+    };
+
     if (loginToggleButton) {
       loginToggleButton.addEventListener("click", () => {
         setMenuExpanded(!menuExpanded);
@@ -140,6 +155,7 @@ export function createAuthController(options: AuthControllerOptions) {
     if (loginLinkedinButton) {
       loginLinkedinButton.addEventListener("click", () => {
         setMenuExpanded(false);
+        persistPendingWorldJoin();
         window.location.href = options.apiUrl("/api/v1/auth/linkedin");
       });
     }
@@ -147,6 +163,7 @@ export function createAuthController(options: AuthControllerOptions) {
     if (loginGoogleButton) {
       loginGoogleButton.addEventListener("click", () => {
         setMenuExpanded(false);
+        persistPendingWorldJoin();
         window.location.href = options.apiUrl("/api/v1/auth/google");
       });
     }
@@ -154,6 +171,7 @@ export function createAuthController(options: AuthControllerOptions) {
     if (loginAppleButton) {
       loginAppleButton.addEventListener("click", () => {
         setMenuExpanded(false);
+        persistPendingWorldJoin();
         window.location.href = options.apiUrl("/api/v1/auth/apple");
       });
     }

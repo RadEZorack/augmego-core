@@ -2,7 +2,12 @@
 import "./style.css";
 
 import { createGameScene } from "./game/scene";
-import { createApiUrlResolver, resolveWsUrl } from "./lib/urls";
+import {
+  createApiUrlResolver,
+  PENDING_WORLD_JOIN_STORAGE_KEY,
+  parseWorldIdFromUrl,
+  resolveWsUrl
+} from "./lib/urls";
 import type {
   ChatMessage,
   CurrentUser,
@@ -86,6 +91,22 @@ const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
 
 const apiUrl = createApiUrlResolver(apiBase);
+
+function readInitialLinkedWorldId() {
+  try {
+    const worldIdFromUrl = parseWorldIdFromUrl(new URL(window.location.href));
+    if (worldIdFromUrl) {
+      window.sessionStorage.setItem(PENDING_WORLD_JOIN_STORAGE_KEY, worldIdFromUrl);
+      return worldIdFromUrl;
+    }
+
+    const storedWorldId =
+      window.sessionStorage.getItem(PENDING_WORLD_JOIN_STORAGE_KEY)?.trim() ?? "";
+    return storedWorldId || null;
+  } catch {
+    return null;
+  }
+}
 
 type DockHeightState = "quarter" | "half" | "full";
 type PartySubtabKey = "world" | "objects" | "posts" | "walls";
@@ -284,6 +305,9 @@ const chatToggleGlobalButton = document.getElementById(
 const chatToggleWorldButton = document.getElementById(
   "chat-toggle-world"
 ) as HTMLButtonElement | null;
+const shareWorldLinkButton = document.getElementById(
+  "share-world-link-button"
+) as HTMLButtonElement | null;
 
 let selfClientId: string | null = null;
 let partyState: PartyState = {
@@ -319,6 +343,8 @@ let worldPostCommentsForPostId: string | null = null;
 let worldPostCommentsLoading = false;
 const placementPersistTimers = new Map<string, number>();
 const photoWallPersistTimers = new Map<string, number>();
+let pendingAutoJoinWorldId = readInitialLinkedWorldId();
+let autoJoinWorldIdSent: string | null = null;
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
@@ -476,6 +502,52 @@ function inviteClient(clientId: string) {
 function setWorldNotice(message: string) {
   if (!worldStatus) return;
   worldStatus.textContent = message;
+}
+
+function buildShareWorldLink(worldId: string) {
+  const url = new URL(window.location.origin);
+  url.searchParams.set("worldId", worldId);
+  return url.toString();
+}
+
+function syncShareWorldLinkButton() {
+  if (!shareWorldLinkButton) return;
+  const canShare = Boolean(auth.getCurrentUser() && worldState?.worldId);
+  shareWorldLinkButton.hidden = !canShare;
+  shareWorldLinkButton.disabled = !canShare;
+  shareWorldLinkButton.title = canShare
+    ? "Copy world link"
+    : "Sign in and load a world to share";
+}
+
+async function copyCurrentWorldLink() {
+  if (!worldState?.worldId) {
+    setWorldNotice("Load a world before sharing");
+    return;
+  }
+
+  const shareUrl = buildShareWorldLink(worldState.worldId);
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(shareUrl);
+    } else {
+      const textArea = document.createElement("textarea");
+      textArea.value = shareUrl;
+      textArea.setAttribute("readonly", "true");
+      textArea.style.position = "fixed";
+      textArea.style.opacity = "0";
+      document.body.appendChild(textArea);
+      textArea.select();
+      const copied = document.execCommand("copy");
+      textArea.remove();
+      if (!copied) throw new Error("copy failed");
+    }
+
+    setWorldNotice("World link copied");
+  } catch {
+    setWorldNotice(`Copy failed. Share this link: ${shareUrl}`);
+  }
 }
 
 function getGenerationStatusLabel(task: WorldAssetGenerationTask) {
@@ -1997,6 +2069,7 @@ async function loadWorldState() {
     renderWorldPostComments();
     renderWorldPhotoWalls();
     renderWorldPhotoWallEditor();
+    syncShareWorldLinkButton();
     return;
   }
 
@@ -2007,11 +2080,13 @@ async function loadWorldState() {
   if (!response.ok) {
     game.setPendingWorldPostPlacement(null);
     setWorldNotice("Failed to load world");
+    syncShareWorldLinkButton();
     return;
   }
 
   const payload = (await response.json()) as WorldState;
   worldState = payload;
+  syncShareWorldLinkButton();
   const requestedPlacementId = pendingSelectedWorldPlacementId ?? selectedWorldPlacementId;
   const requestedPhotoWallId = pendingSelectedWorldPhotoWallId ?? selectedWorldPhotoWallId;
   const requestedPostId = pendingSelectedWorldPostId ?? selectedWorldPostId;
@@ -2627,10 +2702,13 @@ const auth = createAuthController({
       renderWorldPhotoWalls();
       renderWorldPhotoWallEditor();
       syncWorldVisibilityControls();
+      syncShareWorldLinkButton();
       return;
     }
 
     void loadWorldState();
+    tryAutoJoinLinkedWorld();
+    syncShareWorldLinkButton();
   }
 });
 
@@ -2763,6 +2841,9 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     if (status === "Connected" && auth.getCurrentUser()) {
       void loadWorldState();
     }
+    if (status === "Connected") {
+      tryAutoJoinLinkedWorld();
+    }
   },
   onSessionInfo(clientId) {
     selfClientId = clientId;
@@ -2820,6 +2901,16 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     party.setPartyState(state);
     syncChatCanPost();
 
+    if (pendingAutoJoinWorldId && state.party?.id === pendingAutoJoinWorldId) {
+      pendingAutoJoinWorldId = null;
+      autoJoinWorldIdSent = null;
+      try {
+        window.sessionStorage.removeItem(PENDING_WORLD_JOIN_STORAGE_KEY);
+      } catch {
+        // Ignore storage failures.
+      }
+    }
+
     syncMediaPeersAndVolumes();
     void loadWorldState();
   },
@@ -2870,6 +2961,27 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   }
 });
 
+function tryAutoJoinLinkedWorld() {
+  if (!pendingAutoJoinWorldId) return;
+  if (autoJoinWorldIdSent === pendingAutoJoinWorldId) return;
+  if (!auth.getCurrentUser()) return;
+  if (!realtime.isOpen()) return;
+  if (partyState.party?.id === pendingAutoJoinWorldId) {
+    pendingAutoJoinWorldId = null;
+    autoJoinWorldIdSent = null;
+    try {
+      window.sessionStorage.removeItem(PENDING_WORLD_JOIN_STORAGE_KEY);
+    } catch {
+      // Ignore storage failures.
+    }
+    return;
+  }
+
+  if (realtime.sendWorldJoin(pendingAutoJoinWorldId)) {
+    autoJoinWorldIdSent = pendingAutoJoinWorldId;
+  }
+}
+
 chat.onSubmit((text) => {
   if (!auth.getCurrentUser()) return;
   let sent = false;
@@ -2890,6 +3002,9 @@ setupTabs();
 setupPartySubtabs();
 setupCameraControlsTab();
 setupChatChannelToggles();
+shareWorldLinkButton?.addEventListener("click", () => {
+  void copyCurrentWorldLink();
+});
 
 worldGenerateForm?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -3182,6 +3297,7 @@ renderWorldPosts();
 renderWorldPostComments();
 renderWorldPlacementEditor();
 renderWorldPhotoWallEditor();
+syncShareWorldLinkButton();
 void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();

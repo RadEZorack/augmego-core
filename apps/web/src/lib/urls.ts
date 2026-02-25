@@ -5,6 +5,25 @@ export function createApiUrlResolver(apiBase: string | undefined) {
   };
 }
 
+export const PENDING_WORLD_JOIN_STORAGE_KEY = "augmego.pendingWorldJoin";
+
+export function parseWorldIdFromUrl(url: URL) {
+  const queryWorldId = url.searchParams.get("worldId")?.trim() ?? "";
+  if (queryWorldId) return queryWorldId;
+
+  const segments = url.pathname.split("/").filter(Boolean);
+  if (segments.length !== 1) return null;
+
+  const [segment] = segments;
+  if (!segment) return null;
+
+  // Avoid treating reserved paths or asset-like requests as world ids.
+  if (segment === "api" || segment.includes(".")) return null;
+
+  const pathWorldId = decodeURIComponent(segment).trim();
+  return pathWorldId || null;
+}
+
 export function resolveWsUrl(apiBase: string | undefined, wsBase: string | undefined) {
   if (wsBase && wsBase.length > 0) return wsBase;
 
