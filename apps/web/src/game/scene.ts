@@ -1,5 +1,6 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import type {
   PlayerPayload,
   PlayerState,
@@ -78,6 +79,7 @@ export function createGameScene(options: GameSceneOptions) {
   const yAxis = new THREE.Vector3(0, 1, 0);
   const zAxis = new THREE.Vector3(0, 0, 1);
   const modelTemplateCache = new Map<string, Promise<any>>();
+  const worldModelMixers = new Map<string, any>();
   const imageTextureCache = new Map<string, Promise<any>>();
   const loadingSpinners = new Set<any>();
   let worldState: WorldState | null = null;
@@ -545,6 +547,10 @@ export function createGameScene(options: GameSceneOptions) {
   }
 
   function clearWorldModels() {
+    for (const mixer of worldModelMixers.values()) {
+      mixer.stopAllAction?.();
+    }
+    worldModelMixers.clear();
     while (worldRoot.children.length > 0) {
       const child = worldRoot.children[0];
       if (!child) break;
@@ -648,7 +654,7 @@ export function createGameScene(options: GameSceneOptions) {
       gltfLoader.load(
         url,
         (gltf: any) => {
-          resolve(gltf.scene);
+          resolve(gltf);
         },
         undefined,
         () => resolve(null)
@@ -674,6 +680,31 @@ export function createGameScene(options: GameSceneOptions) {
     });
     imageTextureCache.set(url, promise);
     return promise;
+  }
+
+  function cloneMaterialWithTextures(material: any) {
+    if (!material?.clone) return material;
+    const cloned = material.clone();
+    for (const [key, value] of Object.entries(cloned)) {
+      if ((value as any)?.isTexture && typeof (value as any).clone === "function") {
+        cloned[key] = (value as any).clone();
+      }
+    }
+    return cloned;
+  }
+
+  function prepareWorldModelInstanceResources(root: any) {
+    root.traverse((node: any) => {
+      if (node.geometry?.clone) {
+        node.geometry = node.geometry.clone();
+      }
+      const material = node.material;
+      if (Array.isArray(material)) {
+        node.material = material.map((item) => cloneMaterialWithTextures(item));
+      } else if (material) {
+        node.material = cloneMaterialWithTextures(material);
+      }
+    });
   }
 
   async function createPhotoWallMesh(photoWall: WorldPhotoWall, renderEpoch: number) {
@@ -1106,13 +1137,14 @@ export function createGameScene(options: GameSceneOptions) {
         worldRoot.add(spinner);
 
         const template = await loadModelTemplate(modelUrl);
-        if (!template || renderEpoch !== worldRenderEpoch) {
+        if (!template?.scene || renderEpoch !== worldRenderEpoch) {
           worldRoot.remove(spinner);
           loadingSpinners.delete(spinner);
           return;
         }
 
-        const instance = template.clone(true);
+        const instance = SkeletonUtils.clone(template.scene);
+        prepareWorldModelInstanceResources(instance);
         instance.position.set(
           placement.position.x,
           placement.position.y,
@@ -1131,6 +1163,15 @@ export function createGameScene(options: GameSceneOptions) {
         worldRoot.remove(spinner);
         loadingSpinners.delete(spinner);
         worldRoot.add(instance);
+
+        const clips = Array.isArray(template.animations) ? template.animations : [];
+        if (clips.length > 0) {
+          const mixer = new THREE.AnimationMixer(instance);
+          const clip = clips[0];
+          const action = mixer.clipAction(clip);
+          action.play();
+          worldModelMixers.set(placement.id, mixer);
+        }
       })
     );
 
@@ -1395,6 +1436,9 @@ export function createGameScene(options: GameSceneOptions) {
     localBadge.renderFrame();
     updateRemotePlayers(deltaSeconds);
     updateLoadingSpinners(deltaSeconds);
+    for (const mixer of worldModelMixers.values()) {
+      mixer.update(deltaSeconds);
+    }
 
     cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
     cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));

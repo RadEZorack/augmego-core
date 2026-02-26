@@ -800,9 +800,18 @@ async function fetchMeshyTextTo3dTask(taskId: string) {
   return (await response.json()) as MeshyTextTo3dTaskResponse;
 }
 
-async function createMeshyRiggingTask(modelUrl: string) {
+async function createMeshyRiggingTask(options: {
+  inputTaskId?: string;
+  modelUrl?: string;
+}) {
   if (!MESHY_API_KEY) {
     throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const inputTaskId = String(options.inputTaskId ?? "").trim();
+  const modelUrl = String(options.modelUrl ?? "").trim();
+  if (!inputTaskId && !modelUrl) {
+    throw new Error("Meshy rigging requires inputTaskId or modelUrl");
   }
 
   const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v1/rigging`, {
@@ -812,7 +821,7 @@ async function createMeshyRiggingTask(modelUrl: string) {
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model_url: modelUrl,
+      ...(inputTaskId ? { input_task_id: inputTaskId } : { model_url: modelUrl }),
       skeleton_type: "humanoid"
     })
   });
@@ -1238,7 +1247,10 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
         return;
       }
 
-      const riggingTaskId = await createMeshyRiggingTask(glbUrl);
+      const riggingTaskId = await createMeshyRiggingTask({
+        inputTaskId: task.meshyTaskId,
+        modelUrl: glbUrl
+      });
       if (
         !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
           meshyTaskId: riggingTaskId,
