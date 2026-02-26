@@ -364,6 +364,7 @@ type MeshyRiggingTaskResponse = {
   id?: string;
   status?: string;
   task_status?: string;
+  result?: Record<string, unknown> | null;
   model_urls?: Record<string, unknown> | null;
   glb_url?: string;
   rigged_glb_url?: string;
@@ -374,6 +375,7 @@ type MeshyAnimationTaskResponse = {
   id?: string;
   status?: string;
   task_status?: string;
+  result?: Record<string, unknown> | null;
   model_urls?: Record<string, unknown> | null;
   glb_url?: string;
   animation_glb_url?: string;
@@ -927,11 +929,18 @@ function extractMeshyGlbUrl(task: MeshyTextTo3dTaskResponse) {
 }
 
 function extractMeshyRiggedGlbUrl(task: MeshyRiggingTaskResponse) {
+  const result =
+    task.result && typeof task.result === "object"
+      ? (task.result as Record<string, unknown>)
+      : {};
   const modelUrls =
     task.model_urls && typeof task.model_urls === "object"
       ? (task.model_urls as Record<string, unknown>)
       : {};
   const candidate = [
+    result.rigged_character_glb_url,
+    result.rigged_glb_url,
+    result.glb_url,
     modelUrls.rigged_glb,
     modelUrls.rigged_glb_url,
     modelUrls.glb,
@@ -943,11 +952,17 @@ function extractMeshyRiggedGlbUrl(task: MeshyRiggingTaskResponse) {
 }
 
 function extractMeshyAnimationGlbUrl(task: MeshyAnimationTaskResponse) {
+  const result =
+    task.result && typeof task.result === "object"
+      ? (task.result as Record<string, unknown>)
+      : {};
   const modelUrls =
     task.model_urls && typeof task.model_urls === "object"
       ? (task.model_urls as Record<string, unknown>)
       : {};
   const candidate = [
+    result.animation_glb_url,
+    result.glb_url,
     modelUrls.animation_glb_url,
     modelUrls.glb,
     modelUrls.glb_url,
