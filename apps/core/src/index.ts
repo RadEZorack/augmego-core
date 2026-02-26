@@ -360,6 +360,56 @@ type MeshyTextTo3dTaskResponse = {
   preview_glb_url?: string;
 };
 
+type MeshyRiggingTaskResponse = {
+  id?: string;
+  status?: string;
+  task_status?: string;
+  model_urls?: Record<string, unknown> | null;
+  glb_url?: string;
+  rigged_glb_url?: string;
+  rigged_model_url?: string;
+};
+
+type MeshyAnimationTaskResponse = {
+  id?: string;
+  status?: string;
+  task_status?: string;
+  model_urls?: Record<string, unknown> | null;
+  glb_url?: string;
+  animation_glb_url?: string;
+};
+
+type WorldAssetGenerationKind = "OBJECT" | "HUMANOID";
+
+type HumanoidAnimationSpec = {
+  libraryId: number;
+  name: string;
+};
+
+const HUMANOID_MESHY_ANIMATIONS: HumanoidAnimationSpec[] = [
+  { libraryId: 0, name: "Idle" },
+  { libraryId: 14, name: "Run_02" },
+  { libraryId: 22, name: "FunnyDancing_01" }
+];
+
+function normalizeWorldAssetGenerationType(value: unknown): WorldAssetGenerationKind {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "humanoid" ? "HUMANOID" : "OBJECT";
+}
+
+function resolveWorldAssetGenerationKind(task: {
+  generationType?: string | null;
+  meshyStatus?: string | null;
+}): WorldAssetGenerationKind {
+  const explicit = String(task.generationType ?? "").trim().toUpperCase();
+  if (explicit === "HUMANOID") return "HUMANOID";
+  if (String(task.meshyStatus ?? "").toUpperCase().startsWith("HUMANOID_")) {
+    return "HUMANOID";
+  }
+  return "OBJECT";
+}
+
 async function getDefaultWorldNameForUser(userId: string) {
   const owner = await prisma.user.findUnique({
     where: { id: userId },
@@ -614,12 +664,33 @@ async function createWorldAssetWithInitialVersion(options: {
   return { assetId, versionId };
 }
 
+async function downloadMeshyGlbAsFile(glbUrl: string, fileNameBase: string) {
+  const glbResponse = await fetch(glbUrl);
+  if (!glbResponse.ok) {
+    throw new Error(
+      `Failed to download generated GLB (${glbResponse.status} ${glbResponse.statusText})`
+    );
+  }
+
+  const glbBytes = await glbResponse.arrayBuffer();
+  const safeName = sanitizeFilename(fileNameBase || "generated_model");
+  const fileName = safeName.toLowerCase().endsWith(".glb")
+    ? safeName
+    : `${safeName}.glb`;
+  return new File([glbBytes], fileName, {
+    type: "model/gltf-binary"
+  });
+}
+
 function isValidGlbUpload(file: File) {
   const fileName = file.name.toLowerCase();
   return fileName.endsWith(".glb");
 }
 
-async function createMeshyTextTo3dPreviewTask(prompt: string) {
+async function createMeshyTextTo3dPreviewTask(
+  prompt: string,
+  options?: { poseMode?: "t-pose" }
+) {
   if (!MESHY_API_KEY) {
     throw new Error("MESHY_API_KEY is not configured");
   }
@@ -628,6 +699,9 @@ async function createMeshyTextTo3dPreviewTask(prompt: string) {
     mode: "preview",
     prompt
   };
+  if (options?.poseMode) {
+    requestBody.pose_mode = options.poseMode;
+  }
   if (MESHY_TEXT_TO_3D_MODEL) {
     requestBody.ai_model = MESHY_TEXT_TO_3D_MODEL;
   }
@@ -724,6 +798,113 @@ async function fetchMeshyTextTo3dTask(taskId: string) {
   return (await response.json()) as MeshyTextTo3dTaskResponse;
 }
 
+async function createMeshyRiggingTask(modelUrl: string) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v1/rigging`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MESHY_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model_url: modelUrl,
+      skeleton_type: "humanoid"
+    })
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy rigging create failed (${response.status}): ${text}`);
+  }
+
+  const payload = (await response.json()) as MeshyCreateTaskResponse;
+  const taskId = String(payload.result ?? payload.id ?? "").trim();
+  if (!taskId) {
+    throw new Error("Meshy rigging create response missing task id");
+  }
+  return taskId;
+}
+
+async function fetchMeshyRiggingTask(taskId: string) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const response = await fetch(
+    `${MESHY_API_BASE_URL}/openapi/v1/rigging/${encodeURIComponent(taskId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${MESHY_API_KEY}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy rigging status failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as MeshyRiggingTaskResponse;
+}
+
+async function createMeshyAnimationLibraryTask(
+  riggedModelUrl: string,
+  animationId: number
+) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v1/animations`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MESHY_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      model_url: riggedModelUrl,
+      animation_id: animationId
+    })
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy animation create failed (${response.status}): ${text}`);
+  }
+
+  const payload = (await response.json()) as MeshyCreateTaskResponse;
+  const taskId = String(payload.result ?? payload.id ?? "").trim();
+  if (!taskId) {
+    throw new Error("Meshy animation create response missing task id");
+  }
+  return taskId;
+}
+
+async function fetchMeshyAnimationTask(taskId: string) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const response = await fetch(
+    `${MESHY_API_BASE_URL}/openapi/v1/animations/${encodeURIComponent(taskId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${MESHY_API_KEY}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy animation status failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as MeshyAnimationTaskResponse;
+}
+
 function resolveMeshyStatus(task: MeshyTextTo3dTaskResponse) {
   return String(task.status ?? task.task_status ?? "").toUpperCase();
 }
@@ -742,6 +923,37 @@ function extractMeshyGlbUrl(task: MeshyTextTo3dTaskResponse) {
     task.preview_glb_url
   ].find((value) => typeof value === "string" && value.length > 0);
 
+  return typeof candidate === "string" ? candidate : "";
+}
+
+function extractMeshyRiggedGlbUrl(task: MeshyRiggingTaskResponse) {
+  const modelUrls =
+    task.model_urls && typeof task.model_urls === "object"
+      ? (task.model_urls as Record<string, unknown>)
+      : {};
+  const candidate = [
+    modelUrls.rigged_glb,
+    modelUrls.rigged_glb_url,
+    modelUrls.glb,
+    task.rigged_glb_url,
+    task.rigged_model_url,
+    task.glb_url
+  ].find((value) => typeof value === "string" && value.length > 0);
+  return typeof candidate === "string" ? candidate : "";
+}
+
+function extractMeshyAnimationGlbUrl(task: MeshyAnimationTaskResponse) {
+  const modelUrls =
+    task.model_urls && typeof task.model_urls === "object"
+      ? (task.model_urls as Record<string, unknown>)
+      : {};
+  const candidate = [
+    modelUrls.animation_glb_url,
+    modelUrls.glb,
+    modelUrls.glb_url,
+    task.animation_glb_url,
+    task.glb_url
+  ].find((value) => typeof value === "string" && value.length > 0);
   return typeof candidate === "string" ? candidate : "";
 }
 
@@ -798,21 +1010,36 @@ async function claimNextWorldAssetGenerationTask() {
   });
 }
 
-async function processWorldAssetGenerationTask(taskId: string) {
-  const task = await prisma.worldAssetGenerationTask.findUnique({
-    where: { id: taskId }
+async function tryUpdateWorldAssetGenerationTaskFromSnapshot(
+  task: { id: string; updatedAt: Date },
+  data: Record<string, unknown>
+) {
+  const update = await prisma.worldAssetGenerationTask.updateMany({
+    where: {
+      id: task.id,
+      status: "IN_PROGRESS",
+      updatedAt: task.updatedAt
+    },
+    data: data as any
   });
-  if (!task || task.status !== "IN_PROGRESS") return;
+  return update.count > 0;
+}
+
+async function processObjectWorldAssetGenerationTask(task: any) {
+  if (resolveWorldAssetGenerationKind(task) === "HUMANOID") {
+    throw new Error("Humanoid generation task was routed to object pipeline");
+  }
 
   if (!task.meshyTaskId) {
     const meshyTaskId = await createMeshyTextTo3dPreviewTask(task.prompt);
-    await prisma.worldAssetGenerationTask.update({
-      where: { id: task.id },
-      data: {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         meshyTaskId,
         meshyStatus: "PREVIEW_SUBMITTED"
-      }
-    });
+      }))
+    ) {
+      return;
+    }
     return;
   }
 
@@ -829,68 +1056,59 @@ async function processWorldAssetGenerationTask(taskId: string) {
   }
 
   if (!isMeshyTerminalStatus(meshyStatus)) {
-    await prisma.worldAssetGenerationTask.update({
-      where: { id: task.id },
-      data: { meshyStatus: `${stage}_${meshyStatus}` }
-    });
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+        meshyStatus: `${stage}_${meshyStatus}`
+      }))
+    ) {
+      return;
+    }
     return;
   }
 
   if (!isMeshySuccessStatus(meshyStatus)) {
-    await prisma.worldAssetGenerationTask.update({
-      where: { id: task.id },
-      data: {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         status: "FAILED",
         meshyStatus: `${stage}_${meshyStatus}`,
         failureReason: `Meshy ${stage.toLowerCase()} ended with status ${meshyStatus}`,
         completedAt: new Date()
-      }
-    });
+      }))
+    ) {
+      return;
+    }
     return;
   }
 
   if (stage === "PREVIEW" && MESHY_TEXT_TO_3D_ENABLE_REFINE) {
     const refineTaskId = await createMeshyTextTo3dRefineTask(task.meshyTaskId);
-    await prisma.worldAssetGenerationTask.update({
-      where: { id: task.id },
-      data: {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         meshyTaskId: refineTaskId,
         meshyStatus: "REFINE_SUBMITTED"
-      }
-    });
+      }))
+    ) {
+      return;
+    }
     return;
   }
 
   const glbUrl = extractMeshyGlbUrl(meshyTask);
   if (!glbUrl) {
-    await prisma.worldAssetGenerationTask.update({
-      where: { id: task.id },
-      data: {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         status: "FAILED",
         meshyStatus: `${stage}_SUCCEEDED`,
         failureReason: `Meshy ${stage.toLowerCase()} succeeded but no GLB URL was returned`,
         completedAt: new Date()
-      }
-    });
+      }))
+    ) {
+      return;
+    }
     return;
   }
 
-  const glbResponse = await fetch(glbUrl);
-  if (!glbResponse.ok) {
-    throw new Error(
-      `Failed to download generated GLB (${glbResponse.status} ${glbResponse.statusText})`
-    );
-  }
-
-  const glbBytes = await glbResponse.arrayBuffer();
-  const safeName = sanitizeFilename(task.modelName || "generated_model");
-  const fileName = safeName.toLowerCase().endsWith(".glb")
-    ? safeName
-    : `${safeName}.glb`;
-  const file = new File([glbBytes], fileName, {
-    type: "model/gltf-binary"
-  });
-
+  const file = await downloadMeshyGlbAsFile(glbUrl, task.modelName || "generated_model");
   const generated = await createWorldAssetWithInitialVersion({
     worldOwnerId: task.worldOwnerId,
     createdById: task.createdById,
@@ -899,16 +1117,295 @@ async function processWorldAssetGenerationTask(taskId: string) {
     file
   });
 
-  await prisma.worldAssetGenerationTask.update({
-    where: { id: task.id },
-    data: {
+  await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
       status: "COMPLETED",
       meshyStatus: `${stage}_SUCCEEDED`,
       generatedAssetId: generated.assetId,
       generatedVersionId: generated.versionId,
       completedAt: new Date()
-    }
   });
+}
+
+function getHumanoidAnimationSpec(index: number) {
+  return HUMANOID_MESHY_ANIMATIONS[index] ?? null;
+}
+
+async function processHumanoidWorldAssetGenerationTask(task: any) {
+  if (!task.meshyTaskId) {
+    const meshyTaskId = await createMeshyTextTo3dPreviewTask(task.prompt, {
+      poseMode: "t-pose"
+    });
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+        meshyTaskId,
+        meshyStatus: "HUMANOID_PREVIEW_SUBMITTED",
+        meshyRiggedModelUrl: null,
+        meshyAnimationIndex: 0
+      }))
+    ) {
+      return;
+    }
+    return;
+  }
+
+  const elapsedSinceLastUpdate = Date.now() - task.updatedAt.getTime();
+  if (elapsedSinceLastUpdate < WORLD_ASSET_GENERATION_POLL_INTERVAL_MS) {
+    return;
+  }
+
+  const riggedModelUrl = String(task.meshyRiggedModelUrl ?? "").trim();
+  const animationIndex =
+    typeof task.meshyAnimationIndex === "number" ? task.meshyAnimationIndex : 0;
+  const meshyStatusText = String(task.meshyStatus ?? "").toUpperCase();
+
+  if (!riggedModelUrl) {
+    const isRiggingStage = meshyStatusText.includes("RIGGING");
+    if (!isRiggingStage) {
+      const meshyTask = await fetchMeshyTextTo3dTask(task.meshyTaskId);
+      const meshyStatus = resolveMeshyStatus(meshyTask);
+      const stage = resolveMeshyTaskStage(meshyTask, task.meshyStatus);
+      if (!meshyStatus) {
+        throw new Error("Meshy text-to-3d task returned empty status");
+      }
+
+      if (!isMeshyTerminalStatus(meshyStatus)) {
+        if (
+          !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+            meshyStatus: `HUMANOID_${stage}_${meshyStatus}`
+          }))
+        ) {
+          return;
+        }
+        return;
+      }
+
+      if (!isMeshySuccessStatus(meshyStatus)) {
+        if (
+          !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+            status: "FAILED",
+            meshyStatus: `HUMANOID_${stage}_${meshyStatus}`,
+            failureReason: `Meshy humanoid ${stage.toLowerCase()} ended with status ${meshyStatus}`,
+            completedAt: new Date()
+          }))
+        ) {
+          return;
+        }
+        return;
+      }
+
+      if (stage === "PREVIEW" && MESHY_TEXT_TO_3D_ENABLE_REFINE) {
+        const refineTaskId = await createMeshyTextTo3dRefineTask(task.meshyTaskId);
+        if (
+          !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+            meshyTaskId: refineTaskId,
+            meshyStatus: "HUMANOID_REFINE_SUBMITTED"
+          }))
+        ) {
+          return;
+        }
+        return;
+      }
+
+      const glbUrl = extractMeshyGlbUrl(meshyTask);
+      if (!glbUrl) {
+        if (
+          !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+            status: "FAILED",
+            meshyStatus: `HUMANOID_${stage}_SUCCEEDED`,
+            failureReason: "Meshy humanoid text-to-3d succeeded but no GLB URL was returned",
+            completedAt: new Date()
+          }))
+        ) {
+          return;
+        }
+        return;
+      }
+
+      const riggingTaskId = await createMeshyRiggingTask(glbUrl);
+      if (
+        !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+          meshyTaskId: riggingTaskId,
+          meshyStatus: "HUMANOID_RIGGING_SUBMITTED"
+        }))
+      ) {
+        return;
+      }
+      return;
+    }
+
+    const riggingTask = await fetchMeshyRiggingTask(task.meshyTaskId);
+    const riggingStatus = resolveMeshyStatus(riggingTask);
+    if (!riggingStatus) {
+      throw new Error("Meshy rigging task returned empty status");
+    }
+
+    if (!isMeshyTerminalStatus(riggingStatus)) {
+      if (
+        !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+          meshyStatus: `HUMANOID_RIGGING_${riggingStatus}`
+        }))
+      ) {
+        return;
+      }
+      return;
+    }
+
+    if (!isMeshySuccessStatus(riggingStatus)) {
+      if (
+        !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+          status: "FAILED",
+          meshyStatus: `HUMANOID_RIGGING_${riggingStatus}`,
+          failureReason: `Meshy humanoid rigging ended with status ${riggingStatus}`,
+          completedAt: new Date()
+        }))
+      ) {
+        return;
+      }
+      return;
+    }
+
+    const nextRiggedModelUrl = extractMeshyRiggedGlbUrl(riggingTask);
+    if (!nextRiggedModelUrl) {
+      if (
+        !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+          status: "FAILED",
+          meshyStatus: "HUMANOID_RIGGING_SUCCEEDED",
+          failureReason: "Meshy rigging succeeded but no rigged GLB URL was returned",
+          completedAt: new Date()
+        }))
+      ) {
+        return;
+      }
+      return;
+    }
+
+    const firstAnimation = getHumanoidAnimationSpec(0);
+    if (!firstAnimation) {
+      throw new Error("Humanoid animation list is empty");
+    }
+    const animationTaskId = await createMeshyAnimationLibraryTask(
+      nextRiggedModelUrl,
+      firstAnimation.libraryId
+    );
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+        meshyTaskId: animationTaskId,
+        meshyStatus: `HUMANOID_ANIMATION_0_SUBMITTED`,
+        meshyRiggedModelUrl: nextRiggedModelUrl,
+        meshyAnimationIndex: 0
+      }))
+    ) {
+      return;
+    }
+    return;
+  }
+
+  const animation = getHumanoidAnimationSpec(animationIndex);
+  if (!animation) {
+    await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+      status: "COMPLETED",
+      meshyStatus: "HUMANOID_ANIMATIONS_SUCCEEDED_SPLIT_GLB",
+      completedAt: new Date()
+    });
+    return;
+  }
+
+  const animationTask = await fetchMeshyAnimationTask(task.meshyTaskId);
+  const animationStatus = resolveMeshyStatus(animationTask);
+  if (!animationStatus) {
+    throw new Error("Meshy animation task returned empty status");
+  }
+
+  if (!isMeshyTerminalStatus(animationStatus)) {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+        meshyStatus: `HUMANOID_ANIMATION_${animationIndex}_${animationStatus}`
+      }))
+    ) {
+      return;
+    }
+    return;
+  }
+
+  if (!isMeshySuccessStatus(animationStatus)) {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+        status: "FAILED",
+        meshyStatus: `HUMANOID_ANIMATION_${animationIndex}_${animationStatus}`,
+        failureReason: `Meshy animation ${animation.libraryId} (${animation.name}) ended with status ${animationStatus}`,
+        completedAt: new Date()
+      }))
+    ) {
+      return;
+    }
+    return;
+  }
+
+  const animationGlbUrl = extractMeshyAnimationGlbUrl(animationTask);
+  if (!animationGlbUrl) {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+        status: "FAILED",
+        meshyStatus: `HUMANOID_ANIMATION_${animationIndex}_SUCCEEDED`,
+        failureReason: `Meshy animation ${animation.libraryId} (${animation.name}) succeeded but no animation GLB URL was returned`,
+        completedAt: new Date()
+      }))
+    ) {
+      return;
+    }
+    return;
+  }
+
+  const generatedFile = await downloadMeshyGlbAsFile(
+    animationGlbUrl,
+    `${task.modelName}_${animation.name}`
+  );
+  const generated = await createWorldAssetWithInitialVersion({
+    worldOwnerId: task.worldOwnerId,
+    createdById: task.createdById,
+    modelName: `${task.modelName} (${animation.name})`,
+    visibility: task.visibility,
+    file: generatedFile
+  });
+
+  const nextAnimationIndex = animationIndex + 1;
+  const nextAnimation = getHumanoidAnimationSpec(nextAnimationIndex);
+  if (!nextAnimation) {
+    await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+      status: "COMPLETED",
+      meshyStatus: "HUMANOID_ANIMATIONS_SUCCEEDED_SPLIT_GLB",
+      generatedAssetId: task.generatedAssetId ?? generated.assetId,
+      generatedVersionId: task.generatedVersionId ?? generated.versionId,
+      completedAt: new Date()
+    });
+    return;
+  }
+
+  const nextAnimationTaskId = await createMeshyAnimationLibraryTask(
+    riggedModelUrl,
+    nextAnimation.libraryId
+  );
+  await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+    meshyTaskId: nextAnimationTaskId,
+    meshyStatus: `HUMANOID_ANIMATION_${nextAnimationIndex}_SUBMITTED`,
+    meshyAnimationIndex: nextAnimationIndex,
+    generatedAssetId: task.generatedAssetId ?? generated.assetId,
+    generatedVersionId: task.generatedVersionId ?? generated.versionId
+  });
+}
+
+async function processWorldAssetGenerationTask(taskId: string) {
+  const task = (await prisma.worldAssetGenerationTask.findUnique({
+    where: { id: taskId }
+  })) as any;
+  if (!task || task.status !== "IN_PROGRESS") return;
+
+  const generationKind = resolveWorldAssetGenerationKind(task);
+  if (generationKind === "HUMANOID") {
+    await processHumanoidWorldAssetGenerationTask(task);
+    return;
+  }
+  await processObjectWorldAssetGenerationTask(task);
 }
 
 async function runWorldAssetGenerationWorkerTick() {
@@ -927,7 +1424,7 @@ async function runWorldAssetGenerationWorkerTick() {
     if (processingTaskId) {
       const task = await prisma.worldAssetGenerationTask.findUnique({
         where: { id: processingTaskId },
-        select: { attempts: true }
+        select: { attempts: true, meshyStatus: true }
       });
       if (!task) return;
       const shouldRetry = task.attempts < WORLD_ASSET_GENERATION_MAX_ATTEMPTS;
@@ -935,7 +1432,7 @@ async function runWorldAssetGenerationWorkerTick() {
         where: { id: processingTaskId },
         data: {
           status: shouldRetry ? "PENDING" : "FAILED",
-          meshyStatus: shouldRetry ? "RETRYING" : "FAILED",
+          meshyStatus: shouldRetry ? task.meshyStatus : "FAILED",
           failureReason: message.slice(0, 500),
           completedAt: shouldRetry ? null : new Date()
         }
@@ -956,7 +1453,7 @@ async function startWorldAssetGenerationWorker() {
 
   await prisma.worldAssetGenerationTask.updateMany({
     where: { status: "IN_PROGRESS" },
-    data: { status: "PENDING", meshyStatus: "REQUEUED_ON_STARTUP" }
+    data: { status: "PENDING" }
   });
 
   setInterval(() => {
@@ -2027,6 +2524,7 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     const requestedName =
       typeof payload?.name === "string" ? payload.name.trim() : "";
+    const generationType = normalizeWorldAssetGenerationType(payload?.generationType);
     const visibility = normalizeWorldAssetVisibility(payload?.visibility);
     const modelName = normalizeAssetName(
       requestedName,
@@ -2039,8 +2537,10 @@ const api = new Elysia({ prefix: "/api/v1" })
         createdById: user.id,
         prompt,
         modelName,
+        generationType,
+        meshyStatus: generationType === "HUMANOID" ? "HUMANOID_QUEUED" : null,
         visibility
-      },
+      } as any,
       select: {
         id: true,
         status: true,
@@ -2074,13 +2574,14 @@ const api = new Elysia({ prefix: "/api/v1" })
       );
     }
 
-    const tasks = await prisma.worldAssetGenerationTask.findMany({
+    const tasks = await prisma.worldAssetGenerationTask.findMany(({
       where: { worldOwnerId },
       orderBy: { createdAt: "desc" },
       take: WORLD_ASSET_GENERATION_RECENT_LIMIT,
       select: {
         id: true,
         status: true,
+        generationType: true,
         prompt: true,
         modelName: true,
         meshyStatus: true,
@@ -2092,12 +2593,13 @@ const api = new Elysia({ prefix: "/api/v1" })
         startedAt: true,
         completedAt: true
       }
-    });
+    } as any));
 
     return jsonResponse({
       tasks: tasks.map((task) => ({
         id: task.id,
         status: task.status,
+        generationType: (task as any).generationType ?? "OBJECT",
         prompt: task.prompt,
         modelName: task.modelName,
         meshyStatus: task.meshyStatus,

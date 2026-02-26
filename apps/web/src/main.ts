@@ -362,6 +362,9 @@ const worldGenerateNameInput = document.getElementById("world-generate-name") as
 const worldGenerateVisibilityInput = document.getElementById(
   "world-generate-visibility"
 ) as HTMLSelectElement | null;
+const worldGenerateTypeInput = document.getElementById(
+  "world-generate-type"
+) as HTMLSelectElement | null;
 const worldGenerateButton = document.getElementById(
   "world-generate-button"
 ) as HTMLButtonElement | null;
@@ -551,10 +554,11 @@ async function copyCurrentWorldLink() {
 }
 
 function getGenerationStatusLabel(task: WorldAssetGenerationTask) {
+  const modeLabel = task.generationType === "HUMANOID" ? "Humanoid" : "Object";
   if (task.status === "COMPLETED") return "Completed";
   if (task.status === "FAILED") return "Failed";
-  if (task.meshyStatus) return task.meshyStatus.replace(/_/g, " ");
-  return task.status === "IN_PROGRESS" ? "In progress" : "Queued";
+  if (task.meshyStatus) return `${modeLabel} • ${task.meshyStatus.replace(/_/g, " ")}`;
+  return task.status === "IN_PROGRESS" ? `${modeLabel} • In progress` : `${modeLabel} • Queued`;
 }
 
 function renderCombinedChat() {
@@ -674,8 +678,8 @@ async function loadWorldGenerationTasks() {
   if (latestFailedTask) {
     setWorldNotice(
       latestFailedTask.failureReason
-        ? `Text-to-3D failed: ${latestFailedTask.failureReason}`
-        : "Text-to-3D generation failed"
+        ? `Generation failed: ${latestFailedTask.failureReason}`
+        : "Generation failed"
     );
   }
 }
@@ -701,6 +705,7 @@ function syncWorldVisibilityControls() {
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
     if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
+    if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
     if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
     if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
@@ -728,6 +733,7 @@ function syncWorldVisibilityControls() {
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !worldState.canManage;
   if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !worldState.canManage;
+  if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = !worldState.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
   if (worldPhotoWallButton) worldPhotoWallButton.disabled = !worldState.canManage;
   if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = !worldState.canManage;
@@ -2130,6 +2136,7 @@ async function loadWorldState() {
   if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !payload.canManage;
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !payload.canManage;
+  if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = !payload.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
   if (worldPhotoWallButton) worldPhotoWallButton.disabled = !payload.canManage;
   if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = !payload.canManage;
@@ -3020,7 +3027,13 @@ worldGenerateForm?.addEventListener("submit", (event) => {
   }
 
   void (async () => {
-    setWorldNotice("Queueing text-to-3D generation...");
+    const generationType =
+      worldGenerateTypeInput?.value === "humanoid" ? "humanoid" : "object";
+    setWorldNotice(
+      generationType === "humanoid"
+        ? "Queueing humanoid generation (model, rigging, animations)..."
+        : "Queueing text-to-3D generation..."
+    );
     const response = await fetch(apiUrl("/api/v1/world/assets/generate"), {
       method: "POST",
       credentials: "include",
@@ -3029,13 +3042,18 @@ worldGenerateForm?.addEventListener("submit", (event) => {
       },
       body: JSON.stringify({
         prompt,
+        generationType,
         name: worldGenerateNameInput?.value?.trim() ?? "",
         visibility: worldGenerateVisibilityInput?.value === "private" ? "private" : "public"
       })
     });
 
     if (!response.ok) {
-      setWorldNotice("Failed to queue text-to-3D job");
+      setWorldNotice(
+        generationType === "humanoid"
+          ? "Failed to queue humanoid generation job"
+          : "Failed to queue text-to-3D job"
+      );
       return;
     }
 
@@ -3048,8 +3066,15 @@ worldGenerateForm?.addEventListener("submit", (event) => {
     if (worldGenerateVisibilityInput) {
       worldGenerateVisibilityInput.value = "public";
     }
+    if (worldGenerateTypeInput) {
+      worldGenerateTypeInput.value = "object";
+    }
 
-    setWorldNotice("Text-to-3D job queued. It will continue if you go offline.");
+    setWorldNotice(
+      generationType === "humanoid"
+        ? "Humanoid job queued. It will create split GLBs for Idle, Run_02, and FunnyDancing_01."
+        : "Text-to-3D job queued. It will continue if you go offline."
+    );
     await loadWorldGenerationTasks();
   })();
 });

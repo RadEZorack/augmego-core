@@ -164,6 +164,7 @@ export type WorldState = {
 export type WorldAssetGenerationTask = {
   id: string;
   status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
+  generationType: "OBJECT" | "HUMANOID";
   prompt: string;
   modelName: string;
   meshyStatus: string | null;
