@@ -223,6 +223,7 @@ model WorldAssetGenerationTask {
   modelName          String
   meshyTaskId        String?                    @unique
   meshyStatus        String?
+  meshyRiggingTaskId String?
   meshyRiggedModelUrl String?
   meshyAnimationIndex Int                       @default(0)
   generatedAssetId   String?                    @db.Uuid

@@ -853,8 +853,8 @@ async function fetchMeshyRiggingTask(taskId: string) {
 }
 
 async function createMeshyAnimationLibraryTask(
-  riggedModelUrl: string,
-  animationId: number
+  rigTaskId: string,
+  actionId: number
 ) {
   if (!MESHY_API_KEY) {
     throw new Error("MESHY_API_KEY is not configured");
@@ -867,8 +867,8 @@ async function createMeshyAnimationLibraryTask(
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      model_url: riggedModelUrl,
-      animation_id: animationId
+      rig_task_id: rigTaskId,
+      action_id: actionId
     })
   });
 
@@ -1154,6 +1154,7 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
       !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         meshyTaskId,
         meshyStatus: "HUMANOID_PREVIEW_SUBMITTED",
+        meshyRiggingTaskId: null,
         meshyRiggedModelUrl: null,
         meshyAnimationIndex: 0
       }))
@@ -1169,6 +1170,7 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
   }
 
   const riggedModelUrl = String(task.meshyRiggedModelUrl ?? "").trim();
+  const riggingTaskId = String(task.meshyRiggingTaskId ?? "").trim();
   const animationIndex =
     typeof task.meshyAnimationIndex === "number" ? task.meshyAnimationIndex : 0;
   const meshyStatusText = String(task.meshyStatus ?? "").toUpperCase();
@@ -1299,13 +1301,14 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
       throw new Error("Humanoid animation list is empty");
     }
     const animationTaskId = await createMeshyAnimationLibraryTask(
-      nextRiggedModelUrl,
+      task.meshyTaskId,
       firstAnimation.libraryId
     );
     if (
       !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         meshyTaskId: animationTaskId,
         meshyStatus: `HUMANOID_ANIMATION_0_SUBMITTED`,
+        meshyRiggingTaskId: task.meshyTaskId,
         meshyRiggedModelUrl: nextRiggedModelUrl,
         meshyAnimationIndex: 0
       }))
@@ -1322,6 +1325,20 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
       meshyStatus: "HUMANOID_ANIMATIONS_SUCCEEDED_SPLIT_GLB",
       completedAt: new Date()
     });
+    return;
+  }
+
+  if (!riggingTaskId) {
+    if (
+      !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
+        status: "FAILED",
+        meshyStatus: `HUMANOID_ANIMATION_${animationIndex}_SUBMITTED`,
+        failureReason: "Humanoid animation step is missing Meshy rigging task id",
+        completedAt: new Date()
+      }))
+    ) {
+      return;
+    }
     return;
   }
 
@@ -1397,7 +1414,7 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
   }
 
   const nextAnimationTaskId = await createMeshyAnimationLibraryTask(
-    riggedModelUrl,
+    riggingTaskId,
     nextAnimation.libraryId
   );
   await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
