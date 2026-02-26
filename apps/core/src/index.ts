@@ -389,7 +389,7 @@ type HumanoidAnimationSpec = {
 };
 
 const HUMANOID_MESHY_ANIMATIONS: HumanoidAnimationSpec[] = [
-  { libraryId: 0, name: "Idle" },
+  { libraryId: 11, name: "Idle_02" },
   { libraryId: 14, name: "Run_02" },
   { libraryId: 22, name: "FunnyDancing_01" }
 ];
