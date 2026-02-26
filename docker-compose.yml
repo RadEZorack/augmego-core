@@ -1,3 +1,4 @@
+# WEB_BASE_URL=https://dev.augmego.ca WEB_ORIGINS=https://dev.augmego.ca NGROK_AUTHTOKEN=... docker compose --profile ngrok up -d
 services:
   postgres:
     image: postgres:16-alpine
