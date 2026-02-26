@@ -6,6 +6,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, __dirname, "");
+  const proxyTarget =
+    env.DEV_PROXY_TARGET || env.VITE_API_PROXY_TARGET || env.VITE_API_BASE_URL || "http://localhost:3000";
   return {
     root: path.resolve(__dirname),
     base: "/",
@@ -19,7 +21,7 @@ export default defineConfig(({ mode }) => {
       allowedHosts: ["dev.augmego.ca", "localhost"],
       proxy: {
         "/api/v1": {
-          target: env.VITE_API_BASE_URL || "http://localhost:3000",
+          target: proxyTarget,
           ws: true
         }
       }

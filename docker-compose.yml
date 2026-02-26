@@ -1,0 +1,102 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: augmego-postgres
+    environment:
+      POSTGRES_DB: augmego
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d augmego"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+
+  backend:
+    image: oven/bun:1.3
+    container_name: augmego-backend
+    working_dir: /app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - ./apps/core/.env
+    environment:
+      PORT: "3000"
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/augmego?schema=public
+      WEB_BASE_URL: ${WEB_BASE_URL:-http://localhost:3001}
+      WEB_ORIGINS: ${WEB_ORIGINS:-http://localhost:3001}
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./apps/core:/app
+      - core_node_modules:/app/node_modules
+    command:
+      - /bin/sh
+      - -lc
+      - bun install && bun run db:generate && bun run db:migrate && bun run dev
+    restart: unless-stopped
+
+  frontend:
+    image: oven/bun:1.3
+    container_name: augmego-frontend
+    working_dir: /app
+    depends_on:
+      backend:
+        condition: service_started
+    env_file:
+      - ./apps/web/.env
+    environment:
+      # Leave blank to use same-origin /api/v1 requests (avoids CORS in ngrok setups).
+      VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
+      VITE_WS_URL: ${VITE_WS_URL:-}
+      # Vite dev server proxy target (container-to-container).
+      DEV_PROXY_TARGET: ${DEV_PROXY_TARGET:-http://backend:3000}
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./apps/web:/app
+      - web_node_modules:/app/node_modules
+    command:
+      - /bin/sh
+      - -lc
+      - bun install && bunx --bun vite --host 0.0.0.0 --port 3001
+    restart: unless-stopped
+
+  ngrok-backend:
+    image: ngrok/ngrok:latest
+    container_name: augmego-ngrok-backend
+    profiles: ["ngrok"]
+    depends_on:
+      backend:
+        condition: service_started
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    command: ["http", "backend:3000", "--log=stdout", "--url=https://api.internal"]
+    ports:
+      - "4040:4040"
+    restart: unless-stopped
+
+  ngrok-frontend:
+    image: ngrok/ngrok:latest
+    container_name: augmego-ngrok-frontend
+    profiles: ["ngrok"]
+    depends_on:
+      frontend:
+        condition: service_started
+    environment:
+      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN:-}
+    command: ["http", "frontend:3001", "--log=stdout", "--url=https://web.internal"]
+    ports:
+      - "4041:4040"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  core_node_modules:
+  web_node_modules:
