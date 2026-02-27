@@ -360,6 +360,15 @@ type MeshyTextTo3dTaskResponse = {
   preview_glb_url?: string;
 };
 
+type MeshyImageTo3dTaskResponse = {
+  id?: string;
+  status?: string;
+  task_status?: string;
+  model_urls?: Record<string, unknown> | null;
+  glb_url?: string;
+  preview_glb_url?: string;
+};
+
 type MeshyRiggingTaskResponse = {
   id?: string;
   status?: string;
@@ -382,6 +391,7 @@ type MeshyAnimationTaskResponse = {
 };
 
 type WorldAssetGenerationKind = "OBJECT" | "HUMANOID";
+type WorldAssetGenerationSource = "TEXT" | "IMAGE";
 
 type HumanoidAnimationSpec = {
   libraryId: number;
@@ -400,6 +410,14 @@ function normalizeWorldAssetGenerationType(value: unknown): WorldAssetGeneration
   return normalized === "humanoid" ? "HUMANOID" : "OBJECT";
 }
 
+function normalizeWorldAssetGenerationSource(
+  value: unknown
+): WorldAssetGenerationSource {
+  const normalized =
+    typeof value === "string" ? value.trim().toLowerCase() : "";
+  return normalized === "image" ? "IMAGE" : "TEXT";
+}
+
 function resolveWorldAssetGenerationKind(task: {
   generationType?: string | null;
   meshyStatus?: string | null;
@@ -410,6 +428,20 @@ function resolveWorldAssetGenerationKind(task: {
     return "HUMANOID";
   }
   return "OBJECT";
+}
+
+function resolveWorldAssetGenerationSource(task: {
+  generationSource?: string | null;
+  sourceImageUrl?: string | null;
+  meshyStatus?: string | null;
+}): WorldAssetGenerationSource {
+  const explicit = String(task.generationSource ?? "").trim().toUpperCase();
+  if (explicit === "IMAGE") return "IMAGE";
+  if (String(task.sourceImageUrl ?? "").trim()) return "IMAGE";
+  if (String(task.meshyStatus ?? "").toUpperCase().includes("_IMAGE_")) {
+    return "IMAGE";
+  }
+  return "TEXT";
 }
 
 async function getDefaultWorldNameForUser(userId: string) {
@@ -565,6 +597,49 @@ async function saveWorldPostImageFile(
       })
     );
 
+    return { storageKey };
+  }
+
+  const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, file);
+  return { storageKey };
+}
+
+async function saveWorldGenerationImageFile(
+  file: File,
+  worldOwnerId: string,
+  taskId: string
+) {
+  const extensionFromType = file.type.split("/")[1]?.trim().toLowerCase() || "bin";
+  const baseName = sanitizeFilename(
+    file.name || `generation_source.${extensionFromType}`
+  );
+  const storageKey = path
+    .join(
+      WORLD_STORAGE_NAMESPACE,
+      worldOwnerId,
+      "generation-images",
+      taskId,
+      `${crypto.randomUUID()}_${baseName}`
+    )
+    .replace(/\\/g, "/");
+
+  if (effectiveWorldStorageProvider === "spaces") {
+    if (!spacesClient) {
+      throw new Error("DigitalOcean Spaces client not configured");
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await spacesClient.send(
+      new PutObjectCommand({
+        Bucket: DO_SPACES_BUCKET,
+        Key: storageKey,
+        Body: bytes,
+        ACL: "public-read",
+        ContentType: file.type || "application/octet-stream"
+      })
+    );
     return { storageKey };
   }
 
@@ -778,6 +853,47 @@ async function createMeshyTextTo3dRefineTask(previewTaskId: string) {
   return taskId;
 }
 
+async function createMeshyImageTo3dTask(
+  imageUrl: string,
+  options?: { poseMode?: "t-pose" }
+) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+  const normalizedImageUrl = imageUrl.trim();
+  if (!normalizedImageUrl) {
+    throw new Error("Meshy image-to-3d requires a source image URL");
+  }
+
+  const requestBody: Record<string, unknown> = {
+    image_url: normalizedImageUrl
+  };
+  if (options?.poseMode) {
+    requestBody.pose_mode = options.poseMode;
+  }
+
+  const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v1/image-to-3d`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${MESHY_API_KEY}`,
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(requestBody)
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy image create failed (${response.status}): ${text}`);
+  }
+
+  const payload = (await response.json()) as MeshyCreateTaskResponse;
+  const taskId = String(payload.result ?? payload.id ?? "").trim();
+  if (!taskId) {
+    throw new Error("Meshy image create response missing task id");
+  }
+  return taskId;
+}
+
 async function fetchMeshyTextTo3dTask(taskId: string) {
   if (!MESHY_API_KEY) {
     throw new Error("MESHY_API_KEY is not configured");
@@ -798,6 +914,28 @@ async function fetchMeshyTextTo3dTask(taskId: string) {
   }
 
   return (await response.json()) as MeshyTextTo3dTaskResponse;
+}
+
+async function fetchMeshyImageTo3dTask(taskId: string) {
+  if (!MESHY_API_KEY) {
+    throw new Error("MESHY_API_KEY is not configured");
+  }
+
+  const response = await fetch(
+    `${MESHY_API_BASE_URL}/openapi/v1/image-to-3d/${encodeURIComponent(taskId)}`,
+    {
+      headers: {
+        Authorization: `Bearer ${MESHY_API_KEY}`
+      }
+    }
+  );
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Meshy image status failed (${response.status}): ${text}`);
+  }
+
+  return (await response.json()) as MeshyImageTo3dTaskResponse;
 }
 
 async function createMeshyRiggingTask(options: {
@@ -916,11 +1054,15 @@ async function fetchMeshyAnimationTask(taskId: string) {
   return (await response.json()) as MeshyAnimationTaskResponse;
 }
 
-function resolveMeshyStatus(task: MeshyTextTo3dTaskResponse) {
+function resolveMeshyStatus(
+  task: MeshyTextTo3dTaskResponse | MeshyImageTo3dTaskResponse
+) {
   return String(task.status ?? task.task_status ?? "").toUpperCase();
 }
 
-function extractMeshyGlbUrl(task: MeshyTextTo3dTaskResponse) {
+function extractMeshyGlbUrl(
+  task: MeshyTextTo3dTaskResponse | MeshyImageTo3dTaskResponse
+) {
   const modelUrls =
     task.model_urls && typeof task.model_urls === "object"
       ? (task.model_urls as Record<string, unknown>)
@@ -1053,13 +1195,19 @@ async function processObjectWorldAssetGenerationTask(task: any) {
   if (resolveWorldAssetGenerationKind(task) === "HUMANOID") {
     throw new Error("Humanoid generation task was routed to object pipeline");
   }
+  const generationSource = resolveWorldAssetGenerationSource(task);
 
   if (!task.meshyTaskId) {
-    const meshyTaskId = await createMeshyTextTo3dPreviewTask(task.prompt);
+    const sourceImageUrl = String(task.sourceImageUrl ?? "").trim();
+    const meshyTaskId =
+      generationSource === "IMAGE"
+        ? await createMeshyImageTo3dTask(sourceImageUrl)
+        : await createMeshyTextTo3dPreviewTask(task.prompt);
     if (
       !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         meshyTaskId,
-        meshyStatus: "PREVIEW_SUBMITTED"
+        meshyStatus:
+          generationSource === "IMAGE" ? "IMAGE_SUBMITTED" : "PREVIEW_SUBMITTED"
       }))
     ) {
       return;
@@ -1072,9 +1220,15 @@ async function processObjectWorldAssetGenerationTask(task: any) {
     return;
   }
 
-  const meshyTask = await fetchMeshyTextTo3dTask(task.meshyTaskId);
+  const meshyTask =
+    generationSource === "IMAGE"
+      ? await fetchMeshyImageTo3dTask(task.meshyTaskId)
+      : await fetchMeshyTextTo3dTask(task.meshyTaskId);
   const meshyStatus = resolveMeshyStatus(meshyTask);
-  const stage = resolveMeshyTaskStage(meshyTask, task.meshyStatus);
+  const stage =
+    generationSource === "IMAGE"
+      ? "IMAGE"
+      : resolveMeshyTaskStage(meshyTask as MeshyTextTo3dTaskResponse, task.meshyStatus);
   if (!meshyStatus) {
     throw new Error("Meshy task returned empty status");
   }
@@ -1104,7 +1258,11 @@ async function processObjectWorldAssetGenerationTask(task: any) {
     return;
   }
 
-  if (stage === "PREVIEW" && MESHY_TEXT_TO_3D_ENABLE_REFINE) {
+  if (
+    generationSource === "TEXT" &&
+    stage === "PREVIEW" &&
+    MESHY_TEXT_TO_3D_ENABLE_REFINE
+  ) {
     const refineTaskId = await createMeshyTextTo3dRefineTask(task.meshyTaskId);
     if (
       !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
@@ -1155,14 +1313,25 @@ function getHumanoidAnimationSpec(index: number) {
 }
 
 async function processHumanoidWorldAssetGenerationTask(task: any) {
+  const generationSource = resolveWorldAssetGenerationSource(task);
+
   if (!task.meshyTaskId) {
-    const meshyTaskId = await createMeshyTextTo3dPreviewTask(task.prompt, {
-      poseMode: "t-pose"
-    });
+    const sourceImageUrl = String(task.sourceImageUrl ?? "").trim();
+    const meshyTaskId =
+      generationSource === "IMAGE"
+        ? await createMeshyImageTo3dTask(sourceImageUrl, {
+            poseMode: "t-pose"
+          })
+        : await createMeshyTextTo3dPreviewTask(task.prompt, {
+            poseMode: "t-pose"
+          });
     if (
       !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
         meshyTaskId,
-        meshyStatus: "HUMANOID_PREVIEW_SUBMITTED",
+        meshyStatus:
+          generationSource === "IMAGE"
+            ? "HUMANOID_IMAGE_SUBMITTED"
+            : "HUMANOID_PREVIEW_SUBMITTED",
         meshyRiggingTaskId: null,
         meshyRiggedModelUrl: null,
         meshyAnimationIndex: 0
@@ -1187,11 +1356,20 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
   if (!riggedModelUrl) {
     const isRiggingStage = meshyStatusText.includes("RIGGING");
     if (!isRiggingStage) {
-      const meshyTask = await fetchMeshyTextTo3dTask(task.meshyTaskId);
+      const meshyTask =
+        generationSource === "IMAGE"
+          ? await fetchMeshyImageTo3dTask(task.meshyTaskId)
+          : await fetchMeshyTextTo3dTask(task.meshyTaskId);
       const meshyStatus = resolveMeshyStatus(meshyTask);
-      const stage = resolveMeshyTaskStage(meshyTask, task.meshyStatus);
+      const stage =
+        generationSource === "IMAGE"
+          ? "IMAGE"
+          : resolveMeshyTaskStage(
+              meshyTask as MeshyTextTo3dTaskResponse,
+              task.meshyStatus
+            );
       if (!meshyStatus) {
-        throw new Error("Meshy text-to-3d task returned empty status");
+        throw new Error("Meshy model generation task returned empty status");
       }
 
       if (!isMeshyTerminalStatus(meshyStatus)) {
@@ -1219,7 +1397,11 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
         return;
       }
 
-      if (stage === "PREVIEW" && MESHY_TEXT_TO_3D_ENABLE_REFINE) {
+      if (
+        generationSource === "TEXT" &&
+        stage === "PREVIEW" &&
+        MESHY_TEXT_TO_3D_ENABLE_REFINE
+      ) {
         const refineTaskId = await createMeshyTextTo3dRefineTask(task.meshyTaskId);
         if (
           !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
@@ -1238,7 +1420,8 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
           !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
             status: "FAILED",
             meshyStatus: `HUMANOID_${stage}_SUCCEEDED`,
-            failureReason: "Meshy humanoid text-to-3d succeeded but no GLB URL was returned",
+            failureReason:
+              "Meshy humanoid model generation succeeded but no GLB URL was returned",
             completedAt: new Date()
           }))
         ) {
@@ -2582,7 +2765,99 @@ const api = new Elysia({ prefix: "/api/v1" })
         prompt,
         modelName,
         generationType,
+        generationSource: "TEXT",
         meshyStatus: generationType === "HUMANOID" ? "HUMANOID_QUEUED" : null,
+        visibility
+      } as any,
+      select: {
+        id: true,
+        status: true,
+        createdAt: true
+      }
+    });
+
+    void runWorldAssetGenerationWorkerTick();
+
+    return jsonResponse({
+      ok: true,
+      task: {
+        id: task.id,
+        status: task.status,
+        createdAt: task.createdAt.toISOString()
+      }
+    });
+  })
+  .post("/world/assets/generate/image", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+    if (!MESHY_API_KEY) {
+      return jsonResponse({ error: "MESHY_NOT_CONFIGURED" }, { status: 503 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const formData = await request.formData();
+    const fileValue = formData.get("file");
+    if (!(fileValue instanceof File)) {
+      return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+    }
+    if (!isValidImageUpload(fileValue)) {
+      return jsonResponse({ error: "INVALID_IMAGE_FILE" }, { status: 400 });
+    }
+
+    const generationType = normalizeWorldAssetGenerationType(
+      formData.get("generationType")
+    );
+    const requestedName =
+      typeof formData.get("name") === "string"
+        ? String(formData.get("name")).trim()
+        : "";
+    const visibility = normalizeWorldAssetVisibility(formData.get("visibility"));
+    const fallbackName = sanitizeFilename(
+      fileValue.name.replace(/\.[^/.]+$/, "")
+    ).replace(/_/g, " ");
+    const modelName = normalizeAssetName(requestedName, fallbackName || "Generated Model");
+    const prompt =
+      typeof formData.get("prompt") === "string"
+        ? String(formData.get("prompt")).trim().slice(0, 600)
+        : "";
+
+    const taskId = crypto.randomUUID();
+    const saved = await saveWorldGenerationImageFile(fileValue, worldOwnerId, taskId);
+    const sourceImageUrl = resolveWorldAssetPublicUrl(saved.storageKey);
+    if (!sourceImageUrl) {
+      return jsonResponse(
+        {
+          error: "PUBLIC_WORLD_STORAGE_REQUIRED",
+          detail:
+            "Image-to-3D requires publicly accessible storage. Configure Spaces/CDN for world storage."
+        },
+        { status: 503 }
+      );
+    }
+
+    const task = await prisma.worldAssetGenerationTask.create({
+      data: {
+        id: taskId,
+        worldOwnerId,
+        createdById: user.id,
+        prompt: prompt || `Image to 3D (${fileValue.name || "upload"})`,
+        modelName,
+        generationType,
+        generationSource: "IMAGE",
+        sourceImageUrl,
+        sourceImageStorageKey: saved.storageKey,
+        sourceImageContentType: fileValue.type || "application/octet-stream",
+        meshyStatus: generationType === "HUMANOID" ? "HUMANOID_QUEUED" : "IMAGE_QUEUED",
         visibility
       } as any,
       select: {
@@ -2626,6 +2901,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         id: true,
         status: true,
         generationType: true,
+        generationSource: true,
         prompt: true,
         modelName: true,
         meshyStatus: true,
@@ -2644,6 +2920,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         id: task.id,
         status: task.status,
         generationType: (task as any).generationType ?? "OBJECT",
+        generationSource: (task as any).generationSource ?? "TEXT",
         prompt: task.prompt,
         modelName: task.modelName,
         meshyStatus: task.meshyStatus,

@@ -355,8 +355,14 @@ const worldModelVisibilityInput = document.getElementById(
 const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
 const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
 const worldGenerateForm = document.getElementById("world-generate-form") as HTMLFormElement | null;
+const worldGenerateImageForm = document.getElementById(
+  "world-generate-image-form"
+) as HTMLFormElement | null;
 const worldGeneratePromptInput = document.getElementById(
   "world-generate-prompt"
+) as HTMLInputElement | null;
+const worldGenerateImageFileInput = document.getElementById(
+  "world-generate-image-file"
 ) as HTMLInputElement | null;
 const worldGenerateNameInput = document.getElementById("world-generate-name") as HTMLInputElement | null;
 const worldGenerateVisibilityInput = document.getElementById(
@@ -367,6 +373,9 @@ const worldGenerateTypeInput = document.getElementById(
 ) as HTMLSelectElement | null;
 const worldGenerateButton = document.getElementById(
   "world-generate-button"
+) as HTMLButtonElement | null;
+const worldGenerateImageButton = document.getElementById(
+  "world-generate-image-button"
 ) as HTMLButtonElement | null;
 const worldAssetsContainer = document.getElementById("world-assets") as HTMLDivElement | null;
 const worldPlacementsContainer = document.getElementById("world-placements") as HTMLDivElement | null;
@@ -555,10 +564,15 @@ async function copyCurrentWorldLink() {
 
 function getGenerationStatusLabel(task: WorldAssetGenerationTask) {
   const modeLabel = task.generationType === "HUMANOID" ? "Humanoid" : "Object";
+  const sourceLabel = task.generationSource === "IMAGE" ? "Image" : "Text";
   if (task.status === "COMPLETED") return "Completed";
   if (task.status === "FAILED") return "Failed";
-  if (task.meshyStatus) return `${modeLabel} • ${task.meshyStatus.replace(/_/g, " ")}`;
-  return task.status === "IN_PROGRESS" ? `${modeLabel} • In progress` : `${modeLabel} • Queued`;
+  if (task.meshyStatus) {
+    return `${modeLabel} • ${sourceLabel} • ${task.meshyStatus.replace(/_/g, " ")}`;
+  }
+  return task.status === "IN_PROGRESS"
+    ? `${modeLabel} • ${sourceLabel} • In progress`
+    : `${modeLabel} • ${sourceLabel} • Queued`;
 }
 
 function renderCombinedChat() {
@@ -702,11 +716,13 @@ function syncWorldVisibilityControls() {
     worldDescriptionInput.disabled = true;
     worldSettingsSaveButton.disabled = true;
     if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
+    if (worldGenerateImageFileInput) worldGenerateImageFileInput.disabled = true;
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
     if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
+    if (worldGenerateImageButton) worldGenerateImageButton.disabled = true;
     if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
     if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
     if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = true;
@@ -730,11 +746,17 @@ function syncWorldVisibilityControls() {
   worldDescriptionInput.disabled = !worldState.canManageVisibility;
   worldSettingsSaveButton.disabled = !worldState.canManageVisibility;
   if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !worldState.canManage;
+  if (worldGenerateImageFileInput) {
+    worldGenerateImageFileInput.disabled = !worldState.canManage;
+  }
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !worldState.canManage;
   if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = !worldState.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
+  if (worldGenerateImageButton) {
+    worldGenerateImageButton.disabled = !worldState.canManage;
+  }
   if (worldPhotoWallButton) worldPhotoWallButton.disabled = !worldState.canManage;
   if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = !worldState.canManage;
   if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = !worldState.canManage;
@@ -2058,9 +2080,11 @@ async function loadWorldState() {
     if (worldModelNameInput) worldModelNameInput.disabled = true;
     if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
+    if (worldGenerateImageFileInput) worldGenerateImageFileInput.disabled = true;
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateButton) worldGenerateButton.disabled = true;
+    if (worldGenerateImageButton) worldGenerateImageButton.disabled = true;
     if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
     if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
     if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = true;
@@ -2134,10 +2158,16 @@ async function loadWorldState() {
   if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
   if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !payload.canManage;
   if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = !payload.canManage;
+  if (worldGenerateImageFileInput) {
+    worldGenerateImageFileInput.disabled = !payload.canManage;
+  }
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !payload.canManage;
   if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = !payload.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
+  if (worldGenerateImageButton) {
+    worldGenerateImageButton.disabled = !payload.canManage;
+  }
   if (worldPhotoWallButton) worldPhotoWallButton.disabled = !payload.canManage;
   if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = !payload.canManage;
   if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = !payload.canManage;
@@ -3072,8 +3102,94 @@ worldGenerateForm?.addEventListener("submit", (event) => {
 
     setWorldNotice(
       generationType === "humanoid"
-        ? "Humanoid job queued. It will create split GLBs for Idle, Run_02, and FunnyDancing_01."
+        ? "Humanoid job queued. It will create split GLBs for Idle_02, Run_02, and FunnyDancing_01."
         : "Text-to-3D job queued. It will continue if you go offline."
+    );
+    await loadWorldGenerationTasks();
+  })();
+});
+
+worldGenerateImageForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!worldState?.canManage) {
+    setWorldNotice("Only world owners/managers can modify this world");
+    return;
+  }
+
+  const file = worldGenerateImageFileInput?.files?.[0];
+  if (!file) {
+    setWorldNotice("Select an image first");
+    return;
+  }
+
+  void (async () => {
+    const generationType =
+      worldGenerateTypeInput?.value === "humanoid" ? "humanoid" : "object";
+    setWorldNotice(
+      generationType === "humanoid"
+        ? "Queueing humanoid image-to-3D generation..."
+        : "Queueing image-to-3D generation..."
+    );
+
+    const formData = new FormData();
+    formData.set("file", file);
+    formData.set("generationType", generationType);
+    formData.set("name", worldGenerateNameInput?.value?.trim() ?? "");
+    formData.set(
+      "visibility",
+      worldGenerateVisibilityInput?.value === "private" ? "private" : "public"
+    );
+
+    const prompt = worldGeneratePromptInput?.value?.trim() ?? "";
+    if (prompt) {
+      formData.set("prompt", prompt);
+    }
+
+    const response = await fetch(apiUrl("/api/v1/world/assets/generate/image"), {
+      method: "POST",
+      credentials: "include",
+      body: formData
+    });
+
+    if (!response.ok) {
+      const payload = (await response.json().catch(() => null)) as
+        | { error?: string; detail?: string }
+        | null;
+      if (payload?.error === "PUBLIC_WORLD_STORAGE_REQUIRED") {
+        setWorldNotice(
+          payload.detail ??
+            "Image-to-3D requires public world storage/CDN configuration"
+        );
+      } else {
+        setWorldNotice(
+          generationType === "humanoid"
+            ? "Failed to queue humanoid image-to-3D job"
+            : "Failed to queue image-to-3D job"
+        );
+      }
+      return;
+    }
+
+    if (worldGenerateImageFileInput) {
+      worldGenerateImageFileInput.value = "";
+    }
+    if (worldGeneratePromptInput) {
+      worldGeneratePromptInput.value = "";
+    }
+    if (worldGenerateNameInput) {
+      worldGenerateNameInput.value = "";
+    }
+    if (worldGenerateVisibilityInput) {
+      worldGenerateVisibilityInput.value = "public";
+    }
+    if (worldGenerateTypeInput) {
+      worldGenerateTypeInput.value = "object";
+    }
+
+    setWorldNotice(
+      generationType === "humanoid"
+        ? "Humanoid image-to-3D job queued. It will generate Idle_02, Run_02, and FunnyDancing_01."
+        : "Image-to-3D job queued. It will continue if you go offline."
     );
     await loadWorldGenerationTasks();
   })();
@@ -3299,9 +3415,11 @@ if (worldModelFileInput) worldModelFileInput.disabled = true;
 if (worldModelNameInput) worldModelNameInput.disabled = true;
 if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
 if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
+if (worldGenerateImageFileInput) worldGenerateImageFileInput.disabled = true;
 if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
 if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
 if (worldGenerateButton) worldGenerateButton.disabled = true;
+if (worldGenerateImageButton) worldGenerateImageButton.disabled = true;
 if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
 if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.disabled = true;
 if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.disabled = true;

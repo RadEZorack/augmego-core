@@ -218,9 +218,13 @@ model WorldAssetGenerationTask {
   createdById        String                     @db.Uuid
   status             WorldAssetGenerationStatus @default(PENDING)
   generationType     String                     @default("OBJECT")
+  generationSource   String                     @default("TEXT")
   visibility         WorldAssetVisibility       @default(PUBLIC)
   prompt             String
   modelName          String
+  sourceImageUrl     String?
+  sourceImageStorageKey String?
+  sourceImageContentType String?
   meshyTaskId        String?                    @unique
   meshyStatus        String?
   meshyRiggingTaskId String?
