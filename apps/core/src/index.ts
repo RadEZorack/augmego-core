@@ -96,6 +96,12 @@ const MESHY_TEXT_TO_3D_ENABLE_PBR =
 const MESHY_TEXT_TO_3D_TOPOLOGY = (
   process.env.MESHY_TEXT_TO_3D_TOPOLOGY ?? "triangle"
 ).toLowerCase();
+type MeshyPoseMode = "t-pose" | "a-pose";
+const MESHY_HUMANOID_POSE_MODE: MeshyPoseMode =
+  (process.env.MESHY_HUMANOID_POSE_MODE ?? "a-pose").toLowerCase() ===
+  "t-pose"
+    ? "t-pose"
+    : "a-pose";
 const MESHY_TEXT_TO_3D_TARGET_POLYCOUNT = (() => {
   const value = Number(process.env.MESHY_TEXT_TO_3D_TARGET_POLYCOUNT ?? "");
   if (!Number.isFinite(value)) return null;
@@ -766,7 +772,7 @@ function isValidGlbUpload(file: File) {
 
 async function createMeshyTextTo3dPreviewTask(
   prompt: string,
-  options?: { poseMode?: "t-pose" }
+  options?: { poseMode?: MeshyPoseMode }
 ) {
   if (!MESHY_API_KEY) {
     throw new Error("MESHY_API_KEY is not configured");
@@ -855,7 +861,7 @@ async function createMeshyTextTo3dRefineTask(previewTaskId: string) {
 
 async function createMeshyImageTo3dTask(
   imageUrl: string,
-  options?: { poseMode?: "t-pose" }
+  options?: { poseMode?: MeshyPoseMode }
 ) {
   if (!MESHY_API_KEY) {
     throw new Error("MESHY_API_KEY is not configured");
@@ -1320,10 +1326,10 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
     const meshyTaskId =
       generationSource === "IMAGE"
         ? await createMeshyImageTo3dTask(sourceImageUrl, {
-            poseMode: "t-pose"
+            poseMode: MESHY_HUMANOID_POSE_MODE
           })
         : await createMeshyTextTo3dPreviewTask(task.prompt, {
-            poseMode: "t-pose"
+            poseMode: MESHY_HUMANOID_POSE_MODE
           });
     if (
       !(await tryUpdateWorldAssetGenerationTaskFromSnapshot(task, {
