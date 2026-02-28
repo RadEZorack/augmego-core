@@ -1,6 +1,8 @@
 import type {
   ChatMessage,
   PartyState,
+  PlayerAvatarMode,
+  PlayerAvatarSelection,
   PlayerMediaPayload,
   PlayerPayload,
   PlayerState
@@ -181,13 +183,19 @@ export function createRealtimeClient(
     return true;
   }
 
-  function sendPlayerUpdate(state: PlayerState) {
+  function sendPlayerUpdate(
+    state: PlayerState,
+    avatarSelection?: PlayerAvatarSelection,
+    avatarMode?: PlayerAvatarMode
+  ) {
     if (!isOpen() || !socket) return false;
 
     socket.send(
       JSON.stringify({
         type: "player:update",
-        state
+        state,
+        avatarSelection,
+        avatarMode
       })
     );
 

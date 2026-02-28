@@ -6,6 +6,9 @@ export type SessionUser = {
   name: string | null;
   email: string | null;
   avatarUrl: string | null;
+  playerAvatarStationaryModelUrl?: string | null;
+  playerAvatarMoveModelUrl?: string | null;
+  playerAvatarSpecialModelUrl?: string | null;
 };
 
 export async function resolveSessionUser(

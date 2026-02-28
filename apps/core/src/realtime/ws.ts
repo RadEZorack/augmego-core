@@ -20,6 +20,14 @@ type PlayerMediaState = {
   cameraEnabled: boolean;
 };
 
+type PlayerAvatarMode = "stationary" | "move" | "special";
+
+type PlayerAvatarSelection = {
+  stationaryModelUrl: string | null;
+  moveModelUrl: string | null;
+  specialModelUrl: string | null;
+};
+
 type ChatMessage = {
   id: string;
   text: string;
@@ -60,6 +68,8 @@ const userSockets = new Map<string, Set<string>>();
 const socketPartyIds = new Map<string, string | null>();
 const players = new Map<string, PlayerState>();
 const playerMedia = new Map<string, PlayerMediaState>();
+const playerAvatarSelections = new Map<string, PlayerAvatarSelection>();
+const playerAvatarModes = new Map<string, PlayerAvatarMode>();
 const chatHistory: ChatMessage[] = [];
 const partyChatHistory = new Map<string, ChatMessage[]>();
 const pendingInvitesByTargetUserId = new Map<string, Map<string, PendingInvite>>();
@@ -127,6 +137,52 @@ function sanitizePlayerState(state: unknown): PlayerState | null {
     rotation,
     inventory,
     updatedAt: new Date().toISOString()
+  };
+}
+
+function sanitizeAvatarModelUrl(value: unknown) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim().slice(0, 2000);
+  if (!trimmed) return null;
+  return trimmed;
+}
+
+function sanitizePlayerAvatarSelection(value: unknown): PlayerAvatarSelection | null {
+  if (!value || typeof value !== "object") return null;
+  const input = value as {
+    stationaryModelUrl?: unknown;
+    moveModelUrl?: unknown;
+    specialModelUrl?: unknown;
+  };
+  return {
+    stationaryModelUrl: sanitizeAvatarModelUrl(input.stationaryModelUrl),
+    moveModelUrl: sanitizeAvatarModelUrl(input.moveModelUrl),
+    specialModelUrl: sanitizeAvatarModelUrl(input.specialModelUrl)
+  };
+}
+
+function sanitizePlayerAvatarMode(value: unknown): PlayerAvatarMode | null {
+  return value === "special" || value === "move" || value === "stationary"
+    ? value
+    : null;
+}
+
+async function loadUserAvatarSelection(
+  prisma: PrismaClient,
+  userId: string
+): Promise<PlayerAvatarSelection> {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      stationaryModelUrl: string | null;
+      moveModelUrl: string | null;
+      specialModelUrl: string | null;
+    }>
+  >`SELECT "playerAvatarStationaryModelUrl" AS "stationaryModelUrl", "playerAvatarMoveModelUrl" AS "moveModelUrl", "playerAvatarSpecialModelUrl" AS "specialModelUrl" FROM "User" WHERE "id" = CAST(${userId} AS uuid) LIMIT 1`;
+  const row = rows[0];
+  return {
+    stationaryModelUrl: row?.stationaryModelUrl ?? null,
+    moveModelUrl: row?.moveModelUrl ?? null,
+    specialModelUrl: row?.specialModelUrl ?? null
   };
 }
 
@@ -548,6 +604,19 @@ export function registerRealtimeWs<
         micMuted: true,
         cameraEnabled: false
       });
+      const persistedAvatarSelection = user
+        ? await loadUserAvatarSelection(options.prisma, user.id)
+        : {
+            stationaryModelUrl: null,
+            moveModelUrl: null,
+            specialModelUrl: null
+          };
+      playerAvatarSelections.set(ws.id, {
+        stationaryModelUrl: persistedAvatarSelection.stationaryModelUrl,
+        moveModelUrl: persistedAvatarSelection.moveModelUrl,
+        specialModelUrl: persistedAvatarSelection.specialModelUrl
+      });
+      playerAvatarModes.set(ws.id, "stationary");
 
       sendJson(ws, {
         type: "session:info",
@@ -570,6 +639,12 @@ export function registerRealtimeWs<
           userId: socketUsers.get(clientId)?.id ?? null,
           name: socketUsers.get(clientId)?.name ?? null,
           avatarUrl: socketUsers.get(clientId)?.avatarUrl ?? null,
+          avatarSelection: playerAvatarSelections.get(clientId) ?? {
+            stationaryModelUrl: null,
+            moveModelUrl: null,
+            specialModelUrl: null
+          },
+          avatarMode: playerAvatarModes.get(clientId) ?? "stationary",
           partyId: socketPartyIds.get(clientId) ?? null,
           micMuted: playerMedia.get(clientId)?.micMuted ?? true,
           cameraEnabled: playerMedia.get(clientId)?.cameraEnabled ?? false,
@@ -1157,9 +1232,17 @@ export function registerRealtimeWs<
           sendJson(ws, { type: "error", code: "INVALID_PLAYER_STATE" });
           return;
         }
+        const avatarSelection = sanitizePlayerAvatarSelection(parsed.avatarSelection);
+        const avatarMode = sanitizePlayerAvatarMode(parsed.avatarMode);
 
         const user = socketUsers.get(ws.id);
         players.set(ws.id, state);
+        if (avatarSelection) {
+          playerAvatarSelections.set(ws.id, avatarSelection);
+        }
+        if (avatarMode) {
+          playerAvatarModes.set(ws.id, avatarMode);
+        }
         broadcastJson(ws, {
           type: "player:update",
           player: {
@@ -1167,6 +1250,12 @@ export function registerRealtimeWs<
             userId: user?.id ?? null,
             name: user?.name ?? null,
             avatarUrl: user?.avatarUrl ?? null,
+            avatarSelection: playerAvatarSelections.get(ws.id) ?? {
+              stationaryModelUrl: null,
+              moveModelUrl: null,
+              specialModelUrl: null
+            },
+            avatarMode: playerAvatarModes.get(ws.id) ?? "stationary",
             partyId: socketPartyIds.get(ws.id) ?? null,
             micMuted: playerMedia.get(ws.id)?.micMuted ?? true,
             cameraEnabled: playerMedia.get(ws.id)?.cameraEnabled ?? false,
@@ -1237,6 +1326,8 @@ export function registerRealtimeWs<
       socketPartyIds.delete(ws.id);
       players.delete(ws.id);
       playerMedia.delete(ws.id);
+      playerAvatarSelections.delete(ws.id);
+      playerAvatarModes.delete(ws.id);
       ws.publish(WS_TOPIC, JSON.stringify({ type: "player:leave", clientId: ws.id }));
     }
   });

@@ -766,6 +766,11 @@ canvas {
   font-size: 0.75rem;
 }
 
+.camera-control-row > select,
+.camera-control-row > button {
+  width: 100%;
+}
+
 .chat-panel {
   display: grid;
   grid-template-rows: auto 1fr auto;

@@ -3,6 +3,7 @@ export type CurrentUser = {
   name: string | null;
   email: string | null;
   avatarUrl: string | null;
+  avatarSelection?: PlayerAvatarSelection;
 };
 
 export type ChatMessage = {
@@ -28,10 +29,20 @@ export type PlayerPayload = {
   userId: string | null;
   name: string | null;
   avatarUrl: string | null;
+  avatarSelection?: PlayerAvatarSelection;
+  avatarMode?: PlayerAvatarMode;
   partyId?: string | null;
   micMuted?: boolean;
   cameraEnabled?: boolean;
   state: PlayerState;
+};
+
+export type PlayerAvatarMode = "stationary" | "move" | "special";
+
+export type PlayerAvatarSelection = {
+  stationaryModelUrl: string | null;
+  moveModelUrl: string | null;
+  specialModelUrl: string | null;
 };
 
 export type PlayerMediaPayload = {

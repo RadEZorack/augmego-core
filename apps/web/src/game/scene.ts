@@ -2,6 +2,8 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import type {
+  PlayerAvatarMode,
+  PlayerAvatarSelection,
   PlayerPayload,
   PlayerState,
   WorldPhotoWall,
@@ -20,6 +22,12 @@ type PlayerBadge = {
 
 type RemotePlayer = {
   mesh: any;
+  avatarRoot: any;
+  avatarMixer: any | null;
+  avatarLoadVersion: number;
+  avatarSelection: PlayerAvatarSelection;
+  avatarMode: PlayerAvatarMode;
+  avatarModelUrl: string | null;
   badge: PlayerBadge;
   inviteButton: any;
   targetPosition: any;
@@ -30,7 +38,12 @@ type GameSceneOptions = {
   mount: HTMLElement;
   playerRadius?: number;
   playerSpeed?: number;
-  onLocalStateChange?: (state: PlayerState, force: boolean) => void;
+  onLocalStateChange?: (
+    state: PlayerState,
+    force: boolean,
+    avatarSelection: PlayerAvatarSelection,
+    avatarMode: PlayerAvatarMode
+  ) => void;
   onRemoteInviteClick?: (clientId: string) => void;
   canShowRemoteInvite?: (clientId: string) => boolean;
   onWorldPlacementSelect?: (placementId: string) => void;
@@ -47,6 +60,12 @@ type GameSceneOptions = {
   onWorldPostPlacementRequest?: (
     position: { x: number; y: number; z: number }
   ) => boolean;
+};
+
+const DEFAULT_PLAYER_AVATAR_SELECTION: PlayerAvatarSelection = {
+  stationaryModelUrl: null,
+  moveModelUrl: null,
+  specialModelUrl: null
 };
 
 type CameraControlState = {
@@ -137,6 +156,17 @@ export function createGameScene(options: GameSceneOptions) {
   );
   localPlayer.position.set(0, playerRadius, 0);
   scene.add(localPlayer);
+  const localAvatarRoot = new THREE.Group();
+  localAvatarRoot.position.set(0, -playerRadius, 0);
+  localPlayer.add(localAvatarRoot);
+  let localAvatarMixer: any | null = null;
+  let localAvatarLoadVersion = 0;
+  let localAvatarModelUrl: string | null = null;
+  let localAvatarSelection: PlayerAvatarSelection = {
+    ...DEFAULT_PLAYER_AVATAR_SELECTION
+  };
+  let localAvatarMode: PlayerAvatarMode = "stationary";
+  let localSpecialAvatarActive = false;
 
   const targetPosition = localPlayer.position.clone();
 
@@ -441,7 +471,12 @@ export function createGameScene(options: GameSceneOptions) {
       return;
     }
 
-    options.onLocalStateChange?.(getLocalState(), force);
+    options.onLocalStateChange?.(
+      getLocalState(),
+      force,
+      localAvatarSelection,
+      localAvatarMode
+    );
     lastSentAt = now;
     lastSentPosition.copy(localPlayer.position);
     lastSentRotationY = localPlayer.rotation.y;
@@ -472,6 +507,9 @@ export function createGameScene(options: GameSceneOptions) {
 
     mesh.position.set(0, playerRadius, 0);
     scene.add(mesh);
+    const avatarRoot = new THREE.Group();
+    avatarRoot.position.set(0, -playerRadius, 0);
+    mesh.add(avatarRoot);
 
     const badge = createBadgeSprite(color);
     mesh.add(badge.sprite);
@@ -485,6 +523,14 @@ export function createGameScene(options: GameSceneOptions) {
 
     const player: RemotePlayer = {
       mesh,
+      avatarRoot,
+      avatarMixer: null,
+      avatarLoadVersion: 0,
+      avatarSelection: {
+        ...DEFAULT_PLAYER_AVATAR_SELECTION
+      },
+      avatarMode: "stationary",
+      avatarModelUrl: null,
       badge,
       inviteButton,
       targetPosition: mesh.position.clone(),
@@ -509,6 +555,11 @@ export function createGameScene(options: GameSceneOptions) {
     }
 
     player.badge.dispose();
+    if (player.avatarMixer) {
+      player.avatarMixer.stopAllAction?.();
+      player.avatarMixer = null;
+    }
+    clearAvatarRoot(player.avatarRoot);
 
     const inviteMaterial = player.inviteButton.material;
     if (inviteMaterial.map) inviteMaterial.map.dispose();
@@ -529,6 +580,7 @@ export function createGameScene(options: GameSceneOptions) {
     remote.targetRotationY = payload.state.rotation.y;
     remote.badge.setIdentity(payload.name, payload.avatarUrl);
     remote.badge.setMediaState(payload.micMuted === true, payload.cameraEnabled !== false);
+    void syncRemoteAvatarVisual(remote, payload);
   }
 
   function applyRemoteSnapshot(players: PlayerPayload[]) {
@@ -705,6 +757,160 @@ export function createGameScene(options: GameSceneOptions) {
         node.material = cloneMaterialWithTextures(material);
       }
     });
+  }
+
+  function clearAvatarRoot(root: any) {
+    while (root.children.length > 0) {
+      const child = root.children[0];
+      if (!child) break;
+      root.remove(child);
+      disposeObject3D(child);
+    }
+  }
+
+  function setSphereBodyVisible(mesh: any, visible: boolean) {
+    const material = mesh.material;
+    if (Array.isArray(material)) {
+      for (const item of material) {
+        item.visible = visible;
+      }
+      return;
+    }
+    if (material) {
+      material.visible = visible;
+    }
+  }
+
+  function hasLoadedAvatar(avatarRoot: any) {
+    return avatarRoot.children.length > 0;
+  }
+
+  function resolveAvatarModelUrl(
+    selection: PlayerAvatarSelection,
+    mode: PlayerAvatarMode
+  ) {
+    if (mode === "special") {
+      return selection.specialModelUrl ?? selection.stationaryModelUrl ?? null;
+    }
+    if (mode === "move") {
+      return selection.moveModelUrl ?? selection.stationaryModelUrl ?? null;
+    }
+    return selection.stationaryModelUrl ?? null;
+  }
+
+  function createAvatarInstance(template: any) {
+    const instance = SkeletonUtils.clone(template.scene);
+    prepareWorldModelInstanceResources(instance);
+    instance.position.set(0, 0, 0);
+    instance.rotation.set(0, 0, 0);
+    instance.scale.set(1, 1, 1);
+    instance.updateMatrixWorld(true);
+
+    // Normalize avatar size/offset so different models align to player height.
+    const bounds = new THREE.Box3().setFromObject(instance);
+    const size = bounds.getSize(new THREE.Vector3());
+    if (Number.isFinite(size.y) && size.y > 0.001) {
+      const targetHeight = playerRadius * 5;
+      const scaleFactor = THREE.MathUtils.clamp(targetHeight / size.y, 0.2, 3.5);
+      instance.scale.multiplyScalar(scaleFactor);
+    }
+    instance.updateMatrixWorld(true);
+    const alignedBounds = new THREE.Box3().setFromObject(instance);
+    const minY = alignedBounds.min.y;
+    const safeMinY = Number.isFinite(minY) ? minY : 0;
+    // Keep original X/Z pivot; only lift so feet touch ground.
+    instance.position.set(0, -safeMinY, 0);
+    return instance;
+  }
+
+  function computeLocalAvatarMode() {
+    const moving =
+      targetPosition.distanceToSquared(localPlayer.position) > 0.0009;
+    if (moving) return "move" as const;
+    if (localSpecialAvatarActive && localAvatarSelection.specialModelUrl) {
+      return "special" as const;
+    }
+    return "stationary" as const;
+  }
+
+  function computeRemoteAvatarMode(remote: RemotePlayer, payload: PlayerPayload) {
+    if (payload.avatarMode === "special" && remote.avatarSelection.specialModelUrl) {
+      return "special" as const;
+    }
+    const moving =
+      remote.targetPosition.distanceToSquared(remote.mesh.position) > 0.0025;
+    return moving ? ("move" as const) : ("stationary" as const);
+  }
+
+  function syncLocalAvatarVisual() {
+    const nextMode = computeLocalAvatarMode();
+    const nextUrl = resolveAvatarModelUrl(localAvatarSelection, nextMode);
+    if (nextMode === localAvatarMode && nextUrl === localAvatarModelUrl) return;
+    localAvatarMode = nextMode;
+    localAvatarModelUrl = nextUrl;
+    setSphereBodyVisible(localPlayer, !nextUrl || !hasLoadedAvatar(localAvatarRoot));
+    if (localAvatarMixer) {
+      localAvatarMixer.stopAllAction?.();
+      localAvatarMixer = null;
+    }
+    localAvatarLoadVersion += 1;
+    const loadVersion = localAvatarLoadVersion;
+    clearAvatarRoot(localAvatarRoot);
+    if (!nextUrl) return;
+    void loadModelTemplate(nextUrl).then((template) => {
+      if (!template?.scene || loadVersion !== localAvatarLoadVersion) {
+        setSphereBodyVisible(localPlayer, true);
+        return;
+      }
+      const instance = createAvatarInstance(template);
+      localAvatarRoot.add(instance);
+      setSphereBodyVisible(localPlayer, false);
+      const clips = Array.isArray(template.animations) ? template.animations : [];
+      if (clips.length > 0) {
+        localAvatarMixer = new THREE.AnimationMixer(instance);
+        const action = localAvatarMixer.clipAction(clips[0]);
+        action.play();
+      }
+    });
+  }
+
+  async function syncRemoteAvatarVisual(remote: RemotePlayer, payload: PlayerPayload) {
+    const nextSelection = payload.avatarSelection ?? DEFAULT_PLAYER_AVATAR_SELECTION;
+    remote.avatarSelection = {
+      stationaryModelUrl: nextSelection.stationaryModelUrl ?? null,
+      moveModelUrl: nextSelection.moveModelUrl ?? null,
+      specialModelUrl: nextSelection.specialModelUrl ?? null
+    };
+    remote.avatarMode = computeRemoteAvatarMode(remote, payload);
+    const nextUrl = resolveAvatarModelUrl(remote.avatarSelection, remote.avatarMode);
+    if (remote.avatarModelUrl === nextUrl) {
+      setSphereBodyVisible(remote.mesh, !nextUrl || !hasLoadedAvatar(remote.avatarRoot));
+      return;
+    }
+    remote.avatarModelUrl = nextUrl;
+    setSphereBodyVisible(remote.mesh, !nextUrl);
+    if (remote.avatarMixer) {
+      remote.avatarMixer.stopAllAction?.();
+      remote.avatarMixer = null;
+    }
+    remote.avatarLoadVersion += 1;
+    const loadVersion = remote.avatarLoadVersion;
+    clearAvatarRoot(remote.avatarRoot);
+    if (!nextUrl) return;
+    const template = await loadModelTemplate(nextUrl);
+    if (!template?.scene || loadVersion !== remote.avatarLoadVersion) {
+      setSphereBodyVisible(remote.mesh, true);
+      return;
+    }
+    const instance = createAvatarInstance(template);
+    remote.avatarRoot.add(instance);
+    setSphereBodyVisible(remote.mesh, false);
+    const clips = Array.isArray(template.animations) ? template.animations : [];
+    if (clips.length > 0) {
+      remote.avatarMixer = new THREE.AnimationMixer(instance);
+      const action = remote.avatarMixer.clipAction(clips[0]);
+      action.play();
+    }
   }
 
   async function createPhotoWallMesh(photoWall: WorldPhotoWall, renderEpoch: number) {
@@ -1224,6 +1430,7 @@ export function createGameScene(options: GameSceneOptions) {
     localPlayer.position.addScaledVector(toTarget, step);
     localPlayer.position.y = playerRadius;
     localPlayer.rotation.y = Math.atan2(toTarget.x, toTarget.z);
+    localSpecialAvatarActive = false;
 
     maybeSendLocalState();
   }
@@ -1433,11 +1640,24 @@ export function createGameScene(options: GameSceneOptions) {
   function animate() {
     const deltaSeconds = clock.getDelta();
     moveLocalPlayer(deltaSeconds);
+    const previousAvatarMode = localAvatarMode;
+    syncLocalAvatarVisual();
+    if (previousAvatarMode !== localAvatarMode) {
+      maybeSendLocalState(true);
+    }
     localBadge.renderFrame();
     updateRemotePlayers(deltaSeconds);
     updateLoadingSpinners(deltaSeconds);
     for (const mixer of worldModelMixers.values()) {
       mixer.update(deltaSeconds);
+    }
+    if (localAvatarMixer) {
+      localAvatarMixer.update(deltaSeconds);
+    }
+    for (const remote of remotePlayers.values()) {
+      if (remote.avatarMixer) {
+        remote.avatarMixer.update(deltaSeconds);
+      }
     }
 
     cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
@@ -1501,6 +1721,23 @@ export function createGameScene(options: GameSceneOptions) {
     maybeSendLocalState(true);
   }
 
+  function setLocalAvatarSelection(selection: PlayerAvatarSelection) {
+    localAvatarSelection = {
+      stationaryModelUrl: selection.stationaryModelUrl ?? null,
+      moveModelUrl: selection.moveModelUrl ?? null,
+      specialModelUrl: selection.specialModelUrl ?? null
+    };
+    syncLocalAvatarVisual();
+    maybeSendLocalState(true);
+  }
+
+  function triggerLocalSpecialAvatar() {
+    if (!localAvatarSelection.specialModelUrl) return;
+    localSpecialAvatarActive = true;
+    syncLocalAvatarVisual();
+    maybeSendLocalState(true);
+  }
+
   function setWorldData(nextWorldState: WorldState | null) {
     worldState = nextWorldState;
     void renderWorldModels();
@@ -1515,6 +1752,8 @@ export function createGameScene(options: GameSceneOptions) {
     setRemoteMediaState,
     setRemoteMediaStream,
     forceSyncLocalState,
+    setLocalAvatarSelection,
+    triggerLocalSpecialAvatar,
     getCameraControls,
     setCameraControls,
     setWorldData,

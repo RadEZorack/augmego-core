@@ -230,6 +230,28 @@ function jsonResponse(
   });
 }
 
+type UserAvatarSelection = {
+  stationaryModelUrl: string | null;
+  moveModelUrl: string | null;
+  specialModelUrl: string | null;
+};
+
+async function loadUserAvatarSelection(userId: string): Promise<UserAvatarSelection> {
+  const rows = await prisma.$queryRaw<
+    Array<{
+      stationaryModelUrl: string | null;
+      moveModelUrl: string | null;
+      specialModelUrl: string | null;
+    }>
+  >`SELECT "playerAvatarStationaryModelUrl" AS "stationaryModelUrl", "playerAvatarMoveModelUrl" AS "moveModelUrl", "playerAvatarSpecialModelUrl" AS "specialModelUrl" FROM "User" WHERE "id" = CAST(${userId} AS uuid) LIMIT 1`;
+  const row = rows[0];
+  return {
+    stationaryModelUrl: row?.stationaryModelUrl ?? null,
+    moveModelUrl: row?.moveModelUrl ?? null,
+    specialModelUrl: row?.specialModelUrl ?? null
+  };
+}
+
 function sanitizeFilename(value: string) {
   const trimmed = value.trim();
   if (!trimmed) return "model.glb";
@@ -2417,12 +2439,14 @@ const api = new Elysia({ prefix: "/api/v1" })
     }
 
     const { user } = session;
+    const avatarSelection = await loadUserAvatarSelection(user.id);
     return jsonResponse({
       user: {
         id: user.id,
         name: user.name,
         email: user.email,
-        avatarUrl: user.avatarUrl
+        avatarUrl: user.avatarUrl,
+        avatarSelection
       }
     });
   })
@@ -2473,6 +2497,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         avatarUrl: true
       }
     });
+    const avatarSelection = await loadUserAvatarSelection(updated.id);
 
     return jsonResponse({
       ok: true,
@@ -2480,8 +2505,53 @@ const api = new Elysia({ prefix: "/api/v1" })
         id: updated.id,
         name: updated.name,
         email: updated.email,
-        avatarUrl: updated.avatarUrl
+        avatarUrl: updated.avatarUrl,
+        avatarSelection
       }
+    });
+  })
+  .patch("/auth/player-avatar", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      stationaryModelUrl?: unknown;
+      moveModelUrl?: unknown;
+      specialModelUrl?: unknown;
+    } | null;
+    if (!body) {
+      return jsonResponse({ error: "INVALID_AVATAR_SELECTION" }, { status: 400 });
+    }
+
+    const normalizeModelUrl = (value: unknown) => {
+      if (typeof value !== "string") return null;
+      const trimmed = value.trim().slice(0, 2000);
+      return trimmed || null;
+    };
+
+    const currentSelection = await loadUserAvatarSelection(user.id);
+    const nextSelection: UserAvatarSelection = {
+      stationaryModelUrl:
+        body.stationaryModelUrl !== undefined
+          ? normalizeModelUrl(body.stationaryModelUrl)
+          : currentSelection.stationaryModelUrl,
+      moveModelUrl:
+        body.moveModelUrl !== undefined
+          ? normalizeModelUrl(body.moveModelUrl)
+          : currentSelection.moveModelUrl,
+      specialModelUrl:
+        body.specialModelUrl !== undefined
+          ? normalizeModelUrl(body.specialModelUrl)
+          : currentSelection.specialModelUrl
+    };
+
+    await prisma.$executeRaw`UPDATE "User" SET "playerAvatarStationaryModelUrl" = ${nextSelection.stationaryModelUrl}, "playerAvatarMoveModelUrl" = ${nextSelection.moveModelUrl}, "playerAvatarSpecialModelUrl" = ${nextSelection.specialModelUrl} WHERE "id" = CAST(${user.id} AS uuid)`;
+
+    return jsonResponse({
+      ok: true,
+      avatarSelection: nextSelection
     });
   })
   .get("/worlds/search", async ({ request }) => {

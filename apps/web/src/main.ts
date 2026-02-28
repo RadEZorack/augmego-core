@@ -13,6 +13,7 @@ import type {
   ChatMessage,
   CurrentUser,
   PartyState,
+  PlayerAvatarSelection,
   PlayerPayload,
   WorldAsset,
   WorldAssetGenerationTask,
@@ -117,6 +118,15 @@ const cameraRotateZSlider = document.getElementById(
 const cameraRotateZInput = document.getElementById(
   "camera-rotate-z-input"
 ) as HTMLInputElement | null;
+const avatarStationarySelect = document.getElementById(
+  "avatar-stationary-select"
+) as HTMLSelectElement | null;
+const avatarMoveSelect = document.getElementById(
+  "avatar-move-select"
+) as HTMLSelectElement | null;
+const avatarSpecialSelect = document.getElementById(
+  "avatar-special-select"
+) as HTMLSelectElement | null;
 
 const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
@@ -403,6 +413,12 @@ let pendingAutoJoinWorldId = readInitialLinkedWorldId();
 let autoJoinWorldIdSent: string | null = null;
 let worldViewActive = Boolean(pendingAutoJoinWorldId);
 let knownWorldPortals: WorldPortal[] = [];
+const PLAYER_AVATAR_SELECTION_STORAGE_KEY = "augmego_player_avatar_selection_v1";
+let playerAvatarSelection: PlayerAvatarSelection = {
+  stationaryModelUrl: null,
+  moveModelUrl: null,
+  specialModelUrl: null
+};
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
@@ -2232,6 +2248,7 @@ async function loadWorldState() {
     renderWorldPhotoWalls();
     renderWorldPhotoWallEditor();
     syncShareWorldLinkButton();
+    syncAvatarSelectOptions();
     return;
   }
 
@@ -2249,6 +2266,7 @@ async function loadWorldState() {
   const payload = (await response.json()) as WorldState;
   worldState = payload;
   syncShareWorldLinkButton();
+  syncAvatarSelectOptions();
   const requestedPlacementId = pendingSelectedWorldPlacementId ?? selectedWorldPlacementId;
   const requestedPhotoWallId = pendingSelectedWorldPhotoWallId ?? selectedWorldPhotoWallId;
   const requestedPostId = pendingSelectedWorldPostId ?? selectedWorldPostId;
@@ -2515,8 +2533,8 @@ function renderWorldAssets() {
 
 const game = createGameScene({
   mount: app,
-  onLocalStateChange(state) {
-    realtime.sendPlayerUpdate(state);
+  onLocalStateChange(state, _force, avatarSelection, avatarMode) {
+    realtime.sendPlayerUpdate(state, avatarSelection, avatarMode);
   },
   onRemoteInviteClick(clientId) {
     inviteClient(clientId);
@@ -2950,6 +2968,157 @@ function setupCameraControlsTab() {
   syncUi();
 }
 
+function readStoredPlayerAvatarSelection(): PlayerAvatarSelection {
+  try {
+    const raw = window.localStorage.getItem(PLAYER_AVATAR_SELECTION_STORAGE_KEY);
+    if (!raw) {
+      return {
+        stationaryModelUrl: null,
+        moveModelUrl: null,
+        specialModelUrl: null
+      };
+    }
+    const parsed = JSON.parse(raw) as {
+      stationaryModelUrl?: unknown;
+      moveModelUrl?: unknown;
+      specialModelUrl?: unknown;
+    };
+    const readUrl = (value: unknown) =>
+      typeof value === "string" && value.trim() ? value.trim() : null;
+    return {
+      stationaryModelUrl: readUrl(parsed.stationaryModelUrl),
+      moveModelUrl: readUrl(parsed.moveModelUrl),
+      specialModelUrl: readUrl(parsed.specialModelUrl)
+    };
+  } catch {
+    return {
+      stationaryModelUrl: null,
+      moveModelUrl: null,
+      specialModelUrl: null
+    };
+  }
+}
+
+function persistPlayerAvatarSelection() {
+  try {
+    window.localStorage.setItem(
+      PLAYER_AVATAR_SELECTION_STORAGE_KEY,
+      JSON.stringify(playerAvatarSelection)
+    );
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function collectAvatarOptions() {
+  const assets = worldState?.assets ?? [];
+  return assets
+    .filter((asset) => Boolean(asset.currentVersion?.fileUrl))
+    .map((asset) => ({
+      label: asset.name,
+      value: asset.currentVersion!.fileUrl
+    }));
+}
+
+function syncAvatarSelectOptions() {
+  const selects = [avatarStationarySelect, avatarMoveSelect, avatarSpecialSelect].filter(
+    (select): select is HTMLSelectElement => Boolean(select)
+  );
+  if (selects.length === 0) return;
+
+  const options = collectAvatarOptions();
+  for (const select of selects) {
+    const previousValue = select.value;
+    select.innerHTML = "";
+    const defaultOption = document.createElement("option");
+    defaultOption.value = "";
+    defaultOption.textContent = "Default sphere";
+    select.appendChild(defaultOption);
+    for (const option of options) {
+      const node = document.createElement("option");
+      node.value = option.value;
+      node.textContent = option.label;
+      select.appendChild(node);
+    }
+    const hasValue = options.some((option) => option.value === previousValue);
+    if (hasValue) {
+      select.value = previousValue;
+    }
+    select.disabled = !auth.getCurrentUser();
+  }
+}
+
+function syncAvatarControls() {
+  syncAvatarSelectOptions();
+  if (avatarStationarySelect) {
+    avatarStationarySelect.value = playerAvatarSelection.stationaryModelUrl ?? "";
+  }
+  if (avatarMoveSelect) {
+    avatarMoveSelect.value = playerAvatarSelection.moveModelUrl ?? "";
+  }
+  if (avatarSpecialSelect) {
+    avatarSpecialSelect.value = playerAvatarSelection.specialModelUrl ?? "";
+  }
+  game.setLocalAvatarSelection(playerAvatarSelection);
+}
+
+function applyAvatarSelectionFromCurrentUser(user: CurrentUser | null) {
+  const stored = readStoredPlayerAvatarSelection();
+  if (!user) {
+    playerAvatarSelection = stored;
+    syncAvatarControls();
+    return;
+  }
+
+  const nextSelection: PlayerAvatarSelection = {
+    stationaryModelUrl: user.avatarSelection?.stationaryModelUrl ?? stored.stationaryModelUrl,
+    moveModelUrl: user.avatarSelection?.moveModelUrl ?? stored.moveModelUrl,
+    specialModelUrl: user.avatarSelection?.specialModelUrl ?? stored.specialModelUrl
+  };
+  playerAvatarSelection = nextSelection;
+  persistPlayerAvatarSelection();
+  syncAvatarControls();
+}
+
+async function savePlayerAvatarSelectionToServer() {
+  if (!auth.getCurrentUser()) return;
+  await fetch(apiUrl("/api/v1/auth/player-avatar"), {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(playerAvatarSelection)
+  }).catch(() => null);
+}
+
+function setupAvatarControls() {
+  const updateFromInputs = () => {
+    playerAvatarSelection = {
+      stationaryModelUrl: avatarStationarySelect?.value || null,
+      moveModelUrl: avatarMoveSelect?.value || null,
+      specialModelUrl: avatarSpecialSelect?.value || null
+    };
+    persistPlayerAvatarSelection();
+    syncAvatarControls();
+    game.forceSyncLocalState();
+    void savePlayerAvatarSelectionToServer();
+  };
+
+  avatarStationarySelect?.addEventListener("change", updateFromInputs);
+  avatarMoveSelect?.addEventListener("change", updateFromInputs);
+  avatarSpecialSelect?.addEventListener("change", updateFromInputs);
+
+  window.setInterval(() => {
+    if (!auth.getCurrentUser()) return;
+    if (!playerAvatarSelection.specialModelUrl) return;
+    game.triggerLocalSpecialAvatar();
+  }, 10000);
+
+  playerAvatarSelection = readStoredPlayerAvatarSelection();
+  syncAvatarControls();
+}
+
 const auth = createAuthController({
   elements: {
     loginMenu: document.getElementById("login-menu") as HTMLElement | null,
@@ -2972,6 +3141,7 @@ const auth = createAuthController({
     syncChatCanPost();
     worldMap.setCurrentUser(user);
     syncProfileSettingsForm();
+    applyAvatarSelectionFromCurrentUser(user);
 
     if (!user) {
       worldState = null;
@@ -3332,6 +3502,7 @@ setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
 setupPartySubtabs();
 setupCameraControlsTab();
+setupAvatarControls();
 setupChatChannelToggles();
 setupProfileMenu();
 shareWorldLinkButton?.addEventListener("click", () => {
