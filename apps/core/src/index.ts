@@ -747,7 +747,134 @@ async function createWorldAssetWithInitialVersion(options: {
   return { assetId, versionId };
 }
 
-async function downloadMeshyGlbAsFile(glbUrl: string, fileNameBase: string) {
+function normalizeAnimatedGlbMaterialLook(input: ArrayBuffer) {
+  const source = new Uint8Array(input);
+  if (source.byteLength < 20) return input;
+
+  const view = new DataView(source.buffer, source.byteOffset, source.byteLength);
+  const magic = view.getUint32(0, true);
+  const version = view.getUint32(4, true);
+  if (magic !== 0x46546c67 || version !== 2) {
+    return input;
+  }
+
+  let offset = 12;
+  let jsonChunk: Uint8Array | null = null;
+  const otherChunks: Array<{ type: number; bytes: Uint8Array }> = [];
+
+  while (offset + 8 <= source.byteLength) {
+    const chunkLength = view.getUint32(offset, true);
+    const chunkType = view.getUint32(offset + 4, true);
+    const chunkStart = offset + 8;
+    const chunkEnd = chunkStart + chunkLength;
+    if (chunkEnd > source.byteLength) return input;
+
+    const chunkBytes = source.slice(chunkStart, chunkEnd);
+    if (chunkType === 0x4e4f534a) {
+      jsonChunk = chunkBytes;
+    } else {
+      otherChunks.push({ type: chunkType, bytes: chunkBytes });
+    }
+    offset = chunkEnd;
+  }
+
+  if (!jsonChunk) return input;
+
+  const decoder = new TextDecoder();
+  const encoder = new TextEncoder();
+  const jsonText = decoder.decode(jsonChunk).replace(/\u0000+$/g, "").trimEnd();
+  let json: Record<string, unknown>;
+  try {
+    json = JSON.parse(jsonText) as Record<string, unknown>;
+  } catch {
+    return input;
+  }
+
+  const materials = Array.isArray(json.materials)
+    ? (json.materials as Array<Record<string, unknown>>)
+    : [];
+  for (const material of materials) {
+    const pbr =
+      material.pbrMetallicRoughness &&
+      typeof material.pbrMetallicRoughness === "object"
+        ? (material.pbrMetallicRoughness as Record<string, unknown>)
+        : {};
+    pbr.metallicFactor = 0;
+    const priorRoughness =
+      typeof pbr.roughnessFactor === "number" ? pbr.roughnessFactor : 1;
+    pbr.roughnessFactor = Math.max(0.88, priorRoughness);
+    material.pbrMetallicRoughness = pbr;
+
+    material.emissiveFactor = [0, 0, 0];
+    delete material.emissiveTexture;
+
+    if (material.extensions && typeof material.extensions === "object") {
+      const extensions = material.extensions as Record<string, unknown>;
+      delete extensions.KHR_materials_specular;
+      if (Object.keys(extensions).length === 0) {
+        delete material.extensions;
+      } else {
+        material.extensions = extensions;
+      }
+    }
+  }
+
+  const extensionsUsed = Array.isArray(json.extensionsUsed)
+    ? (json.extensionsUsed as unknown[]).filter(
+        (ext) => ext !== "KHR_materials_specular"
+      )
+    : null;
+  if (extensionsUsed) {
+    json.extensionsUsed = extensionsUsed;
+  }
+  const extensionsRequired = Array.isArray(json.extensionsRequired)
+    ? (json.extensionsRequired as unknown[]).filter(
+        (ext) => ext !== "KHR_materials_specular"
+      )
+    : null;
+  if (extensionsRequired) {
+    json.extensionsRequired = extensionsRequired;
+  }
+
+  let jsonBytes = encoder.encode(JSON.stringify(json));
+  const jsonPadding = (4 - (jsonBytes.byteLength % 4)) % 4;
+  if (jsonPadding > 0) {
+    const padded = new Uint8Array(jsonBytes.byteLength + jsonPadding);
+    padded.set(jsonBytes, 0);
+    padded.fill(0x20, jsonBytes.byteLength);
+    jsonBytes = padded;
+  }
+
+  const rebuiltChunks: Array<{ type: number; bytes: Uint8Array }> = [
+    { type: 0x4e4f534a, bytes: jsonBytes },
+    ...otherChunks
+  ];
+
+  const totalLength =
+    12 +
+    rebuiltChunks.reduce((sum, chunk) => sum + 8 + chunk.bytes.byteLength, 0);
+  const out = new Uint8Array(totalLength);
+  const outView = new DataView(out.buffer);
+  outView.setUint32(0, 0x46546c67, true);
+  outView.setUint32(4, 2, true);
+  outView.setUint32(8, totalLength, true);
+
+  let outOffset = 12;
+  for (const chunk of rebuiltChunks) {
+    outView.setUint32(outOffset, chunk.bytes.byteLength, true);
+    outView.setUint32(outOffset + 4, chunk.type, true);
+    out.set(chunk.bytes, outOffset + 8);
+    outOffset += 8 + chunk.bytes.byteLength;
+  }
+
+  return out.buffer;
+}
+
+async function downloadMeshyGlbAsFile(
+  glbUrl: string,
+  fileNameBase: string,
+  options?: { normalizeMaterials?: boolean }
+) {
   const glbResponse = await fetch(glbUrl);
   if (!glbResponse.ok) {
     throw new Error(
@@ -755,7 +882,14 @@ async function downloadMeshyGlbAsFile(glbUrl: string, fileNameBase: string) {
     );
   }
 
-  const glbBytes = await glbResponse.arrayBuffer();
+  let glbBytes = await glbResponse.arrayBuffer();
+  if (options?.normalizeMaterials) {
+    try {
+      glbBytes = normalizeAnimatedGlbMaterialLook(glbBytes);
+    } catch (error) {
+      console.warn("[world-generation] GLB material normalization failed", error);
+    }
+  }
   const safeName = sanitizeFilename(fileNameBase || "generated_model");
   const fileName = safeName.toLowerCase().endsWith(".glb")
     ? safeName
@@ -1591,7 +1725,8 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
 
   const generatedFile = await downloadMeshyGlbAsFile(
     animationGlbUrl,
-    `${task.modelName}_${animation.name}`
+    `${task.modelName}_${animation.name}`,
+    { normalizeMaterials: true }
   );
   const generated = await createWorldAssetWithInitialVersion({
     worldOwnerId: task.worldOwnerId,
