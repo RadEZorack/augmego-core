@@ -483,6 +483,7 @@ async function resolveOwnedWorldParty(userId: string) {
     data: {
       leaderId: userId,
       name: defaultWorldName,
+      isPublic: true,
       portalLat: DEFAULT_WORLD_PORTAL_LAT,
       portalLng: DEFAULT_WORLD_PORTAL_LNG,
       portalIsPublic: true
@@ -2554,7 +2555,7 @@ const api = new Elysia({ prefix: "/api/v1" })
     const worlds = await prisma.party.findMany({
       where: {
         OR: [
-          { isPublic: true, portalIsPublic: true },
+          { portalIsPublic: true },
           ...(user ? [{ leaderId: user.id }] : [])
         ]
       },

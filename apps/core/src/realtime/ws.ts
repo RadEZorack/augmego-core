@@ -203,7 +203,8 @@ async function resolvePartyIdForUser(prisma: PrismaClient, userId: string) {
     ownedWorld = await prisma.party.create({
       data: {
         leaderId: userId,
-        name: `${ownerLabel}'s World`
+        name: `${ownerLabel}'s World`,
+        isPublic: true
       },
       select: { id: true }
     });
@@ -921,7 +922,8 @@ export function registerRealtimeWs<
           (await options.prisma.party.create({
             data: {
               leaderId: user.id,
-              name: `${user.name ?? user.email ?? "My"}'s World`
+              name: `${user.name ?? user.email ?? "My"}'s World`,
+              isPublic: true
             },
             select: { id: true }
           }));
