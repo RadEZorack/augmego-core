@@ -28,7 +28,72 @@
             />
           </svg>
         </button>
-        <img class="user-avatar" id="user-avatar" alt="" />
+        <div class="profile-menu" id="profile-menu" hidden>
+          <button
+            class="profile-toggle"
+            id="profile-toggle"
+            type="button"
+            aria-expanded="false"
+            aria-controls="profile-options"
+          >
+            <img class="user-avatar" id="user-avatar" alt="" />
+          </button>
+          <div class="profile-options" id="profile-options">
+            <form id="profile-settings-form" class="profile-settings-form">
+              <div class="profile-settings-title">Profile & World</div>
+              <label class="profile-settings-label" for="profile-name-input">User name</label>
+              <input
+                id="profile-name-input"
+                class="party-search-input"
+                type="text"
+                maxlength="80"
+                placeholder="Display name"
+                autocomplete="off"
+              />
+              <label class="profile-settings-label" for="profile-avatar-url-input">
+                Profile picture URL
+              </label>
+              <input
+                id="profile-avatar-url-input"
+                class="party-search-input"
+                type="url"
+                maxlength="500"
+                placeholder="https://example.com/avatar.jpg"
+                autocomplete="off"
+              />
+              <label class="profile-settings-label" for="profile-world-name-input">World name</label>
+              <input
+                id="profile-world-name-input"
+                class="party-search-input"
+                type="text"
+                maxlength="80"
+                placeholder="World name"
+                autocomplete="off"
+              />
+              <label class="profile-settings-label" for="profile-world-description-input">
+                World description
+              </label>
+              <input
+                id="profile-world-description-input"
+                class="party-search-input"
+                type="text"
+                maxlength="240"
+                placeholder="Describe your world"
+                autocomplete="off"
+              />
+              <div class="party-search">
+                <label for="profile-world-public-toggle" class="party-result-label">Public world</label>
+                <input id="profile-world-public-toggle" type="checkbox" checked disabled />
+              </div>
+              <div class="profile-settings-note">
+                Public is required for now. Private worlds will be unlocked with billing.
+              </div>
+              <button id="profile-settings-save" class="party-secondary-button" type="submit">
+                Save Changes
+              </button>
+            </form>
+          </div>
+        </div>
         <div class="login-menu" id="login-menu">
           <button
             class="login-button login-toggle"

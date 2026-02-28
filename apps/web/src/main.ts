@@ -339,6 +339,31 @@ const chatToggleWorldButton = document.getElementById(
 const shareWorldLinkButton = document.getElementById(
   "share-world-link-button"
 ) as HTMLButtonElement | null;
+const profileMenu = document.getElementById("profile-menu") as HTMLDivElement | null;
+const profileToggleButton = document.getElementById(
+  "profile-toggle"
+) as HTMLButtonElement | null;
+const profileSettingsForm = document.getElementById(
+  "profile-settings-form"
+) as HTMLFormElement | null;
+const profileNameInput = document.getElementById(
+  "profile-name-input"
+) as HTMLInputElement | null;
+const profileAvatarUrlInput = document.getElementById(
+  "profile-avatar-url-input"
+) as HTMLInputElement | null;
+const profileWorldNameInput = document.getElementById(
+  "profile-world-name-input"
+) as HTMLInputElement | null;
+const profileWorldDescriptionInput = document.getElementById(
+  "profile-world-description-input"
+) as HTMLInputElement | null;
+const profileWorldPublicToggle = document.getElementById(
+  "profile-world-public-toggle"
+) as HTMLInputElement | null;
+const profileSettingsSaveButton = document.getElementById(
+  "profile-settings-save"
+) as HTMLButtonElement | null;
 
 let selfClientId: string | null = null;
 let partyState: PartyState = {
@@ -550,6 +575,60 @@ function inviteClient(clientId: string) {
 function setWorldNotice(message: string) {
   if (!worldStatus) return;
   worldStatus.textContent = message;
+}
+
+function setProfileMenuExpanded(expanded: boolean) {
+  if (!profileMenu || !profileToggleButton) return;
+  profileMenu.classList.toggle("expanded", expanded);
+  profileToggleButton.setAttribute("aria-expanded", expanded ? "true" : "false");
+}
+
+function syncProfileSettingsForm() {
+  const user = auth.getCurrentUser();
+  const canEditWorld = Boolean(worldState?.canManageVisibility);
+
+  if (profileNameInput) {
+    profileNameInput.value = user?.name ?? "";
+    profileNameInput.disabled = !user;
+  }
+  if (profileAvatarUrlInput) {
+    profileAvatarUrlInput.value = user?.avatarUrl ?? "";
+    profileAvatarUrlInput.disabled = !user;
+  }
+  if (profileWorldNameInput) {
+    profileWorldNameInput.value = canEditWorld ? worldState?.worldName ?? "" : "";
+    profileWorldNameInput.disabled = !canEditWorld;
+  }
+  if (profileWorldDescriptionInput) {
+    profileWorldDescriptionInput.value = canEditWorld
+      ? worldState?.worldDescription ?? ""
+      : "";
+    profileWorldDescriptionInput.disabled = !canEditWorld;
+  }
+  if (profileWorldPublicToggle) {
+    profileWorldPublicToggle.checked = true;
+    profileWorldPublicToggle.disabled = true;
+  }
+  if (profileSettingsSaveButton) {
+    profileSettingsSaveButton.disabled = !user;
+  }
+}
+
+function setupProfileMenu() {
+  profileToggleButton?.addEventListener("click", () => {
+    if (!profileMenu) return;
+    const expanded = profileMenu.classList.contains("expanded");
+    setProfileMenuExpanded(!expanded);
+  });
+
+  document.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (!profileMenu?.classList.contains("expanded")) return;
+    if (!profileMenu.contains(target)) {
+      setProfileMenuExpanded(false);
+    }
+  });
 }
 
 function buildShareWorldLink(worldId: string) {
@@ -772,6 +851,7 @@ function syncWorldVisibilityControls() {
     if (worldPostEditButton) worldPostEditButton.disabled = true;
     if (worldPostSaveEditButton) worldPostSaveEditButton.disabled = true;
     if (worldPostCancelEditButton) worldPostCancelEditButton.disabled = true;
+    syncProfileSettingsForm();
     return;
   }
 
@@ -805,6 +885,7 @@ function syncWorldVisibilityControls() {
   if (worldPostMessageInput) worldPostMessageInput.disabled = !worldState.canManage;
   if (worldPostButton) worldPostButton.disabled = !worldState.canManage;
   syncWorldPostFormMode();
+  syncProfileSettingsForm();
 }
 
 function getWorldAssetLabel(asset: WorldAsset) {
@@ -2881,14 +2962,16 @@ const auth = createAuthController({
     ) as HTMLButtonElement | null,
     loginAppleButton: document.getElementById("login-apple") as HTMLButtonElement | null,
     logoutButton: document.getElementById("logout-button") as HTMLButtonElement | null,
+    profileMenu,
     userAvatar: document.getElementById("user-avatar") as HTMLImageElement | null
   },
   apiUrl,
   onUserChange(user: CurrentUser | null) {
-    game.setLocalIdentity(user?.name ?? user?.email ?? "Guest", user?.avatarUrl ?? null);
+    game.setLocalIdentity(user?.name ?? "Guest", user?.avatarUrl ?? null);
     party.setCurrentUser(user);
     syncChatCanPost();
     worldMap.setCurrentUser(user);
+    syncProfileSettingsForm();
 
     if (!user) {
       worldState = null;
@@ -3250,6 +3333,7 @@ setupTabs();
 setupPartySubtabs();
 setupCameraControlsTab();
 setupChatChannelToggles();
+setupProfileMenu();
 shareWorldLinkButton?.addEventListener("click", () => {
   void copyCurrentWorldLink();
 });
@@ -3603,6 +3687,33 @@ worldPostCommentForm?.addEventListener("submit", (event) => {
   })();
 });
 
+async function updateWorldSettings(
+  name: string,
+  description: string,
+  isPublic: boolean
+) {
+  const response = await fetch(apiUrl("/api/v1/world/settings"), {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({
+      name,
+      description,
+      isPublic
+    })
+  });
+
+  if (!response.ok) {
+    setWorldNotice("World settings update failed");
+    return false;
+  }
+
+  await loadWorldState();
+  return true;
+}
+
 worldSettingsForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   if (
@@ -3620,9 +3731,28 @@ worldSettingsForm?.addEventListener("submit", (event) => {
       setWorldNotice("World name is required");
       return;
     }
-    const isPublic = worldPublicToggle.checked;
     const description = worldDescriptionInput.value.trim();
-    const response = await fetch(apiUrl("/api/v1/world/settings"), {
+    const saved = await updateWorldSettings(name, description, worldPublicToggle.checked);
+    if (!saved) return;
+    party.setNotice("World settings saved");
+    syncProfileSettingsForm();
+  })();
+});
+
+profileSettingsForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const user = auth.getCurrentUser();
+  if (!user || !profileNameInput || !profileAvatarUrlInput) {
+    return;
+  }
+
+  void (async () => {
+    const name = profileNameInput.value.trim();
+    const avatarUrl = profileAvatarUrlInput.value.trim();
+    const shouldSaveWorld = Boolean(
+      worldState?.canManageVisibility && profileWorldNameInput && profileWorldDescriptionInput
+    );
+    const profileResponse = await fetch(apiUrl("/api/v1/auth/profile"), {
       method: "PATCH",
       credentials: "include",
       headers: {
@@ -3630,18 +3760,30 @@ worldSettingsForm?.addEventListener("submit", (event) => {
       },
       body: JSON.stringify({
         name,
-        description,
-        isPublic
+        avatarUrl
       })
     });
 
-    if (!response.ok) {
-      setWorldNotice("World settings update failed");
+    if (!profileResponse.ok) {
+      setWorldNotice("Profile update failed");
       return;
     }
 
-    await loadWorldState();
-    party.setNotice("World settings saved");
+    if (shouldSaveWorld && profileWorldNameInput && profileWorldDescriptionInput) {
+      const worldName = profileWorldNameInput.value.trim();
+      if (!worldName) {
+        setWorldNotice("World name is required");
+        return;
+      }
+      const worldDescription = profileWorldDescriptionInput.value.trim();
+      const saved = await updateWorldSettings(worldName, worldDescription, true);
+      if (!saved) return;
+    }
+
+    await auth.loadCurrentUser();
+    syncProfileSettingsForm();
+    setProfileMenuExpanded(false);
+    party.setNotice(shouldSaveWorld ? "Profile and world settings saved" : "Profile settings saved");
   })();
 });
 

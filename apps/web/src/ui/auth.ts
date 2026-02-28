@@ -11,6 +11,7 @@ type AuthElements = {
   loginGoogleButton: HTMLButtonElement | null;
   loginAppleButton: HTMLButtonElement | null;
   logoutButton: HTMLButtonElement | null;
+  profileMenu: HTMLElement | null;
   userAvatar: HTMLImageElement | null;
 };
 
@@ -25,7 +26,20 @@ export function createAuthController(options: AuthControllerOptions) {
   let menuExpanded = false;
 
   function displayName(user: CurrentUser) {
-    return user.name ?? user.email ?? "User";
+    return user.name?.trim() || "User";
+  }
+
+  function buildFallbackAvatarDataUrl(name: string) {
+    const initials =
+      name
+        .trim()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((part) => part[0]?.toUpperCase() ?? "")
+        .join("") || "U";
+    const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='80' height='80' viewBox='0 0 80 80'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop stop-color='#0f4060' offset='0'/><stop stop-color='#0b8fb3' offset='1'/></linearGradient></defs><rect width='80' height='80' fill='url(#g)'/><text x='50%' y='50%' dominant-baseline='middle' text-anchor='middle' fill='#e9fbff' font-size='30' font-family='Arial, sans-serif'>${initials}</text></svg>`;
+    return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
   }
 
   function notify() {
@@ -51,6 +65,7 @@ export function createAuthController(options: AuthControllerOptions) {
       loginGoogleButton,
       loginAppleButton,
       logoutButton,
+      profileMenu,
       userAvatar
     } = options.elements;
 
@@ -62,21 +77,28 @@ export function createAuthController(options: AuthControllerOptions) {
         logoutButton.textContent = "Log out";
         logoutButton.style.display = "inline-flex";
       }
+      if (profileMenu) {
+        profileMenu.hidden = false;
+        profileMenu.style.display = "flex";
+      }
       if (loginLinkedinButton) loginLinkedinButton.style.display = "none";
       if (loginGoogleButton) loginGoogleButton.style.display = "none";
       if (loginAppleButton) loginAppleButton.style.display = "none";
 
       if (userAvatar) {
-        userAvatar.src = currentUser.avatarUrl ?? "";
-        userAvatar.alt = currentUser.avatarUrl
-          ? `${displayName(currentUser)} avatar`
-          : "";
-        userAvatar.style.display = currentUser.avatarUrl ? "block" : "none";
+        const name = displayName(currentUser);
+        userAvatar.src = currentUser.avatarUrl ?? buildFallbackAvatarDataUrl(name);
+        userAvatar.alt = `${name} avatar`;
+        userAvatar.style.display = "block";
       }
       return;
     }
 
     if (logoutButton) logoutButton.style.display = "none";
+    if (profileMenu) {
+      profileMenu.hidden = true;
+      profileMenu.style.display = "none";
+    }
     if (loginMenu) loginMenu.style.display = "flex";
     if (loginToggleButton) loginToggleButton.style.display = "inline-flex";
     if (loginLinkedinButton) loginLinkedinButton.style.display = "inline-flex";
@@ -201,6 +223,7 @@ export function createAuthController(options: AuthControllerOptions) {
   return {
     setup,
     loadCurrentUser,
-    getCurrentUser
+    getCurrentUser,
+    displayName
   };
 }

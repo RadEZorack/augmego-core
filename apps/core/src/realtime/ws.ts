@@ -199,7 +199,7 @@ async function resolvePartyIdForUser(prisma: PrismaClient, userId: string) {
       where: { id: userId },
       select: { name: true, email: true }
     });
-    const ownerLabel = owner?.name ?? owner?.email ?? "My";
+    const ownerLabel = owner?.name ?? "My";
     ownedWorld = await prisma.party.create({
       data: {
         leaderId: userId,
@@ -341,7 +341,7 @@ async function buildPartyStateForUser(prisma: PrismaClient, user: SessionUser) {
         const isLeader = member.userId === party.leaderId;
         return {
           userId: member.user.id,
-          name: member.user.name ?? member.user.email ?? "User",
+          name: member.user.name ?? "User",
           email: member.user.email,
           avatarUrl: member.user.avatarUrl,
           online: Boolean(onlineClientId),
@@ -556,7 +556,7 @@ export function registerRealtimeWs<
         user: user
           ? {
               id: user.id,
-              name: user.name ?? user.email ?? "User",
+              name: user.name ?? "User",
               avatarUrl: user.avatarUrl
             }
           : null
@@ -568,10 +568,7 @@ export function registerRealtimeWs<
         players: [...players.entries()].map(([clientId, state]) => ({
           clientId,
           userId: socketUsers.get(clientId)?.id ?? null,
-          name:
-            socketUsers.get(clientId)?.name ??
-            socketUsers.get(clientId)?.email ??
-            null,
+          name: socketUsers.get(clientId)?.name ?? null,
           avatarUrl: socketUsers.get(clientId)?.avatarUrl ?? null,
           partyId: socketPartyIds.get(clientId) ?? null,
           micMuted: playerMedia.get(clientId)?.micMuted ?? true,
@@ -621,7 +618,7 @@ export function registerRealtimeWs<
           createdAt: new Date().toISOString(),
           user: {
             id: user.id,
-            name: user.name ?? user.email ?? "User",
+            name: user.name ?? "User",
             avatarUrl: user.avatarUrl
           }
         };
@@ -664,7 +661,7 @@ export function registerRealtimeWs<
           createdAt: new Date().toISOString(),
           user: {
             id: user.id,
-            name: user.name ?? user.email ?? "User",
+            name: user.name ?? "User",
             avatarUrl: user.avatarUrl
           }
         };
@@ -765,7 +762,7 @@ export function registerRealtimeWs<
           id: inviteId,
           partyId: partyInfo.partyId,
           leaderUserId: user.id,
-          leaderName: user.name ?? user.email ?? "User",
+          leaderName: user.name ?? "User",
           leaderAvatarUrl: user.avatarUrl,
           targetUserId,
           createdAt: new Date(nowMs).toISOString(),
@@ -922,7 +919,7 @@ export function registerRealtimeWs<
           (await options.prisma.party.create({
             data: {
               leaderId: user.id,
-              name: `${user.name ?? user.email ?? "My"}'s World`,
+              name: `${user.name ?? "My"}'s World`,
               isPublic: true
             },
             select: { id: true }
@@ -1168,7 +1165,7 @@ export function registerRealtimeWs<
           player: {
             clientId: ws.id,
             userId: user?.id ?? null,
-            name: user?.name ?? user?.email ?? null,
+            name: user?.name ?? null,
             avatarUrl: user?.avatarUrl ?? null,
             partyId: socketPartyIds.get(ws.id) ?? null,
             micMuted: playerMedia.get(ws.id)?.micMuted ?? true,

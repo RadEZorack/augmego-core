@@ -467,7 +467,7 @@ async function getDefaultWorldNameForUser(userId: string) {
     where: { id: userId },
     select: { name: true, email: true }
   });
-  return `${owner?.name ?? owner?.email ?? "My"}'s World`;
+  return `${owner?.name ?? "My"}'s World`;
 }
 
 async function resolveOwnedWorldParty(userId: string) {
@@ -2426,6 +2426,64 @@ const api = new Elysia({ prefix: "/api/v1" })
       }
     });
   })
+  .patch("/auth/profile", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      name?: unknown;
+      avatarUrl?: unknown;
+    } | null;
+    if (!body) {
+      return jsonResponse({ error: "INVALID_PROFILE" }, { status: 400 });
+    }
+
+    const nextName =
+      typeof body.name === "string" ? body.name.trim().slice(0, 80) : undefined;
+    const rawAvatarUrl =
+      typeof body.avatarUrl === "string"
+        ? body.avatarUrl.trim().slice(0, 500)
+        : undefined;
+
+    if (rawAvatarUrl !== undefined && rawAvatarUrl.length > 0) {
+      try {
+        const parsed = new URL(rawAvatarUrl);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          return jsonResponse({ error: "INVALID_AVATAR_URL" }, { status: 400 });
+        }
+      } catch {
+        return jsonResponse({ error: "INVALID_AVATAR_URL" }, { status: 400 });
+      }
+    }
+
+    const updated = await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        ...(nextName !== undefined ? { name: nextName || null } : {}),
+        ...(rawAvatarUrl !== undefined
+          ? { avatarUrl: rawAvatarUrl.length > 0 ? rawAvatarUrl : null }
+          : {})
+      },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        avatarUrl: true
+      }
+    });
+
+    return jsonResponse({
+      ok: true,
+      user: {
+        id: updated.id,
+        name: updated.name,
+        email: updated.email,
+        avatarUrl: updated.avatarUrl
+      }
+    });
+  })
   .get("/worlds/search", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
     if (!user) {
@@ -2535,7 +2593,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         description: world.description,
         owner: {
           id: world.leader.id,
-          name: world.leader.name ?? world.leader.email ?? "User",
+          name: world.leader.name ?? "User",
           avatarUrl: world.leader.avatarUrl
         },
         isPublic: world.isPublic,
@@ -2597,7 +2655,7 @@ const api = new Elysia({ prefix: "/api/v1" })
           },
           owner: {
             id: world.leader.id,
-            name: world.leader.name ?? world.leader.email ?? "User",
+            name: world.leader.name ?? "User",
             avatarUrl: world.leader.avatarUrl
           },
           isOwnedWorld,
@@ -2893,7 +2951,7 @@ const api = new Elysia({ prefix: "/api/v1" })
           message: comment.message,
           author: {
             id: comment.createdBy.id,
-            name: comment.createdBy.name ?? comment.createdBy.email ?? "User",
+            name: comment.createdBy.name ?? "User",
             avatarUrl: comment.createdBy.avatarUrl
           },
           createdAt: comment.createdAt.toISOString(),
@@ -2901,7 +2959,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         })),
         author: {
           id: post.createdBy.id,
-          name: post.createdBy.name ?? post.createdBy.email ?? "User",
+          name: post.createdBy.name ?? "User",
           avatarUrl: post.createdBy.avatarUrl
         },
         createdAt: post.createdAt.toISOString(),
@@ -4077,7 +4135,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         message: comment.message,
         author: {
           id: comment.createdBy.id,
-          name: comment.createdBy.name ?? comment.createdBy.email ?? "User",
+          name: comment.createdBy.name ?? "User",
           avatarUrl: comment.createdBy.avatarUrl
         },
         createdAt: comment.createdAt.toISOString(),
@@ -4140,7 +4198,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         message: comment.message,
         author: {
           id: comment.createdBy.id,
-          name: comment.createdBy.name ?? comment.createdBy.email ?? "User",
+          name: comment.createdBy.name ?? "User",
           avatarUrl: comment.createdBy.avatarUrl
         },
         createdAt: comment.createdAt.toISOString(),
