@@ -152,6 +152,9 @@ export type WorldState = {
   worldName: string;
   worldDescription: string | null;
   worldOwnerId: string;
+  portalLat: number;
+  portalLng: number;
+  portalIsPublic: boolean;
   canManage: boolean;
   isPublic: boolean;
   canManageVisibility: boolean;
@@ -159,6 +162,26 @@ export type WorldState = {
   placements: WorldPlacement[];
   posts: WorldPost[];
   photoWalls: WorldPhotoWall[];
+};
+
+export type WorldPortal = {
+  worldId: string;
+  worldName: string;
+  worldDescription: string | null;
+  worldIsPublic: boolean;
+  portalIsPublic: boolean;
+  portal: {
+    lat: number;
+    lng: number;
+  };
+  owner: {
+    id: string;
+    name: string;
+    avatarUrl: string | null;
+  };
+  isOwnedWorld: boolean;
+  canJoin: boolean;
+  updatedAt: string;
 };
 
 export type WorldAssetGenerationTask = {

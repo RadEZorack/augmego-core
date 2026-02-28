@@ -73,6 +73,9 @@ model Party {
   name      String       @default("Untitled World")
   description String?
   isPublic  Boolean      @default(false)
+  portalLat Float        @default(43.090003)
+  portalLng Float        @default(-79.068051)
+  portalIsPublic Boolean @default(true)
   leader    User         @relation("PartyLeader", fields: [leaderId], references: [id], onDelete: Cascade)
   members   PartyMember[]
   createdAt DateTime     @default(now())

@@ -130,6 +130,8 @@ const WORLD_ASSET_GENERATION_MAX_ATTEMPTS = toPositiveInteger(
   process.env.WORLD_ASSET_GENERATION_MAX_ATTEMPTS,
   5
 );
+const DEFAULT_WORLD_PORTAL_LAT = 43.090003;
+const DEFAULT_WORLD_PORTAL_LNG = -79.068051;
 
 const webOrigin = (() => {
   try {
@@ -468,21 +470,43 @@ async function getDefaultWorldNameForUser(userId: string) {
   return `${owner?.name ?? owner?.email ?? "My"}'s World`;
 }
 
-async function resolveActiveWorldOwnerId(userId: string) {
-  const ownedWorld = await prisma.party.findFirst({
+async function resolveOwnedWorldParty(userId: string) {
+  const existing = await prisma.party.findFirst({
     where: { leaderId: userId },
     orderBy: { createdAt: "asc" },
-    select: { id: true }
+    select: { id: true, leaderId: true }
   });
-  if (!ownedWorld) {
-    const defaultWorldName = await getDefaultWorldNameForUser(userId);
-    await prisma.party.create({
-      data: {
-        leaderId: userId,
-        name: defaultWorldName
-      }
-    });
-  }
+  if (existing) return existing;
+
+  const defaultWorldName = await getDefaultWorldNameForUser(userId);
+  return prisma.party.create({
+    data: {
+      leaderId: userId,
+      name: defaultWorldName,
+      portalLat: DEFAULT_WORLD_PORTAL_LAT,
+      portalLng: DEFAULT_WORLD_PORTAL_LNG,
+      portalIsPublic: true
+    },
+    select: { id: true, leaderId: true }
+  });
+}
+
+function normalizePortalLatitude(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < -90 || parsed > 90) return null;
+  return parsed;
+}
+
+function normalizePortalLongitude(value: unknown) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return null;
+  if (parsed < -180 || parsed > 180) return null;
+  return parsed;
+}
+
+async function resolveActiveWorldOwnerId(userId: string) {
+  await resolveOwnedWorldParty(userId);
 
   const membership = await prisma.partyMember.findUnique({
     where: { userId },
@@ -528,19 +552,7 @@ async function resolveActiveWorldPartyId(userId: string) {
   });
   if (membership) return membership.partyId;
 
-  const ownedWorld =
-    (await prisma.party.findFirst({
-      where: { leaderId: userId },
-      orderBy: { createdAt: "asc" },
-      select: { id: true }
-    })) ??
-    (await prisma.party.create({
-      data: {
-        leaderId: userId,
-        name: await getDefaultWorldNameForUser(userId)
-      },
-      select: { id: true }
-    }));
+  const ownedWorld = await resolveOwnedWorldParty(userId);
   return ownedWorld.id;
 }
 
@@ -2536,6 +2548,170 @@ const api = new Elysia({ prefix: "/api/v1" })
       }))
     });
   })
+  .get("/worlds/portals", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+
+    const worlds = await prisma.party.findMany({
+      where: {
+        OR: [
+          { isPublic: true, portalIsPublic: true },
+          ...(user ? [{ leaderId: user.id }] : [])
+        ]
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 500,
+      select: {
+        id: true,
+        leaderId: true,
+        name: true,
+        description: true,
+        isPublic: true,
+        portalIsPublic: true,
+        portalLat: true,
+        portalLng: true,
+        updatedAt: true,
+        leader: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        }
+      }
+    });
+
+    return jsonResponse({
+      portals: worlds.map((world) => {
+        const isOwnedWorld = Boolean(user && world.leaderId === user.id);
+        return {
+          worldId: world.id,
+          worldName: world.name,
+          worldDescription: world.description,
+          worldIsPublic: world.isPublic,
+          portalIsPublic: world.portalIsPublic,
+          portal: {
+            lat: world.portalLat,
+            lng: world.portalLng
+          },
+          owner: {
+            id: world.leader.id,
+            name: world.leader.name ?? world.leader.email ?? "User",
+            avatarUrl: world.leader.avatarUrl
+          },
+          isOwnedWorld,
+          canJoin: world.isPublic || isOwnedWorld,
+          updatedAt: world.updatedAt.toISOString()
+        };
+      })
+    });
+  })
+  .get("/world/home-portal", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const ownedWorld = await resolveOwnedWorldParty(user.id);
+    const world = await prisma.party.findUnique({
+      where: { id: ownedWorld.id },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        isPublic: true,
+        portalIsPublic: true,
+        portalLat: true,
+        portalLng: true
+      }
+    });
+    if (!world) {
+      return jsonResponse({ error: "WORLD_NOT_FOUND" }, { status: 404 });
+    }
+
+    return jsonResponse({
+      worldId: world.id,
+      worldName: world.name,
+      worldDescription: world.description,
+      worldIsPublic: world.isPublic,
+      portalIsPublic: world.portalIsPublic,
+      portal: {
+        lat: world.portalLat,
+        lng: world.portalLng
+      }
+    });
+  })
+  .patch("/world/home-portal", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      lat?: unknown;
+      lng?: unknown;
+      portalIsPublic?: unknown;
+    } | null;
+    if (!body) {
+      return jsonResponse({ error: "INVALID_PORTAL_PAYLOAD" }, { status: 400 });
+    }
+
+    const lat =
+      body.lat === undefined ? undefined : normalizePortalLatitude(body.lat);
+    const lng =
+      body.lng === undefined ? undefined : normalizePortalLongitude(body.lng);
+    if (body.lat !== undefined && lat === null) {
+      return jsonResponse({ error: "INVALID_PORTAL_LATITUDE" }, { status: 400 });
+    }
+    if (body.lng !== undefined && lng === null) {
+      return jsonResponse({ error: "INVALID_PORTAL_LONGITUDE" }, { status: 400 });
+    }
+
+    if (
+      lat === undefined &&
+      lng === undefined &&
+      typeof body.portalIsPublic !== "boolean"
+    ) {
+      return jsonResponse({ error: "INVALID_PORTAL_PAYLOAD" }, { status: 400 });
+    }
+
+    const latValue = lat === null ? undefined : lat;
+    const lngValue = lng === null ? undefined : lng;
+
+    const ownedWorld = await resolveOwnedWorldParty(user.id);
+    const updated = await prisma.party.update({
+      where: { id: ownedWorld.id },
+      data: {
+        ...(latValue !== undefined ? { portalLat: latValue } : {}),
+        ...(lngValue !== undefined ? { portalLng: lngValue } : {}),
+        ...(typeof body.portalIsPublic === "boolean"
+          ? { portalIsPublic: body.portalIsPublic }
+          : {})
+      },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        isPublic: true,
+        portalIsPublic: true,
+        portalLat: true,
+        portalLng: true
+      }
+    });
+
+    return jsonResponse({
+      ok: true,
+      worldId: updated.id,
+      worldName: updated.name,
+      worldDescription: updated.description,
+      worldIsPublic: updated.isPublic,
+      portalIsPublic: updated.portalIsPublic,
+      portal: {
+        lat: updated.portalLat,
+        lng: updated.portalLng
+      }
+    });
+  })
   .get("/world", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
     if (!user) {
@@ -2547,7 +2723,16 @@ const api = new Elysia({ prefix: "/api/v1" })
     const canManage = await canManageWorldOwner(user.id, worldOwnerId);
     const activeWorld = await prisma.party.findUnique({
       where: { id: activeWorldPartyId },
-      select: { id: true, isPublic: true, leaderId: true, name: true, description: true }
+      select: {
+        id: true,
+        isPublic: true,
+        leaderId: true,
+        name: true,
+        description: true,
+        portalIsPublic: true,
+        portalLat: true,
+        portalLng: true
+      }
     });
 
     const [assets, placements, posts, photoWalls] = await Promise.all([
@@ -2627,6 +2812,9 @@ const api = new Elysia({ prefix: "/api/v1" })
       worldId: activeWorld?.id ?? activeWorldPartyId,
       worldName: activeWorld?.name ?? "Untitled World",
       worldDescription: activeWorld?.description ?? null,
+      portalIsPublic: activeWorld?.portalIsPublic ?? true,
+      portalLat: activeWorld?.portalLat ?? DEFAULT_WORLD_PORTAL_LAT,
+      portalLng: activeWorld?.portalLng ?? DEFAULT_WORLD_PORTAL_LNG,
       canManage,
       isPublic: activeWorld?.isPublic ?? false,
       canManageVisibility: (activeWorld?.leaderId ?? "") === user.id,

@@ -3,6 +3,7 @@ import "./style.css";
 
 import { createGameScene } from "./game/scene";
 import {
+  buildWorldUrl,
   createApiUrlResolver,
   PENDING_WORLD_JOIN_STORAGE_KEY,
   parseWorldIdFromUrl,
@@ -15,6 +16,7 @@ import type {
   PlayerPayload,
   WorldAsset,
   WorldAssetGenerationTask,
+  WorldPortal,
   WorldPhotoWall,
   WorldPost,
   WorldPostComment,
@@ -27,6 +29,7 @@ import { createAuthController } from "./ui/auth";
 import { createChatController } from "./ui/chat";
 import { createMediaController } from "./ui/media";
 import { createPartyController } from "./ui/party";
+import { createWorldMapController } from "./ui/world-map";
 
 const app = document.getElementById("app");
 
@@ -35,6 +38,34 @@ if (!app) {
 }
 
 const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
+const worldMapScreen = document.getElementById("world-map-screen") as HTMLElement | null;
+const worldMapCanvas = document.getElementById("world-map-canvas") as HTMLElement | null;
+const worldMapStatus = document.getElementById("world-map-status") as HTMLDivElement | null;
+const worldMapSavePinButton = document.getElementById(
+  "world-map-save-pin"
+) as HTMLButtonElement | null;
+const worldMapZoomInButton = document.getElementById(
+  "world-map-zoom-in"
+) as HTMLButtonElement | null;
+const worldMapZoomOutButton = document.getElementById(
+  "world-map-zoom-out"
+) as HTMLButtonElement | null;
+const worldMapWorldCard = document.getElementById(
+  "world-map-world-card"
+) as HTMLElement | null;
+const worldMapWorldName = document.getElementById(
+  "world-map-world-name"
+) as HTMLElement | null;
+const worldMapWorldOwner = document.getElementById(
+  "world-map-world-owner"
+) as HTMLElement | null;
+const worldMapWorldDesc = document.getElementById(
+  "world-map-world-desc"
+) as HTMLElement | null;
+const worldMapJoinWorldButton = document.getElementById(
+  "world-map-join-world"
+) as HTMLButtonElement | null;
+const homeMapButton = document.getElementById("home-map-button") as HTMLButtonElement | null;
 const dockMinimizeButton = document.getElementById("dock-minimize") as HTMLButtonElement | null;
 const dockHeightToggleButton = document.getElementById(
   "dock-height-toggle"
@@ -345,6 +376,8 @@ const placementPersistTimers = new Map<string, number>();
 const photoWallPersistTimers = new Map<string, number>();
 let pendingAutoJoinWorldId = readInitialLinkedWorldId();
 let autoJoinWorldIdSent: string | null = null;
+let worldViewActive = Boolean(pendingAutoJoinWorldId);
+let knownWorldPortals: WorldPortal[] = [];
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
@@ -520,9 +553,7 @@ function setWorldNotice(message: string) {
 }
 
 function buildShareWorldLink(worldId: string) {
-  const url = new URL(window.location.origin);
-  url.searchParams.set("worldId", worldId);
-  return url.toString();
+  return buildWorldUrl(worldId);
 }
 
 function syncShareWorldLinkButton() {
@@ -2053,6 +2084,14 @@ function createReplaceInput(onSelect: (file: File) => void) {
 }
 
 async function loadWorldState() {
+  if (!worldViewActive) {
+    stopWorldGenerationPolling();
+    game.setWorldData(null);
+    game.setPendingWorldPostPlacement(null);
+    syncShareWorldLinkButton();
+    return;
+  }
+
   if (!auth.getCurrentUser()) {
     worldState = null;
     worldGenerationTasks = [];
@@ -2626,6 +2665,150 @@ const game = createGameScene({
   }
 });
 
+function setWorldViewMode(active: boolean) {
+  worldViewActive = active;
+  dockPanel?.toggleAttribute("hidden", !active);
+  if (active) {
+    worldMap.activateWorldView();
+    return;
+  }
+  worldMap.showMapView();
+}
+
+function setWorldRoute(worldId: string, replace = false) {
+  const pathname = `/world/${encodeURIComponent(worldId)}`;
+  if (window.location.pathname === pathname) return;
+  if (replace) {
+    window.history.replaceState(null, "", pathname);
+    return;
+  }
+  window.history.pushState(null, "", pathname);
+}
+
+function setMapRoute(replace = false) {
+  if (window.location.pathname === "/") return;
+  if (replace) {
+    window.history.replaceState(null, "", "/");
+    return;
+  }
+  window.history.pushState(null, "", "/");
+}
+
+function activateWorldViewForWorld(worldId: string) {
+  pendingAutoJoinWorldId = worldId;
+  autoJoinWorldIdSent = null;
+  setWorldRoute(worldId);
+  setWorldViewMode(true);
+  try {
+    window.sessionStorage.setItem(PENDING_WORLD_JOIN_STORAGE_KEY, worldId);
+  } catch {
+    // Ignore storage failures.
+  }
+  if (realtime.isOpen() && realtime.sendWorldJoin(worldId)) {
+    autoJoinWorldIdSent = worldId;
+  } else {
+    tryAutoJoinLinkedWorld();
+  }
+  if (auth.getCurrentUser()) {
+    void loadWorldState();
+  }
+}
+
+async function loadWorldPortalPins() {
+  const response = await fetch(apiUrl("/api/v1/worlds/portals"), {
+    credentials: "include"
+  });
+  if (!response.ok) {
+    worldMap.setStatus("Failed to load world portals");
+    return;
+  }
+
+  const payload = (await response.json()) as { portals: WorldPortal[] };
+  knownWorldPortals = payload.portals;
+  worldMap.setPortals(payload.portals);
+  if (pendingAutoJoinWorldId) {
+    worldMap.selectPortal(pendingAutoJoinWorldId);
+  }
+}
+
+async function loadHomePortal() {
+  const user = auth.getCurrentUser();
+  worldMap.setCurrentUser(user);
+  if (!user) {
+    worldMap.setHomePortal(null);
+    return;
+  }
+
+  const response = await fetch(apiUrl("/api/v1/world/home-portal"), {
+    credentials: "include"
+  });
+  if (!response.ok) {
+    return;
+  }
+  const payload = (await response.json()) as {
+    worldId: string;
+    portal: { lat: number; lng: number };
+  };
+  worldMap.setHomePortal(payload.portal);
+  if (!worldViewActive) {
+    worldMap.focusDefault();
+  }
+}
+
+const worldMap = createWorldMapController({
+  mapCanvas: worldMapCanvas,
+  mapScreen: worldMapScreen,
+  statusEl: worldMapStatus,
+  worldCard: worldMapWorldCard,
+  worldNameEl: worldMapWorldName,
+  worldOwnerEl: worldMapWorldOwner,
+  worldDescEl: worldMapWorldDesc,
+  joinButton: worldMapJoinWorldButton,
+  savePinButton: worldMapSavePinButton,
+  zoomInButton: worldMapZoomInButton,
+  zoomOutButton: worldMapZoomOutButton,
+  onStatus(message) {
+    if (!worldViewActive) {
+      setWorldNotice(message);
+    }
+  },
+  onJoinWorld(worldId) {
+    if (!auth.getCurrentUser()) {
+      worldMap.setStatus("Sign in to join worlds");
+      return;
+    }
+    const selectedPortal = knownWorldPortals.find((portal) => portal.worldId === worldId);
+    if (selectedPortal && !selectedPortal.canJoin) {
+      worldMap.setStatus("This world is private");
+      return;
+    }
+    activateWorldViewForWorld(worldId);
+  },
+  async onSavePortal(position) {
+    if (!auth.getCurrentUser()) {
+      worldMap.setStatus("Sign in to set your portal");
+      return false;
+    }
+    const response = await fetch(apiUrl("/api/v1/world/home-portal"), {
+      method: "PATCH",
+      credentials: "include",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        lat: position.lat,
+        lng: position.lng
+      })
+    });
+    if (!response.ok) {
+      worldMap.setStatus("Failed to save home portal");
+      return false;
+    }
+    await Promise.all([loadHomePortal(), loadWorldPortalPins()]);
+    return true;
+  }
+});
+
 function setupCameraControlsTab() {
   if (
     !cameraZoomSlider ||
@@ -2705,6 +2888,7 @@ const auth = createAuthController({
     game.setLocalIdentity(user?.name ?? user?.email ?? "Guest", user?.avatarUrl ?? null);
     party.setCurrentUser(user);
     syncChatCanPost();
+    worldMap.setCurrentUser(user);
 
     if (!user) {
       worldState = null;
@@ -2755,10 +2939,15 @@ const auth = createAuthController({
       renderWorldPhotoWallEditor();
       syncWorldVisibilityControls();
       syncShareWorldLinkButton();
+      void loadWorldPortalPins();
       return;
     }
 
-    void loadWorldState();
+    void loadHomePortal();
+    void loadWorldPortalPins();
+    if (worldViewActive) {
+      void loadWorldState();
+    }
     tryAutoJoinLinkedWorld();
     syncShareWorldLinkButton();
   }
@@ -2871,7 +3060,7 @@ const party = createPartyController({
     return payload.results;
   },
   onJoinWorld(worldId) {
-    realtime.sendWorldJoin(worldId);
+    activateWorldViewForWorld(worldId);
   },
   onInviteResponse(inviteId, accept) {
     realtime.sendPartyInviteResponse(inviteId, accept);
@@ -2890,11 +3079,12 @@ const party = createPartyController({
 const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
   onStatus(status) {
     chat.setStatus(status);
-    if (status === "Connected" && auth.getCurrentUser()) {
+    if (status === "Connected" && auth.getCurrentUser() && worldViewActive) {
       void loadWorldState();
     }
     if (status === "Connected") {
       tryAutoJoinLinkedWorld();
+      void loadWorldPortalPins();
     }
   },
   onSessionInfo(clientId) {
@@ -2964,7 +3154,12 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
     }
 
     syncMediaPeersAndVolumes();
-    void loadWorldState();
+    if (worldViewActive && state.party?.id) {
+      setWorldRoute(state.party.id, true);
+    }
+    if (worldViewActive) {
+      void loadWorldState();
+    }
   },
   onPartyInvite(invite) {
     party.addIncomingInvite(invite);
@@ -3014,6 +3209,7 @@ const realtime = createRealtimeClient(resolveWsUrl(apiBase, wsBase), {
 });
 
 function tryAutoJoinLinkedWorld() {
+  if (!worldViewActive) return;
   if (!pendingAutoJoinWorldId) return;
   if (autoJoinWorldIdSent === pendingAutoJoinWorldId) return;
   if (!auth.getCurrentUser()) return;
@@ -3056,6 +3252,36 @@ setupCameraControlsTab();
 setupChatChannelToggles();
 shareWorldLinkButton?.addEventListener("click", () => {
   void copyCurrentWorldLink();
+});
+homeMapButton?.addEventListener("click", () => {
+  pendingAutoJoinWorldId = null;
+  autoJoinWorldIdSent = null;
+  setWorldViewMode(false);
+  setMapRoute();
+  worldMap.focusDefault();
+  worldMap.selectPortal(null);
+  try {
+    window.sessionStorage.removeItem(PENDING_WORLD_JOIN_STORAGE_KEY);
+  } catch {
+    // Ignore storage failures.
+  }
+});
+window.addEventListener("popstate", () => {
+  const worldId = parseWorldIdFromUrl(new URL(window.location.href));
+  if (worldId) {
+    pendingAutoJoinWorldId = worldId;
+    autoJoinWorldIdSent = null;
+    setWorldViewMode(true);
+    tryAutoJoinLinkedWorld();
+    if (auth.getCurrentUser()) {
+      void loadWorldState();
+    }
+    return;
+  }
+  setWorldViewMode(false);
+  pendingAutoJoinWorldId = null;
+  autoJoinWorldIdSent = null;
+  setMapRoute(true);
 });
 
 worldGenerateForm?.addEventListener("submit", (event) => {
@@ -3435,7 +3661,13 @@ game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 media.setPermissionState("not_requested");
 syncChatCanPost();
 renderCombinedChat();
-setWorldNotice("Sign in to load world");
+setWorldViewMode(worldViewActive);
+if (worldViewActive) {
+  setWorldNotice("Sign in to load world");
+} else {
+  setWorldNotice("Explore world portals on the map");
+  worldMap.focusDefault();
+}
 if (worldUploadButton) worldUploadButton.disabled = true;
 if (worldModelFileInput) worldModelFileInput.disabled = true;
 if (worldModelNameInput) worldModelNameInput.disabled = true;
@@ -3468,6 +3700,7 @@ renderWorldPostComments();
 renderWorldPlacementEditor();
 renderWorldPhotoWallEditor();
 syncShareWorldLinkButton();
+void loadWorldPortalPins();
 void auth.loadCurrentUser();
 realtime.connect();
 void webrtc.refreshDevices();

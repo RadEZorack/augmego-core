@@ -8,10 +8,10 @@
   </head>
   <body>
     <header class="overlay-header">
-      <div class="brand">
+      <button class="brand" id="home-map-button" type="button" aria-label="Go to map home">
         <img class="brand-logo" src="./src/assets/logo.png" alt="Augmego logo" />
         <span>Augmego</span>
-      </div>
+      </button>
       <div class="auth-actions">
         <button
           class="header-icon-button"
@@ -75,6 +75,33 @@
         </button>
       </div>
     </header>
+    <section id="world-map-screen" class="world-map-screen" aria-label="World map">
+      <div id="world-map-canvas" class="world-map-canvas"></div>
+      <div class="world-map-controls">
+        <div id="world-map-status" class="world-map-status">
+          Loading world portals...
+        </div>
+        <div class="world-map-zoom-controls">
+          <button id="world-map-zoom-in" class="world-map-action" type="button" aria-label="Zoom in">
+            +
+          </button>
+          <button id="world-map-zoom-out" class="world-map-action" type="button" aria-label="Zoom out">
+            -
+          </button>
+        </div>
+        <button id="world-map-save-pin" class="world-map-action" type="button" disabled>
+          Save Home Portal Here
+        </button>
+      </div>
+      <article id="world-map-world-card" class="world-map-world-card" hidden>
+        <div id="world-map-world-name" class="world-map-world-name"></div>
+        <div id="world-map-world-owner" class="world-map-world-owner"></div>
+        <div id="world-map-world-desc" class="world-map-world-desc"></div>
+        <button id="world-map-join-world" class="world-map-action" type="button">
+          Join World
+        </button>
+      </article>
+    </section>
     <div id="app"></div>
     <aside class="dock-panel" id="dock-panel" aria-label="Communication panel">
       <div class="dock-header">
