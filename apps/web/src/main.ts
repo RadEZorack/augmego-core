@@ -371,6 +371,9 @@ const worldGenerateVisibilityInput = document.getElementById(
 const worldGenerateTypeInput = document.getElementById(
   "world-generate-type"
 ) as HTMLSelectElement | null;
+const worldGenerateEnhancedGraphicsInput = document.getElementById(
+  "world-generate-enhanced-graphics"
+) as HTMLInputElement | null;
 const worldGenerateButton = document.getElementById(
   "world-generate-button"
 ) as HTMLButtonElement | null;
@@ -721,6 +724,9 @@ function syncWorldVisibilityControls() {
     if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
     if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = true;
+    if (worldGenerateEnhancedGraphicsInput) {
+      worldGenerateEnhancedGraphicsInput.disabled = true;
+    }
     if (worldGenerateButton) worldGenerateButton.disabled = true;
     if (worldGenerateImageButton) worldGenerateImageButton.disabled = true;
     if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
@@ -753,6 +759,9 @@ function syncWorldVisibilityControls() {
   if (worldModelVisibilityInput) worldModelVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !worldState.canManage;
   if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = !worldState.canManage;
+  if (worldGenerateEnhancedGraphicsInput) {
+    worldGenerateEnhancedGraphicsInput.disabled = !worldState.canManage;
+  }
   if (worldGenerateButton) worldGenerateButton.disabled = !worldState.canManage;
   if (worldGenerateImageButton) {
     worldGenerateImageButton.disabled = !worldState.canManage;
@@ -2083,6 +2092,9 @@ async function loadWorldState() {
     if (worldGenerateImageFileInput) worldGenerateImageFileInput.disabled = true;
     if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
     if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
+    if (worldGenerateEnhancedGraphicsInput) {
+      worldGenerateEnhancedGraphicsInput.disabled = true;
+    }
     if (worldGenerateButton) worldGenerateButton.disabled = true;
     if (worldGenerateImageButton) worldGenerateImageButton.disabled = true;
     if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;
@@ -2163,6 +2175,9 @@ async function loadWorldState() {
   }
   if (worldGenerateNameInput) worldGenerateNameInput.disabled = !payload.canManage;
   if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = !payload.canManage;
+  if (worldGenerateEnhancedGraphicsInput) {
+    worldGenerateEnhancedGraphicsInput.disabled = !payload.canManage;
+  }
   if (worldGenerateTypeInput) worldGenerateTypeInput.disabled = !payload.canManage;
   if (worldGenerateButton) worldGenerateButton.disabled = !payload.canManage;
   if (worldGenerateImageButton) {
@@ -3073,6 +3088,7 @@ worldGenerateForm?.addEventListener("submit", (event) => {
       body: JSON.stringify({
         prompt,
         generationType,
+        enhancedGraphics: worldGenerateEnhancedGraphicsInput?.checked !== false,
         name: worldGenerateNameInput?.value?.trim() ?? "",
         visibility: worldGenerateVisibilityInput?.value === "private" ? "private" : "public"
       })
@@ -3098,6 +3114,9 @@ worldGenerateForm?.addEventListener("submit", (event) => {
     }
     if (worldGenerateTypeInput) {
       worldGenerateTypeInput.value = "object";
+    }
+    if (worldGenerateEnhancedGraphicsInput) {
+      worldGenerateEnhancedGraphicsInput.checked = true;
     }
 
     setWorldNotice(
@@ -3134,6 +3153,10 @@ worldGenerateImageForm?.addEventListener("submit", (event) => {
     const formData = new FormData();
     formData.set("file", file);
     formData.set("generationType", generationType);
+    formData.set(
+      "enhancedGraphics",
+      worldGenerateEnhancedGraphicsInput?.checked === false ? "false" : "true"
+    );
     formData.set("name", worldGenerateNameInput?.value?.trim() ?? "");
     formData.set(
       "visibility",
@@ -3184,6 +3207,9 @@ worldGenerateImageForm?.addEventListener("submit", (event) => {
     }
     if (worldGenerateTypeInput) {
       worldGenerateTypeInput.value = "object";
+    }
+    if (worldGenerateEnhancedGraphicsInput) {
+      worldGenerateEnhancedGraphicsInput.checked = true;
     }
 
     setWorldNotice(
@@ -3418,6 +3444,7 @@ if (worldGeneratePromptInput) worldGeneratePromptInput.disabled = true;
 if (worldGenerateImageFileInput) worldGenerateImageFileInput.disabled = true;
 if (worldGenerateNameInput) worldGenerateNameInput.disabled = true;
 if (worldGenerateVisibilityInput) worldGenerateVisibilityInput.disabled = true;
+if (worldGenerateEnhancedGraphicsInput) worldGenerateEnhancedGraphicsInput.disabled = true;
 if (worldGenerateButton) worldGenerateButton.disabled = true;
 if (worldGenerateImageButton) worldGenerateImageButton.disabled = true;
 if (worldPhotoWallButton) worldPhotoWallButton.disabled = true;

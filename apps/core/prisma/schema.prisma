@@ -219,6 +219,7 @@ model WorldAssetGenerationTask {
   status             WorldAssetGenerationStatus @default(PENDING)
   generationType     String                     @default("OBJECT")
   generationSource   String                     @default("TEXT")
+  enhancedGraphics   Boolean                    @default(true)
   visibility         WorldAssetVisibility       @default(PUBLIC)
   prompt             String
   modelName          String

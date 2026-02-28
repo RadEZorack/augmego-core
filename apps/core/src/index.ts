@@ -424,6 +424,16 @@ function normalizeWorldAssetGenerationSource(
   return normalized === "image" ? "IMAGE" : "TEXT";
 }
 
+function normalizeEnhancedGraphicsToggle(value: unknown) {
+  if (typeof value === "boolean") return value;
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (!normalized) return true;
+  if (normalized === "false" || normalized === "0" || normalized === "off") {
+    return false;
+  }
+  return true;
+}
+
 function resolveWorldAssetGenerationKind(task: {
   generationType?: string | null;
   meshyStatus?: string | null;
@@ -1726,7 +1736,10 @@ async function processHumanoidWorldAssetGenerationTask(task: any) {
   const generatedFile = await downloadMeshyGlbAsFile(
     animationGlbUrl,
     `${task.modelName}_${animation.name}`,
-    { normalizeMaterials: true }
+    {
+      normalizeMaterials:
+        typeof task.enhancedGraphics === "boolean" ? task.enhancedGraphics : true
+    }
   );
   const generated = await createWorldAssetWithInitialVersion({
     worldOwnerId: task.worldOwnerId,
@@ -2893,6 +2906,9 @@ const api = new Elysia({ prefix: "/api/v1" })
     const requestedName =
       typeof payload?.name === "string" ? payload.name.trim() : "";
     const generationType = normalizeWorldAssetGenerationType(payload?.generationType);
+    const enhancedGraphics = normalizeEnhancedGraphicsToggle(
+      payload?.enhancedGraphics
+    );
     const visibility = normalizeWorldAssetVisibility(payload?.visibility);
     const modelName = normalizeAssetName(
       requestedName,
@@ -2907,6 +2923,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         modelName,
         generationType,
         generationSource: "TEXT",
+        enhancedGraphics,
         meshyStatus: generationType === "HUMANOID" ? "HUMANOID_QUEUED" : null,
         visibility
       } as any,
@@ -2958,6 +2975,9 @@ const api = new Elysia({ prefix: "/api/v1" })
     const generationType = normalizeWorldAssetGenerationType(
       formData.get("generationType")
     );
+    const enhancedGraphics = normalizeEnhancedGraphicsToggle(
+      formData.get("enhancedGraphics")
+    );
     const requestedName =
       typeof formData.get("name") === "string"
         ? String(formData.get("name")).trim()
@@ -2995,6 +3015,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         modelName,
         generationType,
         generationSource: "IMAGE",
+        enhancedGraphics,
         sourceImageUrl,
         sourceImageStorageKey: saved.storageKey,
         sourceImageContentType: fileValue.type || "application/octet-stream",
@@ -3043,6 +3064,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         status: true,
         generationType: true,
         generationSource: true,
+        enhancedGraphics: true,
         prompt: true,
         modelName: true,
         meshyStatus: true,
@@ -3062,6 +3084,10 @@ const api = new Elysia({ prefix: "/api/v1" })
         status: task.status,
         generationType: (task as any).generationType ?? "OBJECT",
         generationSource: (task as any).generationSource ?? "TEXT",
+        enhancedGraphics:
+          typeof (task as any).enhancedGraphics === "boolean"
+            ? (task as any).enhancedGraphics
+            : true,
         prompt: task.prompt,
         modelName: task.modelName,
         meshyStatus: task.meshyStatus,
