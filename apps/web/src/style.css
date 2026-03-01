@@ -1000,6 +1000,39 @@ canvas {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #c8e1f2;
+  font-size: 0.74rem;
+}
+
+.file-picker-input:disabled + .party-search-button {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.generation-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin: 8px 0;
+  color: #9fc3de;
+  font-size: 0.72rem;
+  text-transform: lowercase;
+}
+
+.generation-divider-title {
+  text-transform: none;
+}
+
+.generation-divider::before,
+.generation-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: rgba(44, 225, 255, 0.28);
+}
+
 .party-search-button,
 .party-leave-button,
 .party-secondary-button,
