@@ -397,9 +397,6 @@ const profileWorldNameInput = document.getElementById(
 const profileWorldDescriptionInput = document.getElementById(
   "profile-world-description-input"
 ) as HTMLInputElement | null;
-const profileWorldPublicToggle = document.getElementById(
-  "profile-world-public-toggle"
-) as HTMLInputElement | null;
 const profileSettingsSaveButton = document.getElementById(
   "profile-settings-save"
 ) as HTMLButtonElement | null;
@@ -546,8 +543,7 @@ const worldSettingsForm = document.getElementById("world-settings-form") as HTML
 const worldNameInput = document.getElementById("world-name-input") as HTMLInputElement | null;
 const worldDescriptionInput = document.getElementById(
   "world-description-input"
-) as HTMLInputElement | null;
-const worldPublicToggle = document.getElementById("world-public-toggle") as HTMLInputElement | null;
+) as HTMLTextAreaElement | null;
 const worldSettingsSaveButton = document.getElementById(
   "world-settings-save"
 ) as HTMLButtonElement | null;
@@ -649,10 +645,6 @@ function syncProfileSettingsForm() {
       ? worldState?.worldDescription ?? ""
       : "";
     profileWorldDescriptionInput.disabled = !canEditWorld;
-  }
-  if (profileWorldPublicToggle) {
-    profileWorldPublicToggle.checked = true;
-    profileWorldPublicToggle.disabled = true;
   }
   if (profileSettingsSaveButton) {
     profileSettingsSaveButton.disabled = !user;
@@ -857,19 +849,12 @@ async function loadWorldGenerationTasks() {
 }
 
 function syncWorldVisibilityControls() {
-  if (
-    !worldPublicToggle ||
-    !worldSettingsSaveButton ||
-    !worldNameInput ||
-    !worldDescriptionInput
-  ) {
+  if (!worldSettingsSaveButton || !worldNameInput || !worldDescriptionInput) {
     return;
   }
   if (!worldState) {
     worldNameInput.value = "";
     worldDescriptionInput.value = "";
-    worldPublicToggle.checked = false;
-    worldPublicToggle.disabled = true;
     worldNameInput.disabled = true;
     worldDescriptionInput.disabled = true;
     worldSettingsSaveButton.disabled = true;
@@ -902,8 +887,6 @@ function syncWorldVisibilityControls() {
 
   worldNameInput.value = worldState.worldName;
   worldDescriptionInput.value = worldState.worldDescription ?? "";
-  worldPublicToggle.checked = worldState.isPublic;
-  worldPublicToggle.disabled = !worldState.canManageVisibility;
   worldNameInput.disabled = !worldState.canManageVisibility;
   worldDescriptionInput.disabled = !worldState.canManageVisibility;
   worldSettingsSaveButton.disabled = !worldState.canManageVisibility;
@@ -3916,12 +3899,7 @@ async function updateWorldSettings(
 
 worldSettingsForm?.addEventListener("submit", (event) => {
   event.preventDefault();
-  if (
-    !worldState?.canManageVisibility ||
-    !worldPublicToggle ||
-    !worldNameInput ||
-    !worldDescriptionInput
-  ) {
+  if (!worldState?.canManageVisibility || !worldNameInput || !worldDescriptionInput) {
     return;
   }
 
@@ -3932,7 +3910,7 @@ worldSettingsForm?.addEventListener("submit", (event) => {
       return;
     }
     const description = worldDescriptionInput.value.trim();
-    const saved = await updateWorldSettings(name, description, worldPublicToggle.checked);
+    const saved = await updateWorldSettings(name, description, true);
     if (!saved) return;
     party.setNotice("World settings saved");
     syncProfileSettingsForm();

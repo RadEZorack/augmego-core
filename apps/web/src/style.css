@@ -907,6 +907,14 @@ canvas {
   margin-bottom: 8px;
 }
 
+#party-status {
+  display: none;
+}
+
+#world-status {
+  display: none;
+}
+
 .party-subtabs {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -961,6 +969,12 @@ canvas {
   color: #effbff;
   padding: 8px 10px;
   outline: none;
+}
+
+.world-description-input {
+  display: block;
+  width: 100%;
+  resize: vertical;
 }
 
 .party-search-button,

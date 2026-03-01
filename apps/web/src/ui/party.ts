@@ -118,11 +118,13 @@ export function createPartyController(options: PartyControllerOptions) {
   function renderMembers() {
     const memberList = options.elements.memberList;
     const leaveButton = options.elements.leaveButton;
-    if (!memberList || !leaveButton) return;
+    if (!memberList) return;
 
     memberList.innerHTML = "";
     if (!state.party) {
-      leaveButton.disabled = true;
+      if (leaveButton) {
+        leaveButton.disabled = true;
+      }
       const empty = document.createElement("div");
       empty.className = "party-empty";
       empty.textContent = "No active world";
@@ -130,8 +132,10 @@ export function createPartyController(options: PartyControllerOptions) {
       return;
     }
 
-    leaveButton.disabled = isLeader();
-    leaveButton.title = isLeader() ? "World owners cannot leave their own world" : "Leave world";
+    if (leaveButton) {
+      leaveButton.disabled = isLeader();
+      leaveButton.title = isLeader() ? "World owners cannot leave their own world" : "Leave world";
+    }
 
     for (const member of state.party.members) {
       const row = document.createElement("div");
