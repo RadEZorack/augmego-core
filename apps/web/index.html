@@ -403,25 +403,22 @@
           <div class="world-section">
             <div class="party-members-title">Generate Model</div>
             <div id="world-status" class="party-status">Sign in to load world</div>
-            <input
-              id="world-generate-name"
-              class="party-search-input"
-              type="text"
-              placeholder="Generated model name (optional)"
-              autocomplete="off"
-            />
             <div class="party-search">
-              <label for="world-generate-type" class="party-result-label">Generation type</label>
+              <input
+                id="world-generate-name"
+                class="party-search-input"
+                type="text"
+                placeholder="Generated model name (optional)"
+                autocomplete="off"
+              />
               <select id="world-generate-type" class="party-search-input">
                 <option value="object" selected>Object</option>
                 <option value="humanoid">Humanoid (Idle / Run / Dance)</option>
               </select>
             </div>
-            <div class="party-search">
-              <label for="world-generate-enhanced-graphics" class="party-result-label">
-                Enhanced graphics (recommended)
-              </label>
-              <input id="world-generate-enhanced-graphics" type="checkbox" checked />
+            <input id="world-generate-enhanced-graphics" type="checkbox" checked hidden />
+            <div class="generation-divider generation-divider-title" aria-hidden="true">
+              <span>Use one of the following options</span>
             </div>
             <form id="world-generate-form" class="party-search">
               <input
@@ -433,49 +430,33 @@
                 autocomplete="off"
               />
               <button id="world-generate-button" class="party-search-button" type="submit">
-                Generate 3D
+                Generate from Text
               </button>
             </form>
+            <div class="generation-divider" aria-hidden="true">
+              <span>or</span>
+            </div>
             <form id="world-generate-image-form" class="party-search">
-              <input
-                id="world-generate-image-file"
-                class="party-search-input"
-                type="file"
-                accept="image/*"
-              />
+              <div class="file-picker-row">
+                <input id="world-generate-image-file" class="file-picker-input" type="file" accept="image/*" />
+                <label for="world-generate-image-file" class="party-search-button">Choose Image</label>
+                <span id="world-generate-image-file-name" class="file-picker-name">No image chosen</span>
+              </div>
               <button id="world-generate-image-button" class="party-search-button" type="submit">
                 Generate from Image
               </button>
             </form>
-            <div class="party-search">
-              <label for="world-generate-visibility" class="party-result-label">Generated mesh visibility</label>
-              <select id="world-generate-visibility" class="party-search-input">
-                <option value="public" selected>Public</option>
-                <option value="private">Private</option>
-              </select>
+            <div class="generation-divider" aria-hidden="true">
+              <span>or</span>
             </div>
-          </div>
-
-          <div class="world-section">
-            <div class="party-members-title">Upload Model</div>
             <form id="world-upload-form" class="party-search">
-              <input
-                id="world-model-name"
-                class="party-search-input"
-                type="text"
-                placeholder="Model name"
-                autocomplete="off"
-              />
-              <button id="world-upload-button" class="party-search-button" type="submit">Upload</button>
+              <div class="file-picker-row">
+                <input id="world-model-file" class="file-picker-input" type="file" accept=".glb" />
+                <label for="world-model-file" class="party-search-button">Choose File</label>
+                <span id="world-model-file-name" class="file-picker-name">No file chosen</span>
+              </div>
+              <button id="world-upload-button" class="party-search-button" type="submit">Upload from File</button>
             </form>
-            <div class="party-search">
-              <label for="world-model-visibility" class="party-result-label">Uploaded mesh visibility</label>
-              <select id="world-model-visibility" class="party-search-input">
-                <option value="public" selected>Public</option>
-                <option value="private">Private</option>
-              </select>
-            </div>
-            <input id="world-model-file" class="party-search-input" type="file" accept=".glb" />
           </div>
 
           <div class="world-section">

@@ -453,6 +453,7 @@ const worldModelVisibilityInput = document.getElementById(
   "world-model-visibility"
 ) as HTMLSelectElement | null;
 const worldModelFileInput = document.getElementById("world-model-file") as HTMLInputElement | null;
+const worldModelFileName = document.getElementById("world-model-file-name") as HTMLSpanElement | null;
 const worldUploadButton = document.getElementById("world-upload-button") as HTMLButtonElement | null;
 const worldGenerateForm = document.getElementById("world-generate-form") as HTMLFormElement | null;
 const worldGenerateImageForm = document.getElementById(
@@ -464,6 +465,9 @@ const worldGeneratePromptInput = document.getElementById(
 const worldGenerateImageFileInput = document.getElementById(
   "world-generate-image-file"
 ) as HTMLInputElement | null;
+const worldGenerateImageFileName = document.getElementById(
+  "world-generate-image-file-name"
+) as HTMLSpanElement | null;
 const worldGenerateNameInput = document.getElementById("world-generate-name") as HTMLInputElement | null;
 const worldGenerateVisibilityInput = document.getElementById(
   "world-generate-visibility"
@@ -616,6 +620,18 @@ function inviteClient(clientId: string) {
 function setWorldNotice(message: string) {
   if (!worldStatus) return;
   worldStatus.textContent = message;
+}
+
+function syncWorldGenerateImageFileName() {
+  if (!worldGenerateImageFileName) return;
+  const selectedFile = worldGenerateImageFileInput?.files?.[0];
+  worldGenerateImageFileName.textContent = selectedFile?.name || "No image chosen";
+}
+
+function syncWorldModelFileName() {
+  if (!worldModelFileName) return;
+  const selectedFile = worldModelFileInput?.files?.[0];
+  worldModelFileName.textContent = selectedFile?.name || "No file chosen";
 }
 
 function setProfileMenuExpanded(expanded: boolean) {
@@ -3621,6 +3637,13 @@ worldGenerateForm?.addEventListener("submit", (event) => {
   })();
 });
 
+worldGenerateImageFileInput?.addEventListener("change", () => {
+  syncWorldGenerateImageFileName();
+});
+worldModelFileInput?.addEventListener("change", () => {
+  syncWorldModelFileName();
+});
+
 worldGenerateImageForm?.addEventListener("submit", (event) => {
   event.preventDefault();
   if (!worldState?.canManage) {
@@ -3689,6 +3712,7 @@ worldGenerateImageForm?.addEventListener("submit", (event) => {
     if (worldGenerateImageFileInput) {
       worldGenerateImageFileInput.value = "";
     }
+    syncWorldGenerateImageFileName();
     if (worldGeneratePromptInput) {
       worldGeneratePromptInput.value = "";
     }
@@ -3751,6 +3775,7 @@ worldUploadForm?.addEventListener("submit", (event) => {
     if (worldModelFileInput) {
       worldModelFileInput.value = "";
     }
+    syncWorldModelFileName();
     if (worldModelNameInput) {
       worldModelNameInput.value = "";
     }
@@ -4011,6 +4036,8 @@ if (worldPostSaveEditButton) worldPostSaveEditButton.disabled = true;
 if (worldPostCancelEditButton) worldPostCancelEditButton.disabled = true;
 if (worldPostCommentInput) worldPostCommentInput.disabled = true;
 if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
+syncWorldGenerateImageFileName();
+syncWorldModelFileName();
 syncWorldVisibilityControls();
 syncWorldPostFormMode();
 renderWorldPlacements();
