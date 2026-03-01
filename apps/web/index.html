@@ -157,6 +157,20 @@
         <button id="world-map-save-pin" class="world-map-action" type="button" disabled>
           Save Home Portal Here
         </button>
+        <div class="world-section">
+          <div class="party-members-title">Find Worlds</div>
+          <div class="party-search">
+            <input
+              id="party-search-input"
+              class="party-search-input"
+              type="text"
+              placeholder="Search worlds or owners"
+              autocomplete="off"
+            />
+            <button id="party-search-button" class="party-search-button" type="button">Find</button>
+          </div>
+          <div class="party-search-results" id="party-search-results"></div>
+        </div>
       </div>
       <article id="world-map-world-card" class="world-map-world-card" hidden>
         <div id="world-map-world-name" class="world-map-world-name"></div>
@@ -174,8 +188,14 @@
           <button id="tab-chat" class="dock-tab active" type="button" role="tab" aria-selected="true">
             Chat
           </button>
-          <button id="tab-party" class="dock-tab" type="button" role="tab" aria-selected="false">
-            Worlds
+          <button id="tab-world" class="dock-tab" type="button" role="tab" aria-selected="false">
+            World
+          </button>
+          <button id="tab-objects" class="dock-tab" type="button" role="tab" aria-selected="false">
+            Objects
+          </button>
+          <button id="tab-walls" class="dock-tab" type="button" role="tab" aria-selected="false">
+            Walls
           </button>
           <button id="tab-media" class="dock-tab" type="button" role="tab" aria-selected="false">
             Media
@@ -337,72 +357,16 @@
         </div>
       </div>
 
-      <div id="pane-party" class="dock-pane" role="tabpanel" aria-labelledby="tab-party">
+      <div id="pane-party" class="dock-pane" role="tabpanel" aria-labelledby="tab-world">
         <div class="party-status" id="party-status">No world</div>
-        <div class="party-subtabs" role="tablist" aria-label="World tools">
-          <button
-            id="party-subtab-world"
-            class="party-subtab active"
-            type="button"
-            role="tab"
-            aria-selected="true"
-            aria-controls="party-subpane-world"
-          >
-            World
-          </button>
-          <button
-            id="party-subtab-objects"
-            class="party-subtab"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-controls="party-subpane-objects"
-          >
-            Objects
-          </button>
-          <button
-            id="party-subtab-posts"
-            class="party-subtab"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-controls="party-subpane-posts"
-          >
-            Posts
-          </button>
-          <button
-            id="party-subtab-walls"
-            class="party-subtab"
-            type="button"
-            role="tab"
-            aria-selected="false"
-            aria-controls="party-subpane-walls"
-          >
-            Walls
-          </button>
-        </div>
+        <!-- Party subtabs moved to primary dock tabs: World / Objects / Walls -->
 
         <div
           id="party-subpane-world"
           class="party-subpane active"
           role="tabpanel"
-          aria-labelledby="party-subtab-world"
+          aria-labelledby="tab-world"
         >
-          <div class="world-section">
-            <div class="party-members-title">Find Worlds</div>
-            <div class="party-search">
-              <input
-                id="party-search-input"
-                class="party-search-input"
-                type="text"
-                placeholder="Search worlds or owners"
-                autocomplete="off"
-              />
-              <button id="party-search-button" class="party-search-button" type="button">Find</button>
-            </div>
-            <div class="party-search-results" id="party-search-results"></div>
-          </div>
-
           <div class="world-section">
             <div class="party-members-title">Current World Visitors</div>
             <div class="party-members" id="party-members"></div>
@@ -445,7 +409,7 @@
           id="party-subpane-objects"
           class="party-subpane"
           role="tabpanel"
-          aria-labelledby="party-subtab-objects"
+          aria-labelledby="tab-objects"
           hidden
         >
           <div class="world-section">
@@ -538,6 +502,7 @@
           </div>
         </div>
 
+        <!--
         <div
           id="party-subpane-posts"
           class="party-subpane"
@@ -611,12 +576,13 @@
             </form>
           </div>
         </div>
+        -->
 
         <div
           id="party-subpane-walls"
           class="party-subpane"
           role="tabpanel"
-          aria-labelledby="party-subtab-walls"
+          aria-labelledby="tab-walls"
           hidden
         >
           <div class="world-section">

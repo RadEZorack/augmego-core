@@ -72,7 +72,9 @@ const dockHeightToggleButton = document.getElementById(
   "dock-height-toggle"
 ) as HTMLButtonElement | null;
 const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
-const partyTabButton = document.getElementById("tab-party") as HTMLButtonElement | null;
+const worldTabButton = document.getElementById("tab-world") as HTMLButtonElement | null;
+const objectsTabButton = document.getElementById("tab-objects") as HTMLButtonElement | null;
+const wallsTabButton = document.getElementById("tab-walls") as HTMLButtonElement | null;
 const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
 const controlsTabButton = document.getElementById("tab-controls") as HTMLButtonElement | null;
 const chatPane = document.getElementById("pane-chat") as HTMLElement | null;
@@ -151,7 +153,7 @@ function readInitialLinkedWorldId() {
 
 type DockHeightState = "quarter" | "half" | "full";
 type PartySubtabKey = "world" | "objects" | "posts" | "walls";
-type MainTabKey = "chat" | "party" | "media" | "controls";
+type MainTabKey = "chat" | "world" | "objects" | "walls" | "party" | "media" | "controls";
 let setActiveMainTab: ((tab: MainTabKey) => void) | null = null;
 let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
 
@@ -222,7 +224,9 @@ function setupPanelToggle(
 function setupTabs() {
   if (
     !chatTabButton ||
-    !partyTabButton ||
+    !worldTabButton ||
+    !objectsTabButton ||
+    !wallsTabButton ||
     !mediaTabButton ||
     !controlsTabButton ||
     !chatPane ||
@@ -233,70 +237,95 @@ function setupTabs() {
     return;
   }
 
-  const tabs = [chatTabButton, partyTabButton, mediaTabButton, controlsTabButton];
-  const panes = [chatPane, partyPane, mediaPane, controlsPane];
+  const tabs = [
+    chatTabButton,
+    worldTabButton,
+    objectsTabButton,
+    wallsTabButton,
+    mediaTabButton,
+    controlsTabButton
+  ];
 
-  const setActive = (tab: "chat" | "party" | "media" | "controls") => {
+  const setActive = (tab: MainTabKey) => {
+    const normalizedTab = tab === "party" ? "world" : tab;
     const activeIndex =
-      tab === "chat" ? 0 : tab === "party" ? 1 : tab === "media" ? 2 : 3;
+      normalizedTab === "chat"
+        ? 0
+        : normalizedTab === "world"
+          ? 1
+          : normalizedTab === "objects"
+            ? 2
+            : normalizedTab === "walls"
+              ? 3
+              : normalizedTab === "media"
+                ? 4
+                : 5;
+
     for (let i = 0; i < tabs.length; i += 1) {
-      tabs[i]!.classList.toggle("active", i === activeIndex);
-      tabs[i]!.setAttribute("aria-selected", i === activeIndex ? "true" : "false");
-      panes[i]!.classList.toggle("active", i === activeIndex);
+      const active = i === activeIndex;
+      tabs[i]!.classList.toggle("active", active);
+      tabs[i]!.setAttribute("aria-selected", active ? "true" : "false");
+    }
+
+    chatPane.classList.toggle("active", normalizedTab === "chat");
+    partyPane.classList.toggle(
+      "active",
+      normalizedTab === "world" || normalizedTab === "objects" || normalizedTab === "walls"
+    );
+    mediaPane.classList.toggle("active", normalizedTab === "media");
+    controlsPane.classList.toggle("active", normalizedTab === "controls");
+
+    if (normalizedTab === "world" || normalizedTab === "objects" || normalizedTab === "walls") {
+      setActivePartySubtab?.(normalizedTab);
     }
   };
   setActiveMainTab = setActive;
 
   chatTabButton.addEventListener("click", () => setActive("chat"));
-  partyTabButton.addEventListener("click", () => setActive("party"));
+  worldTabButton.addEventListener("click", () => setActive("world"));
+  objectsTabButton.addEventListener("click", () => setActive("objects"));
+  wallsTabButton.addEventListener("click", () => setActive("walls"));
   mediaTabButton.addEventListener("click", () => setActive("media"));
   controlsTabButton.addEventListener("click", () => setActive("controls"));
 }
 
 function setupPartySubtabs() {
-  if (
-    !partyWorldSubtabButton ||
-    !partyObjectsSubtabButton ||
-    !partyPostsSubtabButton ||
-    !partyWallsSubtabButton ||
-    !partyWorldSubpane ||
-    !partyObjectsSubpane ||
-    !partyPostsSubpane ||
-    !partyWallsSubpane
-  ) {
-    return;
-  }
+  const entries = [
+    { key: "world" as const, button: partyWorldSubtabButton, pane: partyWorldSubpane },
+    { key: "objects" as const, button: partyObjectsSubtabButton, pane: partyObjectsSubpane },
+    { key: "posts" as const, button: partyPostsSubtabButton, pane: partyPostsSubpane },
+    { key: "walls" as const, button: partyWallsSubtabButton, pane: partyWallsSubpane }
+  ].filter(
+    (entry): entry is {
+      key: PartySubtabKey;
+      button: HTMLButtonElement | null;
+      pane: HTMLElement;
+    } => Boolean(entry.pane)
+  );
 
-  const tabs = [
-    partyWorldSubtabButton,
-    partyObjectsSubtabButton,
-    partyPostsSubtabButton,
-    partyWallsSubtabButton
-  ];
-  const panes = [
-    partyWorldSubpane,
-    partyObjectsSubpane,
-    partyPostsSubpane,
-    partyWallsSubpane
-  ];
+  if (entries.length === 0) return;
+
+  const availableKeys = new Set(entries.map((entry) => entry.key));
+  const defaultKey = availableKeys.has("world") ? "world" : entries[0]!.key;
+  const resolveKey = (requested: PartySubtabKey) =>
+    availableKeys.has(requested) ? requested : defaultKey;
 
   const setActive = (tab: PartySubtabKey) => {
-    const activeIndex =
-      tab === "world" ? 0 : tab === "objects" ? 1 : tab === "posts" ? 2 : 3;
-    for (let i = 0; i < tabs.length; i += 1) {
-      const active = i === activeIndex;
-      tabs[i]!.classList.toggle("active", active);
-      tabs[i]!.setAttribute("aria-selected", active ? "true" : "false");
-      panes[i]!.classList.toggle("active", active);
-      panes[i]!.hidden = !active;
-    }
+    const activeKey = resolveKey(tab);
+    entries.forEach(({ key, button, pane }) => {
+      const active = key === activeKey;
+      button?.classList.toggle("active", active);
+      button?.setAttribute("aria-selected", active ? "true" : "false");
+      pane.classList.toggle("active", active);
+      pane.hidden = !active;
+    });
   };
   setActivePartySubtab = setActive;
 
-  partyWorldSubtabButton.addEventListener("click", () => setActive("world"));
-  partyObjectsSubtabButton.addEventListener("click", () => setActive("objects"));
-  partyPostsSubtabButton.addEventListener("click", () => setActive("posts"));
-  partyWallsSubtabButton.addEventListener("click", () => setActive("walls"));
+  entries.forEach(({ key, button }) => {
+    button?.addEventListener("click", () => setActive(key));
+  });
+  setActive(defaultKey);
 }
 
 function setPanelMinimized(
