@@ -74,6 +74,17 @@ type CameraControlState = {
   rotateZ: number;
 };
 
+type PlacementHighlightBinding = {
+  source: any;
+  overlay: any;
+};
+
+type PlacementHighlightState = {
+  root: any;
+  group: any;
+  bindings: PlacementHighlightBinding[];
+};
+
 export function createGameScene(options: GameSceneOptions) {
   const playerRadius = options.playerRadius ?? 0.35;
   const playerSpeed = options.playerSpeed ?? 3;
@@ -97,6 +108,8 @@ export function createGameScene(options: GameSceneOptions) {
   const cameraTarget = new THREE.Vector3();
   const yAxis = new THREE.Vector3(0, 1, 0);
   const zAxis = new THREE.Vector3(0, 0, 1);
+  const placementHighlightInverseRootMatrix = new THREE.Matrix4();
+  const placementHighlightRelativeMatrix = new THREE.Matrix4();
   const modelTemplateCache = new Map<string, Promise<any>>();
   const worldModelMixers = new Map<string, any>();
   const imageTextureCache = new Map<string, Promise<any>>();
@@ -104,6 +117,8 @@ export function createGameScene(options: GameSceneOptions) {
   let worldState: WorldState | null = null;
   let worldRenderEpoch = 0;
   let pendingWorldPostSpinner: any | null = null;
+  let selectedWorldPlacementId: string | null = null;
+  let placementHighlight: PlacementHighlightState | null = null;
   let cameraControls: CameraControlState = {
     zoom: 1,
     rotateY: 0,
@@ -599,6 +614,7 @@ export function createGameScene(options: GameSceneOptions) {
   }
 
   function clearWorldModels() {
+    clearPlacementHighlight();
     for (const mixer of worldModelMixers.values()) {
       mixer.stopAllAction?.();
     }
@@ -757,6 +773,98 @@ export function createGameScene(options: GameSceneOptions) {
         node.material = cloneMaterialWithTextures(material);
       }
     });
+  }
+
+  function clearPlacementHighlight() {
+    if (!placementHighlight) return;
+    placementHighlight.root.remove(placementHighlight.group);
+    placementHighlight.group.traverse((node: any) => {
+      const material = node.material;
+      if (Array.isArray(material)) {
+        for (const item of material) {
+          item?.dispose?.();
+        }
+      } else if (material) {
+        material.dispose?.();
+      }
+    });
+    placementHighlight = null;
+  }
+
+  function createPlacementHighlight(root: any): PlacementHighlightState | null {
+    const group = new THREE.Group();
+    group.scale.setScalar(1.03);
+    const bindings: PlacementHighlightBinding[] = [];
+    const inverseRoot = new THREE.Matrix4();
+    const relativeMatrix = new THREE.Matrix4();
+
+    root.updateWorldMatrix(true, true);
+    inverseRoot.copy(root.matrixWorld).invert();
+
+    root.traverse((node: any) => {
+      if (!node.isMesh || !node.geometry) return;
+      const material = new THREE.MeshBasicMaterial({
+        color: 0x7fe7ff,
+        wireframe: true,
+        transparent: true,
+        opacity: 0.95,
+        depthWrite: false
+      });
+      const overlay = node.isSkinnedMesh
+        ? new THREE.SkinnedMesh(node.geometry, material)
+        : new THREE.Mesh(node.geometry, material);
+      if (node.isSkinnedMesh && overlay.isSkinnedMesh && node.skeleton) {
+        overlay.bind(node.skeleton, node.bindMatrix);
+      }
+      overlay.matrixAutoUpdate = false;
+      overlay.userData = {
+        selectionOverlay: true
+      };
+      relativeMatrix.copy(inverseRoot).multiply(node.matrixWorld);
+      overlay.matrix.copy(relativeMatrix);
+      overlay.renderOrder = 60;
+      bindings.push({ source: node, overlay });
+      group.add(overlay);
+    });
+
+    if (bindings.length === 0) {
+      group.clear();
+      return null;
+    }
+
+    root.add(group);
+    return { root, group, bindings };
+  }
+
+  function findPlacementNodeById(placementId: string) {
+    return (
+      worldRoot.children.find(
+        (child: any) =>
+          typeof child.userData?.placementId === "string" &&
+          child.userData.placementId === placementId
+      ) ?? null
+    );
+  }
+
+  function refreshPlacementHighlight() {
+    clearPlacementHighlight();
+    if (!selectedWorldPlacementId) return;
+    const root = findPlacementNodeById(selectedWorldPlacementId);
+    if (!root) return;
+    placementHighlight = createPlacementHighlight(root);
+  }
+
+  function updatePlacementHighlight() {
+    if (!placementHighlight) return;
+    placementHighlight.root.updateWorldMatrix(true, true);
+    placementHighlightInverseRootMatrix.copy(placementHighlight.root.matrixWorld).invert();
+    for (const binding of placementHighlight.bindings) {
+      placementHighlightRelativeMatrix
+        .copy(placementHighlightInverseRootMatrix)
+        .multiply(binding.source.matrixWorld);
+      binding.overlay.matrix.copy(placementHighlightRelativeMatrix);
+      binding.overlay.matrixWorldNeedsUpdate = true;
+    }
   }
 
   function clearAvatarRoot(root: any) {
@@ -1401,6 +1509,7 @@ export function createGameScene(options: GameSceneOptions) {
       const billboard = createWorldPostBillboard(post);
       worldRoot.add(billboard);
     }
+    refreshPlacementHighlight();
   }
 
   function updateRemotePlayers(deltaSeconds: number) {
@@ -1659,6 +1768,7 @@ export function createGameScene(options: GameSceneOptions) {
         remote.avatarMixer.update(deltaSeconds);
       }
     }
+    updatePlacementHighlight();
 
     cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
     cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));
@@ -1743,6 +1853,11 @@ export function createGameScene(options: GameSceneOptions) {
     void renderWorldModels();
   }
 
+  function setSelectedPlacementId(placementId: string | null) {
+    selectedWorldPlacementId = placementId;
+    refreshPlacementHighlight();
+  }
+
   return {
     start,
     setSelfClientId,
@@ -1757,6 +1872,7 @@ export function createGameScene(options: GameSceneOptions) {
     getCameraControls,
     setCameraControls,
     setWorldData,
+    setSelectedPlacementId,
     setPendingWorldPostPlacement,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,

@@ -1135,6 +1135,7 @@ function setSelectedWorldPost(postId: string | null) {
     selectedWorldPlacementId = null;
     selectedWorldPhotoWallId = null;
   }
+  game.setSelectedPlacementId(selectedWorldPlacementId);
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPhotoWallEditor();
@@ -1160,6 +1161,7 @@ function setSelectedWorldPlacement(placementId: string | null) {
     selectedWorldPostId = null;
     selectedWorldPhotoWallId = null;
   }
+  game.setSelectedPlacementId(selectedWorldPlacementId);
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPhotoWallEditor();
@@ -1182,6 +1184,7 @@ function setSelectedWorldPhotoWall(photoWallId: string | null) {
     selectedWorldPlacementId = null;
     selectedWorldPostId = null;
   }
+  game.setSelectedPlacementId(selectedWorldPlacementId);
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPosts();
@@ -1436,6 +1439,7 @@ async function deleteSelectedPlacement() {
   }
 
   selectedWorldPlacementId = null;
+  game.setSelectedPlacementId(null);
   await loadWorldState();
   setWorldNotice("Instance deleted");
 }
@@ -2314,6 +2318,7 @@ async function loadWorldState() {
     requestedPhotoWallId && payload.photoWalls.some((wall) => wall.id === requestedPhotoWallId)
       ? requestedPhotoWallId
       : null;
+  game.setSelectedPlacementId(selectedWorldPlacementId);
   if (editingWorldPostId && !payload.posts.some((post) => post.id === editingWorldPostId)) {
     editingWorldPostId = null;
   }
@@ -3802,6 +3807,7 @@ worldPhotoWallForm?.addEventListener("submit", (event) => {
   cancelPlacementMode();
   cancelPostPlacementMode();
   selectedWorldPlacementId = null;
+  game.setSelectedPlacementId(null);
   selectedWorldPostId = null;
   selectedWorldPhotoWallId = null;
   pendingPhotoWallDraft = { imageUrl: imageUrl || null, imageFile };
@@ -3837,6 +3843,7 @@ worldPostForm?.addEventListener("submit", (event) => {
   cancelPlacementMode();
   cancelWorldPostEdit();
   selectedWorldPlacementId = null;
+  game.setSelectedPlacementId(null);
   selectedWorldPostId = null;
   pendingWorldPostDraft = { imageUrl: imageUrl || null, imageFile, message };
   isPlacingPost = true;
