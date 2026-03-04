@@ -1028,39 +1028,42 @@ export function createGameScene(options: GameSceneOptions) {
     group.scale.set(photoWall.scale.x, photoWall.scale.y, photoWall.scale.z);
     group.userData = { photoWallId: photoWall.id, type: "world-photo-wall" };
 
-    const backing = new THREE.Mesh(
-      new THREE.BoxGeometry(1, 0.75, 0.02),
-      new THREE.MeshStandardMaterial({
-        color: 0x0f1727,
-        roughness: 0.75,
-        metalness: 0.05
-      })
+    const frameMaterial = new THREE.MeshStandardMaterial({
+      color: 0x0f1727,
+      roughness: 0.75,
+      metalness: 0.05
+    });
+    const photoMaterial = new THREE.MeshStandardMaterial({
+      color: 0x22344c,
+      roughness: 0.55,
+      metalness: 0.02
+    });
+    const box = new THREE.Mesh(
+      new THREE.BoxGeometry(1, 0.75, 1),
+      [
+        frameMaterial,
+        frameMaterial,
+        frameMaterial,
+        frameMaterial,
+        photoMaterial,
+        photoMaterial
+      ]
     );
-    backing.userData = { photoWallId: photoWall.id };
-    group.add(backing);
-
-    const front = new THREE.Mesh(
-      new THREE.PlaneGeometry(0.96, 0.71),
-      new THREE.MeshBasicMaterial({
-        color: 0x22344c,
-        transparent: false
-      })
-    );
-    front.position.z = 0.026;
-    front.userData = { photoWallId: photoWall.id, type: "world-photo-wall-face" };
-    group.add(front);
+    box.userData = { photoWallId: photoWall.id, type: "world-photo-wall-face" };
+    group.add(box);
 
     const texture = await loadImageTexture(photoWall.imageUrl);
     if (renderEpoch !== worldRenderEpoch) {
       disposeObject3D(group);
       return null;
     }
-    if (texture && front.material) {
-      const material = front.material as any;
-      if (material.map) material.map.dispose();
-      material.map = texture;
-      material.color = new THREE.Color(0xffffff);
-      material.needsUpdate = true;
+    if (texture && Array.isArray(box.material)) {
+      for (const material of [box.material[4], box.material[5]]) {
+        if ((material as any).map) (material as any).map.dispose();
+        (material as any).map = texture;
+        (material as any).color = new THREE.Color(0xffffff);
+        (material as any).needsUpdate = true;
+      }
     }
 
     return group;

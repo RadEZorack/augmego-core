@@ -1472,7 +1472,7 @@ async function persistPhotoWallTransform(photoWall: WorldPhotoWall) {
     }
   );
   if (!response.ok) {
-    setWorldNotice("Photo wall transform update failed");
+    setWorldNotice("Photo cube transform update failed");
     await loadWorldState();
   }
 }
@@ -1521,12 +1521,12 @@ async function deleteSelectedPhotoWall() {
     { method: "DELETE", credentials: "include" }
   );
   if (!response.ok) {
-    setWorldNotice("Photo wall delete failed");
+    setWorldNotice("Photo cube delete failed");
     return;
   }
   selectedWorldPhotoWallId = null;
   await loadWorldState();
-  setWorldNotice("Photo wall deleted");
+  setWorldNotice("Photo cube deleted");
 }
 
 function renderWorldPhotoWalls() {
@@ -1536,7 +1536,7 @@ function renderWorldPhotoWalls() {
   if (walls.length === 0) {
     const empty = document.createElement("div");
     empty.className = "party-empty";
-    empty.textContent = "No photo walls placed";
+    empty.textContent = "No photo cubes placed";
     worldPhotoWallsContainer.appendChild(empty);
     return;
   }
@@ -1547,7 +1547,7 @@ function renderWorldPhotoWalls() {
     button.type = "button";
     button.className = "world-placement-select";
     if (wall.id === selectedWorldPhotoWallId) button.classList.add("active");
-    button.textContent = `Photo Wall • ${wall.id.slice(0, 8)}`;
+    button.textContent = `Photo Cube • ${wall.id.slice(0, 8)}`;
     button.title = `Position: ${wall.position.x.toFixed(2)}, ${wall.position.y.toFixed(2)}, ${wall.position.z.toFixed(2)}`;
     button.addEventListener("click", () => setSelectedWorldPhotoWall(wall.id));
     row.appendChild(button);
@@ -1561,7 +1561,7 @@ function renderWorldPhotoWallEditor() {
   if (!worldState) {
     const empty = document.createElement("div");
     empty.className = "party-empty";
-    empty.textContent = "Sign in to edit photo walls";
+    empty.textContent = "Sign in to edit photo cubes";
     worldPhotoWallEditor.appendChild(empty);
     return;
   }
@@ -1569,7 +1569,7 @@ function renderWorldPhotoWallEditor() {
   if (!selectedWall) {
     const empty = document.createElement("div");
     empty.className = "party-empty";
-    empty.textContent = "Select a photo wall from the list or world";
+    empty.textContent = "Select a photo cube from the list or world";
     worldPhotoWallEditor.appendChild(empty);
     return;
   }
@@ -1580,7 +1580,7 @@ function renderWorldPhotoWallEditor() {
 
   const heading = document.createElement("div");
   heading.className = "party-result-label";
-  heading.textContent = `Photo Wall • ${selectedWall.id.slice(0, 8)}`;
+  heading.textContent = `Photo Cube • ${selectedWall.id.slice(0, 8)}`;
   worldPhotoWallEditor.appendChild(heading);
 
   const actions = document.createElement("div");
@@ -2367,7 +2367,7 @@ async function loadWorldState() {
   setWorldNotice(
     `${payload.worldName} • ${worldOwnerLabel} • ${payload.isPublic ? "Public" : "Private"} • ${
       payload.assets.length
-    } models • ${payload.placements.length} placements • ${payload.photoWalls.length} walls • ${payload.posts.length} posts`
+    } models • ${payload.placements.length} placements • ${payload.photoWalls.length} cubes • ${payload.posts.length} posts`
   );
 
   syncWorldVisibilityControls();
@@ -2631,9 +2631,9 @@ const game = createGameScene({
               formData.set("rotationX", "0");
               formData.set("rotationY", "0");
               formData.set("rotationZ", "0");
-              formData.set("scaleX", "1.6");
-              formData.set("scaleY", "1.2");
-              formData.set("scaleZ", "0.05");
+              formData.set("scaleX", "1");
+              formData.set("scaleY", "1");
+              formData.set("scaleZ", "1");
               return fetch(apiUrl("/api/v1/world/photo-walls"), {
                 method: "POST",
                 credentials: "include",
@@ -2648,12 +2648,12 @@ const game = createGameScene({
                 imageUrl: draft.imageUrl,
                 position: targetPosition,
                 rotation: { x: 0, y: 0, z: 0 },
-                scale: { x: 1.6, y: 1.2, z: 0.05 }
+                scale: { x: 1, y: 1, z: 1 }
               })
             });
 
         if (!response.ok) {
-          setWorldNotice("Photo wall placement failed");
+          setWorldNotice("Photo cube placement failed");
           return;
         }
         const payload = (await response.json().catch(() => null)) as
@@ -2663,9 +2663,9 @@ const game = createGameScene({
         if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.value = "";
         if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.value = "";
         await loadWorldState();
-        setWorldNotice("Photo wall placed");
+        setWorldNotice("Photo cube placed");
       } catch {
-        setWorldNotice("Photo wall placement failed");
+        setWorldNotice("Photo cube placement failed");
       } finally {
         isSubmittingPhotoWallPlacement = false;
       }
@@ -3812,7 +3812,7 @@ worldPhotoWallForm?.addEventListener("submit", (event) => {
   selectedWorldPhotoWallId = null;
   pendingPhotoWallDraft = { imageUrl: imageUrl || null, imageFile };
   isPlacingPhotoWall = true;
-  setWorldNotice("Photo wall placement mode: click the floor to place.");
+  setWorldNotice("Photo cube placement mode: click the floor to place.");
   renderWorldPlacements();
   renderWorldPosts();
   renderWorldPhotoWalls();

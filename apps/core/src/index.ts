@@ -3780,9 +3780,9 @@ const api = new Elysia({ prefix: "/api/v1" })
           rotationX: Number(formData.get("rotationX") ?? 0) || 0,
           rotationY: Number(formData.get("rotationY") ?? 0) || 0,
           rotationZ: Number(formData.get("rotationZ") ?? 0) || 0,
-          scaleX: Number(formData.get("scaleX") ?? 1.6) || 1.6,
-          scaleY: Number(formData.get("scaleY") ?? 1.2) || 1.2,
-          scaleZ: Number(formData.get("scaleZ") ?? 0.05) || 0.05
+          scaleX: Number(formData.get("scaleX") ?? 1) || 1,
+          scaleY: Number(formData.get("scaleY") ?? 1) || 1,
+          scaleZ: Number(formData.get("scaleZ") ?? 1) || 1
         }
       });
       return jsonResponse({ ok: true, photoWallId });
@@ -3815,9 +3815,9 @@ const api = new Elysia({ prefix: "/api/v1" })
         rotationX: toNumberOrDefault(rotation.x, 0),
         rotationY: toNumberOrDefault(rotation.y, 0),
         rotationZ: toNumberOrDefault(rotation.z, 0),
-        scaleX: toNumberOrDefault(scale.x, 1.6),
-        scaleY: toNumberOrDefault(scale.y, 1.2),
-        scaleZ: toNumberOrDefault(scale.z, 0.05)
+        scaleX: toNumberOrDefault(scale.x, 1),
+        scaleY: toNumberOrDefault(scale.y, 1),
+        scaleZ: toNumberOrDefault(scale.z, 1)
       }
     });
     return jsonResponse({ ok: true, photoWallId: wall.id });
@@ -3880,7 +3880,7 @@ const api = new Elysia({ prefix: "/api/v1" })
           ? {
               scaleX: Math.max(0.01, toNumberOrDefault(scale.x, 1)),
               scaleY: Math.max(0.01, toNumberOrDefault(scale.y, 1)),
-              scaleZ: Math.max(0.01, toNumberOrDefault(scale.z, 0.05))
+              scaleZ: Math.max(0.01, toNumberOrDefault(scale.z, 1))
             }
           : {}),
         ...(imageUrl ? { imageUrl, imageStorageKey: null, imageContentType: null } : {})
