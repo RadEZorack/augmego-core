@@ -1056,6 +1056,16 @@ async function createMeshyImageTo3dTask(
   if (options?.poseMode) {
     requestBody.pose_mode = options.poseMode;
   }
+  if (MESHY_TEXT_TO_3D_TARGET_POLYCOUNT !== null) {
+    requestBody.should_remesh = true;
+    requestBody.target_polycount = MESHY_TEXT_TO_3D_TARGET_POLYCOUNT;
+    if (
+      MESHY_TEXT_TO_3D_TOPOLOGY === "triangle" ||
+      MESHY_TEXT_TO_3D_TOPOLOGY === "quad"
+    ) {
+      requestBody.topology = MESHY_TEXT_TO_3D_TOPOLOGY;
+    }
+  }
 
   const response = await fetch(`${MESHY_API_BASE_URL}/openapi/v1/image-to-3d`, {
     method: "POST",
