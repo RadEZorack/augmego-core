@@ -435,6 +435,7 @@ let worldPostCommentsForPostId: string | null = null;
 let worldPostCommentsLoading = false;
 const placementPersistTimers = new Map<string, number>();
 const photoWallPersistTimers = new Map<string, number>();
+const TRANSFORM_PERSIST_IDLE_MS = 2000;
 let pendingAutoJoinWorldId = readInitialLinkedWorldId();
 let autoJoinWorldIdSent: string | null = null;
 let worldViewActive = Boolean(pendingAutoJoinWorldId);
@@ -1205,7 +1206,14 @@ function applyPlacementLocally(
       placement.id === placementId ? nextPlacement : placement
     )
   };
-  game.setWorldData(worldState);
+  const applied = game.applyPlacementTransform(placementId, {
+    position: nextPlacement.position,
+    rotation: nextPlacement.rotation,
+    scale: nextPlacement.scale
+  });
+  if (!applied) {
+    game.setWorldData(worldState);
+  }
   if (renderUi) {
     renderWorldPlacements();
     renderWorldPlacementEditor();
@@ -1234,7 +1242,10 @@ async function persistPlacementTransform(placement: WorldPlacement) {
   }
 }
 
-function schedulePlacementTransformPersist(placement: WorldPlacement, delayMs = 120) {
+function schedulePlacementTransformPersist(
+  placement: WorldPlacement,
+  delayMs = TRANSFORM_PERSIST_IDLE_MS
+) {
   const existing = placementPersistTimers.get(placement.id);
   if (existing !== undefined) {
     window.clearTimeout(existing);
@@ -1450,7 +1461,14 @@ function applyPhotoWallLocally(photoWallId: string, nextWall: WorldPhotoWall, re
     ...worldState,
     photoWalls: worldState.photoWalls.map((wall) => (wall.id === photoWallId ? nextWall : wall))
   };
-  game.setWorldData(worldState);
+  const applied = game.applyPhotoWallTransform(photoWallId, {
+    position: nextWall.position,
+    rotation: nextWall.rotation,
+    scale: nextWall.scale
+  });
+  if (!applied) {
+    game.setWorldData(worldState);
+  }
   if (renderUi) {
     renderWorldPhotoWalls();
     renderWorldPhotoWallEditor();
@@ -1477,7 +1495,10 @@ async function persistPhotoWallTransform(photoWall: WorldPhotoWall) {
   }
 }
 
-function schedulePhotoWallTransformPersist(photoWall: WorldPhotoWall, delayMs = 120) {
+function schedulePhotoWallTransformPersist(
+  photoWall: WorldPhotoWall,
+  delayMs = TRANSFORM_PERSIST_IDLE_MS
+) {
   const existing = photoWallPersistTimers.get(photoWall.id);
   if (existing !== undefined) window.clearTimeout(existing);
   const timeoutId = window.setTimeout(() => {

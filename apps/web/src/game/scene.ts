@@ -85,6 +85,12 @@ type PlacementHighlightState = {
   bindings: PlacementHighlightBinding[];
 };
 
+type WorldTransform = {
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+};
+
 export function createGameScene(options: GameSceneOptions) {
   const playerRadius = options.playerRadius ?? 0.35;
   const playerSpeed = options.playerSpeed ?? 3;
@@ -844,6 +850,37 @@ export function createGameScene(options: GameSceneOptions) {
           child.userData.placementId === placementId
       ) ?? null
     );
+  }
+
+  function findPhotoWallNodeById(photoWallId: string) {
+    return (
+      worldRoot.children.find(
+        (child: any) =>
+          typeof child.userData?.photoWallId === "string" &&
+          child.userData.photoWallId === photoWallId
+      ) ?? null
+    );
+  }
+
+  function applyPlacementTransform(placementId: string, transform: WorldTransform) {
+    const node = findPlacementNodeById(placementId);
+    if (!node) return false;
+    node.position.set(transform.position.x, transform.position.y, transform.position.z);
+    node.rotation.set(transform.rotation.x, transform.rotation.y, transform.rotation.z);
+    node.scale.set(transform.scale.x, transform.scale.y, transform.scale.z);
+    if (selectedWorldPlacementId === placementId) {
+      refreshPlacementHighlight();
+    }
+    return true;
+  }
+
+  function applyPhotoWallTransform(photoWallId: string, transform: WorldTransform) {
+    const node = findPhotoWallNodeById(photoWallId);
+    if (!node) return false;
+    node.position.set(transform.position.x, transform.position.y, transform.position.z);
+    node.rotation.set(transform.rotation.x, transform.rotation.y, transform.rotation.z);
+    node.scale.set(transform.scale.x, transform.scale.y, transform.scale.z);
+    return true;
   }
 
   function refreshPlacementHighlight() {
@@ -1875,6 +1912,8 @@ export function createGameScene(options: GameSceneOptions) {
     getCameraControls,
     setCameraControls,
     setWorldData,
+    applyPlacementTransform,
+    applyPhotoWallTransform,
     setSelectedPlacementId,
     setPendingWorldPostPlacement,
     applyRemoteSnapshot,
