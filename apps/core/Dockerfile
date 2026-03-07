@@ -21,7 +21,8 @@ COPY . .
 # Expose port (DO injects PORT)
 EXPOSE 8080
 
-RUN bun run db:migrate
-
 # Start server
-CMD ["bun", "run", "start"]
+COPY start.sh /start.sh
+RUN chmod +x /start.sh
+
+CMD ["/start.sh"]
