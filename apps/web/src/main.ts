@@ -76,6 +76,9 @@ const transformRotateButton = document.getElementById(
 const transformScaleButton = document.getElementById(
   "transform-mode-scale"
 ) as HTMLButtonElement | null;
+const transformSliderPanel = document.getElementById(
+  "transform-slider-panel"
+) as HTMLDivElement | null;
 const homeMapButton = document.getElementById("home-map-button") as HTMLButtonElement | null;
 const dockMinimizeButton = document.getElementById("dock-minimize") as HTMLButtonElement | null;
 const dockHeightToggleButton = document.getElementById(
@@ -356,6 +359,172 @@ function setPanelMinimized(
   );
 }
 
+function renderTransformToolbarSliders() {
+  if (!transformSliderPanel) return;
+  transformSliderPanel.innerHTML = "";
+  const canEditPlacements = worldViewActive && worldState?.canManage === true;
+  const selectedPlacement = getPlacementById(selectedWorldPlacementId);
+  if (!canEditPlacements || !selectedPlacement) return;
+
+  const radToDeg = (value: number) => (value * 180) / Math.PI;
+  const degToRad = (value: number) => (value * Math.PI) / 180;
+  const axes: Array<"x" | "y" | "z"> = ["x", "y", "z"];
+  const group =
+    activeTransformMode === "translate"
+      ? "position"
+      : activeTransformMode === "rotate"
+        ? "rotation"
+        : "scale";
+  const sliderMode = group === "rotation" ? "absolute" : "delta";
+  const sliderMin = group === "rotation" ? -180 : group === "position" ? -1.5 : -0.5;
+  const sliderMax = group === "rotation" ? 180 : group === "position" ? 1.5 : 0.5;
+  const sliderStep = group === "rotation" ? 1 : group === "position" ? 0.05 : 0.02;
+
+  for (const axis of axes) {
+    const row = document.createElement("label");
+    row.className = "transform-slider-row";
+
+    const label = document.createElement("span");
+    label.className = "transform-slider-label";
+    label.textContent = axis.toUpperCase();
+
+    const slider = document.createElement("input");
+    slider.type = "range";
+    slider.className = "world-placement-axis-slider";
+    slider.min = String(sliderMin);
+    slider.max = String(sliderMax);
+    slider.step = String(sliderStep);
+    slider.disabled = !canEditPlacements;
+
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "transform-slider-input";
+    input.step = group === "rotation" ? "1" : "0.01";
+    input.disabled = !canEditPlacements;
+
+    if (group === "rotation") {
+      const start = radToDeg(selectedPlacement.rotation[axis]);
+      slider.value = String(Math.max(sliderMin, Math.min(sliderMax, start)));
+      input.value = start.toFixed(1);
+    } else if (group === "position") {
+      slider.value = "0";
+      input.value = selectedPlacement.position[axis].toFixed(2);
+    } else {
+      slider.value = "0";
+      input.value = selectedPlacement.scale[axis].toFixed(2);
+    }
+
+    let lastSliderValue = Number(slider.value);
+    slider.addEventListener("input", () => {
+      const parsed = Number(slider.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPlacementById(selectedWorldPlacementId);
+      if (!latest) return;
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+
+      if (sliderMode === "absolute") {
+        rotation[axis] = degToRad(parsed);
+      } else {
+        const delta = parsed - lastSliderValue;
+        if (Math.abs(delta) <= 0.00001) return;
+        if (group === "position") position[axis] += delta;
+        else scale[axis] = Math.max(0.01, scale[axis] + delta);
+      }
+
+      const updated = commitPlacementTransform(
+        latest.id,
+        { position, rotation, scale },
+        { persistMode: "debounced", renderUi: false }
+      );
+      if (!updated) return;
+      if (group === "rotation") {
+        const degrees = radToDeg(updated.rotation[axis]);
+        input.value = degrees.toFixed(1);
+      } else if (group === "position") {
+        input.value = updated.position[axis].toFixed(2);
+      } else {
+        input.value = updated.scale[axis].toFixed(2);
+      }
+      lastSliderValue = parsed;
+    });
+
+    slider.addEventListener("change", () => {
+      const parsed = Number(slider.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPlacementById(selectedWorldPlacementId);
+      if (!latest) return;
+      if (sliderMode === "delta") {
+        commitPlacementTransform(
+          latest.id,
+          {
+            position: { ...latest.position },
+            rotation: { ...latest.rotation },
+            scale: { ...latest.scale }
+          },
+          { persistMode: "immediate", renderUi: true }
+        );
+        slider.value = "0";
+        lastSliderValue = 0;
+        return;
+      }
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+      rotation[axis] = degToRad(parsed);
+      commitPlacementTransform(
+        latest.id,
+        { position, rotation, scale },
+        { persistMode: "immediate", renderUi: true }
+      );
+    });
+
+    input.addEventListener("change", () => {
+      const parsed = Number(input.value);
+      if (!Number.isFinite(parsed)) return;
+      const latest = getPlacementById(selectedWorldPlacementId);
+      if (!latest) return;
+      const position = { ...latest.position };
+      const rotation = { ...latest.rotation };
+      const scale = { ...latest.scale };
+
+      if (group === "rotation") {
+        rotation[axis] = degToRad(parsed);
+      } else if (group === "position") {
+        position[axis] = parsed;
+      } else {
+        scale[axis] = Math.max(0.01, parsed);
+      }
+
+      const updated = commitPlacementTransform(
+        latest.id,
+        { position, rotation, scale },
+        { persistMode: "immediate", renderUi: true }
+      );
+      if (!updated) return;
+      if (group === "rotation") {
+        const degrees = radToDeg(updated.rotation[axis]);
+        slider.value = String(Math.max(sliderMin, Math.min(sliderMax, degrees)));
+        input.value = degrees.toFixed(1);
+      } else if (group === "position") {
+        slider.value = "0";
+        lastSliderValue = 0;
+        input.value = updated.position[axis].toFixed(2);
+      } else {
+        slider.value = "0";
+        lastSliderValue = 0;
+        input.value = updated.scale[axis].toFixed(2);
+      }
+    });
+
+    row.appendChild(label);
+    row.appendChild(slider);
+    row.appendChild(input);
+    transformSliderPanel.appendChild(row);
+  }
+}
+
 function syncTransformToolbar() {
   const buttons = [
     transformTranslateButton,
@@ -372,6 +541,7 @@ function syncTransformToolbar() {
   transformTranslateButton?.classList.toggle("active", activeTransformMode === "translate");
   transformRotateButton?.classList.toggle("active", activeTransformMode === "rotate");
   transformScaleButton?.classList.toggle("active", activeTransformMode === "scale");
+  renderTransformToolbarSliders();
 }
 
 function setupTransformToolbar() {
@@ -1263,6 +1433,7 @@ function applyPlacementLocally(
   if (renderUi) {
     renderWorldPlacements();
     renderWorldPlacementEditor();
+    syncTransformToolbar();
   }
 }
 

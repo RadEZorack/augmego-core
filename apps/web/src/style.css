@@ -224,13 +224,20 @@ canvas {
   right: 24px;
   z-index: 9;
   display: flex;
-  gap: 6px;
+  flex-direction: column;
+  gap: 8px;
   padding: 6px;
   border-radius: 12px;
   border: 1px solid rgba(93, 154, 215, 0.45);
   background: rgba(7, 16, 28, 0.88);
   pointer-events: auto;
   backdrop-filter: blur(8px);
+  width: min(360px, calc(100vw - 24px));
+}
+
+.transform-toolbar-modes {
+  display: flex;
+  gap: 6px;
 }
 
 .transform-mode-button {
@@ -256,6 +263,43 @@ canvas {
   background: rgba(52, 125, 200, 0.35);
   border-color: rgba(139, 195, 255, 0.95);
   color: #f3f9ff;
+}
+
+.transform-slider-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.transform-slider-row {
+  display: grid;
+  grid-template-columns: 22px 1fr 72px;
+  align-items: center;
+  gap: 8px;
+}
+
+.transform-slider-label {
+  color: #cce3ff;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.transform-slider-input {
+  width: 100%;
+  min-width: 0;
+  border: 1px solid rgba(120, 165, 214, 0.45);
+  border-radius: 7px;
+  background: rgba(19, 36, 58, 0.9);
+  color: #d7eaff;
+  font-size: 0.72rem;
+  line-height: 1;
+  padding: 4px 6px;
+  text-align: right;
+}
+
+.transform-slider-row .world-placement-axis-slider {
+  margin: 0;
 }
 
 .brand-logo {
@@ -1507,6 +1551,7 @@ canvas {
     right: auto;
     left: 12px;
     bottom: 148px;
+    width: min(360px, calc(100vw - 24px));
   }
 
   .dock-panel {
