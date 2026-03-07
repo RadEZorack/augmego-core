@@ -12,8 +12,9 @@ RUN bun install --frozen-lockfile
 # Copy Prisma schema first (for layer caching)
 COPY prisma ./prisma
 
-# Generate Prisma client
-RUN bunx prisma generate
+# Generate Prisma client at build time.
+# Migrations are applied in CI before triggering deployment.
+RUN bun run db:generate
 
 # Copy source
 COPY . .
