@@ -26,7 +26,16 @@ export async function resolveSessionUser(
       revokedAt: null,
       expiresAt: { gt: new Date() }
     },
-    include: { user: true }
+    select: {
+      user: {
+        select: {
+          id: true,
+          name: true,
+          email: true,
+          avatarUrl: true
+        }
+      }
+    }
   });
 
   if (!session) return null;

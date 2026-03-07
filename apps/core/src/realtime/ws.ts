@@ -50,6 +50,13 @@ type PendingInvite = {
   expiresAtMs: number;
 };
 
+function isMissingAvatarSelectionColumnsError(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message.includes("playerAvatarStationaryModelUrl")
+  );
+}
+
 export type RealtimeWsOptions = {
   prisma: PrismaClient;
   sessionCookieName: string;
@@ -171,19 +178,30 @@ async function loadUserAvatarSelection(
   prisma: PrismaClient,
   userId: string
 ): Promise<PlayerAvatarSelection> {
-  const rows = await prisma.$queryRaw<
-    Array<{
-      stationaryModelUrl: string | null;
-      moveModelUrl: string | null;
-      specialModelUrl: string | null;
-    }>
-  >`SELECT "playerAvatarStationaryModelUrl" AS "stationaryModelUrl", "playerAvatarMoveModelUrl" AS "moveModelUrl", "playerAvatarSpecialModelUrl" AS "specialModelUrl" FROM "User" WHERE "id" = CAST(${userId} AS uuid) LIMIT 1`;
-  const row = rows[0];
-  return {
-    stationaryModelUrl: row?.stationaryModelUrl ?? null,
-    moveModelUrl: row?.moveModelUrl ?? null,
-    specialModelUrl: row?.specialModelUrl ?? null
-  };
+  try {
+    const rows = await prisma.$queryRaw<
+      Array<{
+        stationaryModelUrl: string | null;
+        moveModelUrl: string | null;
+        specialModelUrl: string | null;
+      }>
+    >`SELECT "playerAvatarStationaryModelUrl" AS "stationaryModelUrl", "playerAvatarMoveModelUrl" AS "moveModelUrl", "playerAvatarSpecialModelUrl" AS "specialModelUrl" FROM "User" WHERE "id" = CAST(${userId} AS uuid) LIMIT 1`;
+    const row = rows[0];
+    return {
+      stationaryModelUrl: row?.stationaryModelUrl ?? null,
+      moveModelUrl: row?.moveModelUrl ?? null,
+      specialModelUrl: row?.specialModelUrl ?? null
+    };
+  } catch (error) {
+    if (isMissingAvatarSelectionColumnsError(error)) {
+      return {
+        stationaryModelUrl: null,
+        moveModelUrl: null,
+        specialModelUrl: null
+      };
+    }
+    throw error;
+  }
 }
 
 function broadcastToAll(payload: unknown) {

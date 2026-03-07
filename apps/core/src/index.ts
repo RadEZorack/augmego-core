@@ -236,20 +236,38 @@ type UserAvatarSelection = {
   specialModelUrl: string | null;
 };
 
+function isMissingAvatarSelectionColumnsError(error: unknown) {
+  return (
+    error instanceof Error &&
+    error.message.includes("playerAvatarStationaryModelUrl")
+  );
+}
+
 async function loadUserAvatarSelection(userId: string): Promise<UserAvatarSelection> {
-  const rows = await prisma.$queryRaw<
-    Array<{
-      stationaryModelUrl: string | null;
-      moveModelUrl: string | null;
-      specialModelUrl: string | null;
-    }>
-  >`SELECT "playerAvatarStationaryModelUrl" AS "stationaryModelUrl", "playerAvatarMoveModelUrl" AS "moveModelUrl", "playerAvatarSpecialModelUrl" AS "specialModelUrl" FROM "User" WHERE "id" = CAST(${userId} AS uuid) LIMIT 1`;
-  const row = rows[0];
-  return {
-    stationaryModelUrl: row?.stationaryModelUrl ?? null,
-    moveModelUrl: row?.moveModelUrl ?? null,
-    specialModelUrl: row?.specialModelUrl ?? null
-  };
+  try {
+    const rows = await prisma.$queryRaw<
+      Array<{
+        stationaryModelUrl: string | null;
+        moveModelUrl: string | null;
+        specialModelUrl: string | null;
+      }>
+    >`SELECT "playerAvatarStationaryModelUrl" AS "stationaryModelUrl", "playerAvatarMoveModelUrl" AS "moveModelUrl", "playerAvatarSpecialModelUrl" AS "specialModelUrl" FROM "User" WHERE "id" = CAST(${userId} AS uuid) LIMIT 1`;
+    const row = rows[0];
+    return {
+      stationaryModelUrl: row?.stationaryModelUrl ?? null,
+      moveModelUrl: row?.moveModelUrl ?? null,
+      specialModelUrl: row?.specialModelUrl ?? null
+    };
+  } catch (error) {
+    if (isMissingAvatarSelectionColumnsError(error)) {
+      return {
+        stationaryModelUrl: null,
+        moveModelUrl: null,
+        specialModelUrl: null
+      };
+    }
+    throw error;
+  }
 }
 
 function sanitizeFilename(value: string) {
@@ -2003,7 +2021,10 @@ const api = new Elysia({ prefix: "/api/v1" })
       (profile.profilePicture as string | undefined);
 
     const existingByEmail = email
-      ? await prisma.user.findFirst({ where: { email } })
+      ? await prisma.user.findFirst({
+          where: { email },
+          select: { id: true, linkedinId: true }
+        })
       : null;
 
     if (
@@ -2023,7 +2044,8 @@ const api = new Elysia({ prefix: "/api/v1" })
             email: email ?? null,
             name: name ?? null,
             avatarUrl: avatarUrl ?? null
-          }
+          },
+          select: { id: true }
         })
       : await prisma.user.upsert({
           where: { linkedinId },
@@ -2037,7 +2059,8 @@ const api = new Elysia({ prefix: "/api/v1" })
             email: email ?? null,
             name: name ?? null,
             avatarUrl: avatarUrl ?? null
-          }
+          },
+          select: { id: true }
         });
 
     const sessionId = crypto.randomUUID();
@@ -2170,7 +2193,10 @@ const api = new Elysia({ prefix: "/api/v1" })
     const avatarUrl = (profile.picture as string | undefined) ?? undefined;
 
     const existingByEmail = email
-      ? await prisma.user.findFirst({ where: { email } })
+      ? await prisma.user.findFirst({
+          where: { email },
+          select: { id: true, googleId: true }
+        })
       : null;
 
     if (existingByEmail?.googleId && existingByEmail.googleId !== googleId) {
@@ -2187,7 +2213,8 @@ const api = new Elysia({ prefix: "/api/v1" })
             email: email ?? null,
             name: name ?? null,
             avatarUrl: avatarUrl ?? null
-          }
+          },
+          select: { id: true }
         })
       : await prisma.user.upsert({
           where: { googleId },
@@ -2201,7 +2228,8 @@ const api = new Elysia({ prefix: "/api/v1" })
             email: email ?? null,
             name: name ?? null,
             avatarUrl: avatarUrl ?? null
-          }
+          },
+          select: { id: true }
         });
 
     const sessionId = crypto.randomUUID();
@@ -2347,7 +2375,10 @@ const api = new Elysia({ prefix: "/api/v1" })
     }
 
     const existingByEmail = email
-      ? await prisma.user.findFirst({ where: { email } })
+      ? await prisma.user.findFirst({
+          where: { email },
+          select: { id: true, appleId: true }
+        })
       : null;
 
     if (existingByEmail?.appleId && existingByEmail.appleId !== appleId) {
@@ -2363,7 +2394,8 @@ const api = new Elysia({ prefix: "/api/v1" })
             appleId,
             email: email ?? null,
             name: name ?? null
-          }
+          },
+          select: { id: true }
         })
       : await prisma.user.upsert({
           where: { appleId },
@@ -2375,7 +2407,8 @@ const api = new Elysia({ prefix: "/api/v1" })
           update: {
             email: email ?? null,
             name: name ?? null
-          }
+          },
+          select: { id: true }
         });
 
     const sessionId = crypto.randomUUID();
@@ -2430,7 +2463,16 @@ const api = new Elysia({ prefix: "/api/v1" })
         revokedAt: null,
         expiresAt: { gt: now }
       },
-      include: { user: true }
+      select: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        }
+      }
     });
 
     if (!session) {
@@ -2557,7 +2599,17 @@ const api = new Elysia({ prefix: "/api/v1" })
           : currentSelection.specialModelUrl
     };
 
-    await prisma.$executeRaw`UPDATE "User" SET "playerAvatarStationaryModelUrl" = ${nextSelection.stationaryModelUrl}, "playerAvatarMoveModelUrl" = ${nextSelection.moveModelUrl}, "playerAvatarSpecialModelUrl" = ${nextSelection.specialModelUrl} WHERE "id" = CAST(${user.id} AS uuid)`;
+    try {
+      await prisma.$executeRaw`UPDATE "User" SET "playerAvatarStationaryModelUrl" = ${nextSelection.stationaryModelUrl}, "playerAvatarMoveModelUrl" = ${nextSelection.moveModelUrl}, "playerAvatarSpecialModelUrl" = ${nextSelection.specialModelUrl} WHERE "id" = CAST(${user.id} AS uuid)`;
+    } catch (error) {
+      if (isMissingAvatarSelectionColumnsError(error)) {
+        return jsonResponse(
+          { error: "AVATAR_SELECTION_NOT_READY" },
+          { status: 503 }
+        );
+      }
+      throw error;
+    }
 
     return jsonResponse({
       ok: true,
