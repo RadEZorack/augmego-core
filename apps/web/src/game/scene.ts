@@ -1100,28 +1100,36 @@ export function createGameScene(options: GameSceneOptions) {
     localAvatarMode = nextMode;
     localAvatarModelUrl = nextUrl;
     setSphereBodyVisible(localPlayer, !nextUrl || !hasLoadedAvatar(localAvatarRoot));
-    if (localAvatarMixer) {
-      localAvatarMixer.stopAllAction?.();
-      localAvatarMixer = null;
-    }
     localAvatarLoadVersion += 1;
     const loadVersion = localAvatarLoadVersion;
-    clearAvatarRoot(localAvatarRoot);
-    if (!nextUrl) return;
+    if (!nextUrl) {
+      if (localAvatarMixer) {
+        localAvatarMixer.stopAllAction?.();
+        localAvatarMixer = null;
+      }
+      clearAvatarRoot(localAvatarRoot);
+      return;
+    }
     void loadModelTemplate(nextUrl).then((template) => {
       if (!template?.scene || loadVersion !== localAvatarLoadVersion) {
-        setSphereBodyVisible(localPlayer, true);
+        setSphereBodyVisible(localPlayer, !hasLoadedAvatar(localAvatarRoot));
         return;
       }
       const instance = createAvatarInstance(template);
-      localAvatarRoot.add(instance);
-      setSphereBodyVisible(localPlayer, false);
+      let nextMixer: any | null = null;
       const clips = Array.isArray(template.animations) ? template.animations : [];
       if (clips.length > 0) {
-        localAvatarMixer = new THREE.AnimationMixer(instance);
-        const action = localAvatarMixer.clipAction(clips[0]);
+        nextMixer = new THREE.AnimationMixer(instance);
+        const action = nextMixer.clipAction(clips[0]);
         action.play();
       }
+      if (localAvatarMixer) {
+        localAvatarMixer.stopAllAction?.();
+      }
+      localAvatarMixer = nextMixer;
+      clearAvatarRoot(localAvatarRoot);
+      localAvatarRoot.add(instance);
+      setSphereBodyVisible(localPlayer, false);
     });
   }
 
@@ -1140,28 +1148,36 @@ export function createGameScene(options: GameSceneOptions) {
     }
     remote.avatarModelUrl = nextUrl;
     setSphereBodyVisible(remote.mesh, !nextUrl);
-    if (remote.avatarMixer) {
-      remote.avatarMixer.stopAllAction?.();
-      remote.avatarMixer = null;
-    }
     remote.avatarLoadVersion += 1;
     const loadVersion = remote.avatarLoadVersion;
-    clearAvatarRoot(remote.avatarRoot);
-    if (!nextUrl) return;
+    if (!nextUrl) {
+      if (remote.avatarMixer) {
+        remote.avatarMixer.stopAllAction?.();
+        remote.avatarMixer = null;
+      }
+      clearAvatarRoot(remote.avatarRoot);
+      return;
+    }
     const template = await loadModelTemplate(nextUrl);
     if (!template?.scene || loadVersion !== remote.avatarLoadVersion) {
-      setSphereBodyVisible(remote.mesh, true);
+      setSphereBodyVisible(remote.mesh, !hasLoadedAvatar(remote.avatarRoot));
       return;
     }
     const instance = createAvatarInstance(template);
-    remote.avatarRoot.add(instance);
+    let nextMixer: any | null = null;
     setSphereBodyVisible(remote.mesh, false);
     const clips = Array.isArray(template.animations) ? template.animations : [];
     if (clips.length > 0) {
-      remote.avatarMixer = new THREE.AnimationMixer(instance);
-      const action = remote.avatarMixer.clipAction(clips[0]);
+      nextMixer = new THREE.AnimationMixer(instance);
+      const action = nextMixer.clipAction(clips[0]);
       action.play();
     }
+    if (remote.avatarMixer) {
+      remote.avatarMixer.stopAllAction?.();
+    }
+    remote.avatarMixer = nextMixer;
+    clearAvatarRoot(remote.avatarRoot);
+    remote.avatarRoot.add(instance);
   }
 
   async function createPhotoWallMesh(photoWall: WorldPhotoWall, renderEpoch: number) {
