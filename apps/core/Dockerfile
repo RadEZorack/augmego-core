@@ -13,7 +13,6 @@ RUN bun install --frozen-lockfile
 COPY prisma ./prisma
 
 # Generate Prisma client at build time.
-# Migrations are applied in CI before triggering deployment.
 RUN bun run db:generate
 
 # Copy source
@@ -21,6 +20,8 @@ COPY . .
 
 # Expose port (DO injects PORT)
 EXPOSE 8080
+
+RUN bun run db:migrate
 
 # Start server
 CMD ["bun", "run", "start"]
