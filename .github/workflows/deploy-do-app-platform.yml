@@ -84,7 +84,7 @@ jobs:
         uses: oven-sh/setup-bun@v2
 
       - name: Install dependencies
-        run: bun --cwd apps/core install --frozen-lockfile
+        run: bun install --cwd apps/core  --frozen-lockfile
 
       - name: Generate Prisma Client
         run: bun run --cwd apps/core db:generate
