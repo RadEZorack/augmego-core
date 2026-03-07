@@ -15,9 +15,6 @@ COPY prisma ./prisma
 # Generate Prisma client
 RUN bunx prisma generate
 
-# Generate Prisma client
-RUN bunx prisma migrate deploy
-
 # Copy source
 COPY . .
 
