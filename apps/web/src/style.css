@@ -244,12 +244,24 @@ canvas {
   display: none;
 }
 
+.transform-toolbar.collapsed .edit-toolbar-panel {
+  display: none;
+}
+
 .transform-toolbar.collapsed .transform-toolbar-modes .transform-mode-button:not(.transform-collapse-button) {
   display: none;
 }
 
 .transform-toolbar.collapsed {
   width: auto;
+}
+
+.transform-toolbar.collapsed.create-open {
+  width: min(420px, calc(100vw - 24px));
+}
+
+.transform-toolbar.collapsed.place-open {
+  width: min(420px, calc(100vw - 24px));
 }
 
 .transform-mode-button {
@@ -282,6 +294,91 @@ canvas {
   margin-left: auto;
   text-transform: none;
   letter-spacing: 0;
+}
+
+.create-toolbar-toggle {
+  align-self: flex-end;
+  margin-left: 0;
+}
+
+.create-toolbar-panel,
+.place-toolbar-panel,
+.edit-toolbar-panel {
+  max-height: min(56vh, 520px);
+  overflow: auto;
+  border: 1px solid rgba(93, 154, 215, 0.35);
+  border-radius: 10px;
+  background: rgba(7, 16, 28, 0.84);
+  padding: 10px;
+}
+
+.create-toolbar-panel .world-section,
+.place-toolbar-panel .world-section,
+.edit-toolbar-panel .world-section {
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.place-toolbar-toggle {
+  align-self: flex-end;
+  margin-left: 0;
+}
+
+#create-toolbar-toggle,
+#transform-toolbar-collapse,
+#place-toolbar-toggle {
+  width: 76px;
+  min-width: 76px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#create-toolbar-toggle[hidden],
+#transform-toolbar-collapse[hidden],
+#place-toolbar-toggle[hidden] {
+  display: none !important;
+}
+
+.place-toolbar-panel #place-toolbar-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.edit-toolbar-panel #edit-toolbar-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.photo-library-row {
+  display: grid;
+  grid-template-columns: 36px 1fr auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+}
+
+.photo-library-thumb {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid rgba(113, 166, 224, 0.35);
+  background: rgba(9, 18, 30, 0.7);
+}
+
+.photo-library-label {
+  min-width: 0;
+  font-size: 0.78rem;
+  color: #d0e7ff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .transform-slider-panel {

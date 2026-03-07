@@ -79,6 +79,20 @@ const transformScaleButton = document.getElementById(
 const transformCollapseButton = document.getElementById(
   "transform-toolbar-collapse"
 ) as HTMLButtonElement | null;
+const createToolbarToggleButton = document.getElementById(
+  "create-toolbar-toggle"
+) as HTMLButtonElement | null;
+const createToolbarPanel = document.getElementById("create-toolbar-panel") as HTMLDivElement | null;
+const createToolbarGenerateSlot = document.getElementById(
+  "create-toolbar-generate-slot"
+) as HTMLDivElement | null;
+const placeToolbarToggleButton = document.getElementById(
+  "place-toolbar-toggle"
+) as HTMLButtonElement | null;
+const placeToolbarPanel = document.getElementById("place-toolbar-panel") as HTMLDivElement | null;
+const placeToolbarSlot = document.getElementById("place-toolbar-slot") as HTMLDivElement | null;
+const editToolbarPanel = document.getElementById("edit-toolbar-panel") as HTMLDivElement | null;
+const editToolbarSlot = document.getElementById("edit-toolbar-slot") as HTMLDivElement | null;
 const transformSliderPanel = document.getElementById(
   "transform-slider-panel"
 ) as HTMLDivElement | null;
@@ -89,8 +103,6 @@ const dockHeightToggleButton = document.getElementById(
 ) as HTMLButtonElement | null;
 const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
 const worldTabButton = document.getElementById("tab-world") as HTMLButtonElement | null;
-const objectsTabButton = document.getElementById("tab-objects") as HTMLButtonElement | null;
-const wallsTabButton = document.getElementById("tab-walls") as HTMLButtonElement | null;
 const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
 const controlsTabButton = document.getElementById("tab-controls") as HTMLButtonElement | null;
 const chatPane = document.getElementById("pane-chat") as HTMLElement | null;
@@ -175,6 +187,8 @@ let setActiveMainTab: ((tab: MainTabKey) => void) | null = null;
 let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
 let activeTransformMode: TransformMode = "translate";
 let transformToolbarCollapsed = true;
+let createToolbarCollapsed = true;
+let placeToolbarCollapsed = true;
 
 function setDockHeightState(
   panel: HTMLElement | null,
@@ -244,8 +258,6 @@ function setupTabs() {
   if (
     !chatTabButton ||
     !worldTabButton ||
-    !objectsTabButton ||
-    !wallsTabButton ||
     !mediaTabButton ||
     !controlsTabButton ||
     !chatPane ||
@@ -259,8 +271,6 @@ function setupTabs() {
   const tabs = [
     chatTabButton,
     worldTabButton,
-    objectsTabButton,
-    wallsTabButton,
     mediaTabButton,
     controlsTabButton
   ];
@@ -272,13 +282,9 @@ function setupTabs() {
         ? 0
         : normalizedTab === "world"
           ? 1
-          : normalizedTab === "objects"
+          : normalizedTab === "media"
             ? 2
-            : normalizedTab === "walls"
-              ? 3
-              : normalizedTab === "media"
-                ? 4
-                : 5;
+            : 3;
 
     for (let i = 0; i < tabs.length; i += 1) {
       const active = i === activeIndex;
@@ -302,8 +308,6 @@ function setupTabs() {
 
   chatTabButton.addEventListener("click", () => setActive("chat"));
   worldTabButton.addEventListener("click", () => setActive("world"));
-  objectsTabButton.addEventListener("click", () => setActive("objects"));
-  wallsTabButton.addEventListener("click", () => setActive("walls"));
   mediaTabButton.addEventListener("click", () => setActive("media"));
   controlsTabButton.addEventListener("click", () => setActive("controls"));
 }
@@ -534,16 +538,30 @@ function syncTransformToolbar() {
   const canEditPlacements = worldViewActive && worldState?.canManage === true;
   const transformToolsEnabled = canEditPlacements && !transformToolbarCollapsed;
   const editPanelOpen = canEditPlacements && !transformToolbarCollapsed;
+  const createPanelOpen = canEditPlacements && !createToolbarCollapsed;
+  const placePanelOpen = canEditPlacements && !placeToolbarCollapsed;
   transformToolbar?.toggleAttribute("hidden", !canEditPlacements);
   transformToolbar?.classList.toggle("collapsed", transformToolbarCollapsed);
+  transformToolbar?.classList.toggle("create-open", createPanelOpen);
+  transformToolbar?.classList.toggle("place-open", placePanelOpen);
+  if (createToolbarPanel) {
+    createToolbarPanel.hidden = !createPanelOpen;
+  }
+  if (placeToolbarPanel) {
+    placeToolbarPanel.hidden = !placePanelOpen;
+  }
+  if (editToolbarPanel) {
+    editToolbarPanel.hidden = !editPanelOpen;
+  }
   game.setWorldPlacementTransformEnabled(transformToolsEnabled);
-  game.setLocalPlayerMovementEnabled(!editPanelOpen);
+  game.setLocalPlayerMovementEnabled(!(editPanelOpen || createPanelOpen || placePanelOpen));
   const hasSelection = Boolean(getSelectedTransformTarget());
   buttons.forEach((button) => {
     if (!button) return;
     button.disabled = !hasSelection;
   });
   if (transformCollapseButton) {
+    transformCollapseButton.hidden = createPanelOpen || placePanelOpen;
     transformCollapseButton.disabled = !canEditPlacements;
     transformCollapseButton.textContent = transformToolbarCollapsed ? "Edit" : "x";
     transformCollapseButton.setAttribute(
@@ -561,6 +579,40 @@ function syncTransformToolbar() {
       transformToolbarCollapsed ? "false" : "true"
     );
   }
+  if (createToolbarToggleButton) {
+    createToolbarToggleButton.hidden = editPanelOpen || placePanelOpen;
+    createToolbarToggleButton.disabled = !canEditPlacements;
+    createToolbarToggleButton.textContent = createToolbarCollapsed ? "Create" : "x";
+    createToolbarToggleButton.setAttribute(
+      "aria-label",
+      createToolbarCollapsed ? "Open model creation" : "Close model creation"
+    );
+    createToolbarToggleButton.setAttribute(
+      "title",
+      createToolbarCollapsed ? "Create model" : "Close model creation"
+    );
+    createToolbarToggleButton.setAttribute(
+      "aria-expanded",
+      createToolbarCollapsed ? "false" : "true"
+    );
+  }
+  if (placeToolbarToggleButton) {
+    placeToolbarToggleButton.hidden = editPanelOpen || createPanelOpen;
+    placeToolbarToggleButton.disabled = !canEditPlacements;
+    placeToolbarToggleButton.textContent = placeToolbarCollapsed ? "Place" : "x";
+    placeToolbarToggleButton.setAttribute(
+      "aria-label",
+      placeToolbarCollapsed ? "Open placement panel" : "Close placement panel"
+    );
+    placeToolbarToggleButton.setAttribute(
+      "title",
+      placeToolbarCollapsed ? "Place assets" : "Close placement panel"
+    );
+    placeToolbarToggleButton.setAttribute(
+      "aria-expanded",
+      placeToolbarCollapsed ? "false" : "true"
+    );
+  }
   transformTranslateButton?.classList.toggle("active", activeTransformMode === "translate");
   transformRotateButton?.classList.toggle("active", activeTransformMode === "rotate");
   transformScaleButton?.classList.toggle("active", activeTransformMode === "scale");
@@ -569,6 +621,34 @@ function syncTransformToolbar() {
 
 function setupTransformToolbar() {
   if (!transformToolbar) return;
+  if (
+    createToolbarGenerateSlot &&
+    worldGenerateSection &&
+    worldGenerateSection.parentElement !== createToolbarGenerateSlot
+  ) {
+    createToolbarGenerateSlot.appendChild(worldGenerateSection);
+  }
+  if (placeToolbarSlot) {
+    if (
+      worldPlaceModelsSection &&
+      worldPlaceModelsSection.parentElement !== placeToolbarSlot
+    ) {
+      placeToolbarSlot.appendChild(worldPlaceModelsSection);
+    }
+    if (
+      worldPlaceCubesSection &&
+      worldPlaceCubesSection.parentElement !== placeToolbarSlot
+    ) {
+      placeToolbarSlot.appendChild(worldPlaceCubesSection);
+    }
+  }
+  if (
+    editToolbarSlot &&
+    worldPlaceInstancesSection &&
+    worldPlaceInstancesSection.parentElement !== editToolbarSlot
+  ) {
+    editToolbarSlot.appendChild(worldPlaceInstancesSection);
+  }
   const applyMode = (mode: TransformMode) => {
     activeTransformMode = mode;
     game.setWorldPlacementTransformMode(mode);
@@ -578,7 +658,30 @@ function setupTransformToolbar() {
   transformRotateButton?.addEventListener("click", () => applyMode("rotate"));
   transformScaleButton?.addEventListener("click", () => applyMode("scale"));
   transformCollapseButton?.addEventListener("click", () => {
+    const nextOpen = transformToolbarCollapsed;
     transformToolbarCollapsed = !transformToolbarCollapsed;
+    if (nextOpen) {
+      createToolbarCollapsed = true;
+      placeToolbarCollapsed = true;
+    }
+    syncTransformToolbar();
+  });
+  createToolbarToggleButton?.addEventListener("click", () => {
+    const nextOpen = createToolbarCollapsed;
+    createToolbarCollapsed = !createToolbarCollapsed;
+    if (nextOpen) {
+      transformToolbarCollapsed = true;
+      placeToolbarCollapsed = true;
+    }
+    syncTransformToolbar();
+  });
+  placeToolbarToggleButton?.addEventListener("click", () => {
+    const nextOpen = placeToolbarCollapsed;
+    placeToolbarCollapsed = !placeToolbarCollapsed;
+    if (nextOpen) {
+      transformToolbarCollapsed = true;
+      createToolbarCollapsed = true;
+    }
     syncTransformToolbar();
   });
   syncTransformToolbar();
@@ -662,6 +765,7 @@ let pendingSelectedWorldPhotoWallId: string | null = null;
 let isPlacingPhotoWall = false;
 let isSubmittingPhotoWallPlacement = false;
 let pendingPhotoWallDraft: { imageUrl: string | null; imageFile: File | null } | null = null;
+let selectedPhotoWallLibraryImageUrl: string | null = null;
 let selectedWorldPostId: string | null = null;
 let pendingSelectedWorldPostId: string | null = null;
 let isPlacingPost = false;
@@ -688,6 +792,19 @@ let playerAvatarSelection: PlayerAvatarSelection = {
 };
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
+const worldGenerationStatusList = document.getElementById(
+  "world-generation-status-list"
+) as HTMLDivElement | null;
+const worldGenerateSection = document.getElementById("world-generate-section") as HTMLDivElement | null;
+const worldPlaceModelsSection = document.getElementById(
+  "world-place-models-section"
+) as HTMLDivElement | null;
+const worldPlaceInstancesSection = document.getElementById(
+  "world-place-instances-section"
+) as HTMLDivElement | null;
+const worldPlaceCubesSection = document.getElementById(
+  "world-place-cubes-section"
+) as HTMLDivElement | null;
 const worldUploadForm = document.getElementById("world-upload-form") as HTMLFormElement | null;
 const worldModelNameInput = document.getElementById("world-model-name") as HTMLInputElement | null;
 const worldModelVisibilityInput = document.getElementById(
@@ -739,11 +856,17 @@ const worldPhotoWallImageUrlInput = document.getElementById(
 const worldPhotoWallImageFileInput = document.getElementById(
   "world-photo-wall-image-file"
 ) as HTMLInputElement | null;
+const worldPhotoWallImageFileName = document.getElementById(
+  "world-photo-wall-image-file-name"
+) as HTMLSpanElement | null;
 const worldPhotoWallButton = document.getElementById(
   "world-photo-wall-button"
 ) as HTMLButtonElement | null;
 const worldPhotoWallsContainer = document.getElementById(
   "world-photo-walls"
+) as HTMLDivElement | null;
+const worldPhotoWallLibraryContainer = document.getElementById(
+  "world-photo-wall-library"
 ) as HTMLDivElement | null;
 const worldPhotoWallEditor = document.getElementById(
   "world-photo-wall-editor"
@@ -873,6 +996,12 @@ function syncWorldModelFileName() {
   if (!worldModelFileName) return;
   const selectedFile = worldModelFileInput?.files?.[0];
   worldModelFileName.textContent = selectedFile?.name || "No file chosen";
+}
+
+function syncWorldPhotoWallFileName() {
+  if (!worldPhotoWallImageFileName) return;
+  const selectedFile = worldPhotoWallImageFileInput?.files?.[0];
+  worldPhotoWallImageFileName.textContent = selectedFile?.name || "No image chosen";
 }
 
 function setProfileMenuExpanded(expanded: boolean) {
@@ -1058,6 +1187,7 @@ function startWorldGenerationPolling() {
 async function loadWorldGenerationTasks() {
   if (!auth.getCurrentUser() || !worldState?.canManage) {
     worldGenerationTasks = [];
+    renderWorldGenerationStatus();
     renderWorldAssets();
     renderWorldPlacements();
     renderWorldPosts();
@@ -1080,6 +1210,7 @@ async function loadWorldGenerationTasks() {
     worldGenerationTasks.map((task) => [task.id, task.status])
   );
   worldGenerationTasks = payload.tasks;
+  renderWorldGenerationStatus();
   renderWorldAssets();
 
   const hasNewlyCompletedTask = worldGenerationTasks.some((task) => {
@@ -1394,6 +1525,7 @@ function cancelPhotoWallPlacementMode() {
   if (!isPlacingPhotoWall && !pendingPhotoWallDraft) return;
   isPlacingPhotoWall = false;
   pendingPhotoWallDraft = null;
+  selectedPhotoWallLibraryImageUrl = null;
   renderWorldPhotoWalls();
 }
 
@@ -1852,6 +1984,7 @@ function renderWorldPhotoWalls() {
     empty.className = "party-empty";
     empty.textContent = "No photo cubes placed";
     worldPhotoWallsContainer.appendChild(empty);
+    renderWorldPhotoWallLibrary();
     return;
   }
   for (const wall of walls) {
@@ -1866,6 +1999,77 @@ function renderWorldPhotoWalls() {
     button.addEventListener("click", () => setSelectedWorldPhotoWall(wall.id));
     row.appendChild(button);
     worldPhotoWallsContainer.appendChild(row);
+  }
+  renderWorldPhotoWallLibrary();
+}
+
+function renderWorldPhotoWallLibrary() {
+  if (!worldPhotoWallLibraryContainer) return;
+  worldPhotoWallLibraryContainer.innerHTML = "";
+  if (!worldState) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Sign in to place cubes";
+    worldPhotoWallLibraryContainer.appendChild(empty);
+    return;
+  }
+
+  const urls = Array.from(
+    new Set(
+      (worldState.photoWalls ?? [])
+        .map((wall) => wall.imageUrl.trim())
+        .filter((url) => url.length > 0)
+    )
+  );
+  if (urls.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "No saved cube images yet";
+    worldPhotoWallLibraryContainer.appendChild(empty);
+    return;
+  }
+
+  for (const [index, imageUrl] of urls.entries()) {
+    const row = document.createElement("div");
+    row.className = "photo-library-row";
+
+    const preview = document.createElement("img");
+    preview.className = "photo-library-thumb";
+    preview.src = imageUrl;
+    preview.alt = `Cube image ${index + 1}`;
+    preview.loading = "lazy";
+
+    const label = document.createElement("div");
+    label.className = "photo-library-label";
+    label.textContent = `Cube Image ${index + 1}`;
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "party-secondary-button";
+    button.textContent =
+      isPlacingPhotoWall && selectedPhotoWallLibraryImageUrl === imageUrl ? "Placing..." : "Place";
+    button.disabled = !worldState.canManage;
+    button.addEventListener("click", () => {
+      if (!worldState?.canManage || isSubmittingPhotoWallPlacement) return;
+      cancelPlacementMode();
+      cancelPostPlacementMode();
+      selectedWorldPlacementId = null;
+      selectedWorldPostId = null;
+      selectedWorldPhotoWallId = null;
+      syncSceneTransformSelection();
+      pendingPhotoWallDraft = { imageUrl, imageFile: null };
+      selectedPhotoWallLibraryImageUrl = imageUrl;
+      isPlacingPhotoWall = true;
+      setWorldNotice("Photo cube placement mode: click the floor to place.");
+      renderWorldPlacements();
+      renderWorldPosts();
+      renderWorldPhotoWalls();
+    });
+
+    row.appendChild(preview);
+    row.appendChild(label);
+    row.appendChild(button);
+    worldPhotoWallLibraryContainer.appendChild(row);
   }
 }
 
@@ -2563,6 +2767,7 @@ async function loadWorldState() {
     syncTransformToolbar();
     setWorldNotice("Sign in to load world");
     if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
+    if (worldGenerationStatusList) worldGenerationStatusList.innerHTML = "";
     if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
     if (worldPlacementEditor) worldPlacementEditor.innerHTML = "";
     if (worldPhotoWallsContainer) worldPhotoWallsContainer.innerHTML = "";
@@ -2708,27 +2913,12 @@ function renderWorldAssets() {
   worldAssetsContainer.innerHTML = "";
 
   const assets = worldState?.assets ?? [];
-  if (assets.length === 0 && worldGenerationTasks.length === 0) {
+  if (assets.length === 0) {
     const empty = document.createElement("div");
     empty.className = "party-empty";
     empty.textContent = "No models uploaded";
     worldAssetsContainer.appendChild(empty);
     return;
-  }
-
-  for (const task of worldGenerationTasks) {
-    if (task.status === "COMPLETED") continue;
-
-    const row = document.createElement("div");
-    row.className = "world-asset-row";
-
-    const label = document.createElement("div");
-    label.className = "party-result-label";
-    label.textContent = `${task.modelName} • ${getGenerationStatusLabel(task)}`;
-    label.title = task.prompt;
-
-    row.appendChild(label);
-    worldAssetsContainer.appendChild(row);
   }
 
   for (const asset of assets) {
@@ -2884,6 +3074,36 @@ function renderWorldAssets() {
   }
 }
 
+function renderWorldGenerationStatus() {
+  if (!worldGenerationStatusList) return;
+  worldGenerationStatusList.innerHTML = "";
+  if (!worldState?.canManage) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "Sign in to create models";
+    worldGenerationStatusList.appendChild(empty);
+    return;
+  }
+  const tasks = worldGenerationTasks.filter((task) => task.status !== "COMPLETED");
+  if (tasks.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "party-empty";
+    empty.textContent = "No active generation jobs";
+    worldGenerationStatusList.appendChild(empty);
+    return;
+  }
+  for (const task of tasks) {
+    const row = document.createElement("div");
+    row.className = "world-asset-row";
+    const label = document.createElement("div");
+    label.className = "party-result-label";
+    label.textContent = `${task.modelName} • ${getGenerationStatusLabel(task)}`;
+    label.title = task.prompt;
+    row.appendChild(label);
+    worldGenerationStatusList.appendChild(row);
+  }
+}
+
 const game = createGameScene({
   mount: app,
   onLocalStateChange(state, _force, avatarSelection, avatarMode) {
@@ -3000,6 +3220,8 @@ const game = createGameScene({
         pendingSelectedWorldPhotoWallId = payload?.photoWallId ?? null;
         if (worldPhotoWallImageUrlInput) worldPhotoWallImageUrlInput.value = "";
         if (worldPhotoWallImageFileInput) worldPhotoWallImageFileInput.value = "";
+        syncWorldPhotoWallFileName();
+        selectedPhotoWallLibraryImageUrl = null;
         await loadWorldState();
         setWorldNotice("Photo cube placed");
       } catch {
@@ -3543,6 +3765,7 @@ const auth = createAuthController({
       syncTransformToolbar();
       setWorldNotice("Sign in to load world");
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
+      if (worldGenerationStatusList) worldGenerationStatusList.innerHTML = "";
       if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
       if (worldPhotoWallsContainer) worldPhotoWallsContainer.innerHTML = "";
       if (worldPostsContainer) worldPostsContainer.innerHTML = "";
@@ -3990,6 +4213,9 @@ worldGenerateImageFileInput?.addEventListener("change", () => {
 worldModelFileInput?.addEventListener("change", () => {
   syncWorldModelFileName();
 });
+worldPhotoWallImageFileInput?.addEventListener("change", () => {
+  syncWorldPhotoWallFileName();
+});
 
 worldGenerateImageForm?.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -4153,6 +4379,7 @@ worldPhotoWallForm?.addEventListener("submit", (event) => {
   selectedWorldPostId = null;
   selectedWorldPhotoWallId = null;
   pendingPhotoWallDraft = { imageUrl: imageUrl || null, imageFile };
+  selectedPhotoWallLibraryImageUrl = imageUrl || null;
   isPlacingPhotoWall = true;
   setWorldNotice("Photo cube placement mode: click the floor to place.");
   renderWorldPlacements();
@@ -4385,9 +4612,11 @@ if (worldPostSaveEditButton) worldPostSaveEditButton.disabled = true;
 if (worldPostCancelEditButton) worldPostCancelEditButton.disabled = true;
 if (worldPostCommentInput) worldPostCommentInput.disabled = true;
 if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = true;
-syncWorldGenerateImageFileName();
-syncWorldModelFileName();
-syncWorldVisibilityControls();
+  syncWorldGenerateImageFileName();
+  syncWorldModelFileName();
+  syncWorldPhotoWallFileName();
+  renderWorldGenerationStatus();
+  syncWorldVisibilityControls();
 syncWorldPostFormMode();
 renderWorldPlacements();
 renderWorldPhotoWalls();

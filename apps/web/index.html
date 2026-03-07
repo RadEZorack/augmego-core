@@ -179,6 +179,19 @@
     </section>
     <div id="app"></div>
     <div class="transform-toolbar" id="transform-toolbar" hidden aria-label="Transform mode">
+      <button
+        id="create-toolbar-toggle"
+        class="transform-mode-button transform-collapse-button create-toolbar-toggle"
+        type="button"
+        aria-label="Open model creation"
+        aria-expanded="false"
+        title="Create model"
+      >
+        Create
+      </button>
+      <div class="create-toolbar-panel" id="create-toolbar-panel" hidden>
+        <div id="create-toolbar-generate-slot"></div>
+      </div>
       <div class="transform-toolbar-modes">
         <button
           id="transform-mode-translate"
@@ -218,7 +231,23 @@
           Edit
         </button>
       </div>
+      <button
+        id="place-toolbar-toggle"
+        class="transform-mode-button transform-collapse-button place-toolbar-toggle"
+        type="button"
+        aria-label="Open placement panel"
+        aria-expanded="false"
+        title="Place assets"
+      >
+        Place
+      </button>
+      <div class="place-toolbar-panel" id="place-toolbar-panel" hidden>
+        <div id="place-toolbar-slot"></div>
+      </div>
       <div class="transform-slider-panel" id="transform-slider-panel" aria-live="polite"></div>
+      <div class="edit-toolbar-panel" id="edit-toolbar-panel" hidden>
+        <div id="edit-toolbar-slot"></div>
+      </div>
     </div>
     <aside class="dock-panel" id="dock-panel" aria-label="Communication panel">
       <div class="dock-header">
@@ -228,12 +257,6 @@
           </button>
           <button id="tab-world" class="dock-tab" type="button" role="tab" aria-selected="false">
             World
-          </button>
-          <button id="tab-objects" class="dock-tab" type="button" role="tab" aria-selected="false">
-            Models
-          </button>
-          <button id="tab-walls" class="dock-tab" type="button" role="tab" aria-selected="false">
-            Cubes
           </button>
           <button id="tab-media" class="dock-tab" type="button" role="tab" aria-selected="false">
             Media
@@ -442,9 +465,10 @@
           aria-labelledby="tab-objects"
           hidden
         >
-          <div class="world-section">
+          <div id="world-generate-section" class="world-section">
             <div class="party-members-title">Generate Model</div>
             <div id="world-status" class="party-status">Sign in to load world</div>
+            <div id="world-generation-status-list" class="party-search-results"></div>
             <div class="party-search">
               <input
                 id="world-generate-name"
@@ -499,16 +523,31 @@
               </div>
               <button id="world-upload-button" class="party-search-button" type="submit">Upload from File</button>
             </form>
+            <div class="generation-divider" aria-hidden="true">
+              <span>Photo Cubes</span>
+            </div>
+            <div class="file-picker-row">
+              <input
+                id="world-photo-wall-image-file"
+                class="file-picker-input"
+                type="file"
+                accept="image/*"
+              />
+              <label for="world-photo-wall-image-file" class="party-search-button">Choose Cube Image</label>
+              <span id="world-photo-wall-image-file-name" class="file-picker-name">No image chosen</span>
+            </div>
           </div>
 
-          <div class="world-section">
-            <div class="party-members-title">Use Model</div>
+          <div id="world-place-models-section" class="world-section">
+            <div class="party-members-title">Model Library</div>
             <div class="party-search-results" id="world-assets"></div>
           </div>
 
-          <div class="world-section">
-            <div class="party-members-title">World Instances</div>
+          <div id="world-place-instances-section" class="world-section">
+            <div class="party-members-title">Model Instances</div>
             <div class="party-search-results" id="world-placements"></div>
+            <div class="party-members-title">Photo Instances</div>
+            <div class="party-search-results" id="world-photo-walls"></div>
           </div>
         </div>
 
@@ -595,28 +634,9 @@
           aria-labelledby="tab-walls"
           hidden
         >
-          <div class="world-section">
-            <div class="party-members-title">Photo Cubes</div>
-            <form id="world-photo-wall-form" class="party-search">
-              <input
-                id="world-photo-wall-image-url"
-                class="party-search-input"
-                type="url"
-                maxlength="2000"
-                placeholder="Image URL (optional if uploading file)"
-                autocomplete="off"
-              />
-              <button id="world-photo-wall-button" class="party-search-button" type="submit">
-                Place Cube
-              </button>
-            </form>
-            <input
-              id="world-photo-wall-image-file"
-              class="party-search-input"
-              type="file"
-              accept="image/*"
-            />
-            <div class="party-search-results" id="world-photo-walls"></div>
+          <div id="world-place-cubes-section" class="world-section">
+            <div class="party-members-title">Cube Library</div>
+            <div class="party-search-results" id="world-photo-wall-library"></div>
           </div>
         </div>
       </div>
