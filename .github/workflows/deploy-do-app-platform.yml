@@ -89,6 +89,9 @@ jobs:
       - name: Generate Prisma Client
         run: bun run --cwd apps/core db:generate
 
+      - name: Migrate Prisma Client
+        run: bun run --cwd apps/core db:migrate
+
       - name: Install doctl
         uses: digitalocean/action-doctl@v2
         with:
