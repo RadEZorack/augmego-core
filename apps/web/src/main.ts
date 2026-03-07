@@ -367,8 +367,8 @@ function renderTransformToolbarSliders() {
   if (!transformSliderPanel) return;
   transformSliderPanel.innerHTML = "";
   const canEditPlacements = worldViewActive && worldState?.canManage === true;
-  const selectedPlacement = getPlacementById(selectedWorldPlacementId);
-  if (!canEditPlacements || !selectedPlacement) return;
+  const selectedTarget = getSelectedTransformTarget();
+  if (!canEditPlacements || !selectedTarget) return;
 
   const radToDeg = (value: number) => (value * 180) / Math.PI;
   const degToRad = (value: number) => (value * Math.PI) / 180;
@@ -407,22 +407,22 @@ function renderTransformToolbarSliders() {
     input.disabled = !canEditPlacements;
 
     if (group === "rotation") {
-      const start = radToDeg(selectedPlacement.rotation[axis]);
+      const start = radToDeg(selectedTarget.rotation[axis]);
       slider.value = String(Math.max(sliderMin, Math.min(sliderMax, start)));
       input.value = start.toFixed(1);
     } else if (group === "position") {
       slider.value = "0";
-      input.value = selectedPlacement.position[axis].toFixed(2);
+      input.value = selectedTarget.position[axis].toFixed(2);
     } else {
       slider.value = "0";
-      input.value = selectedPlacement.scale[axis].toFixed(2);
+      input.value = selectedTarget.scale[axis].toFixed(2);
     }
 
     let lastSliderValue = Number(slider.value);
     slider.addEventListener("input", () => {
       const parsed = Number(slider.value);
       if (!Number.isFinite(parsed)) return;
-      const latest = getPlacementById(selectedWorldPlacementId);
+      const latest = getSelectedTransformTarget();
       if (!latest) return;
       const position = { ...latest.position };
       const rotation = { ...latest.rotation };
@@ -437,8 +437,7 @@ function renderTransformToolbarSliders() {
         else scale[axis] = Math.max(0.01, scale[axis] + delta);
       }
 
-      const updated = commitPlacementTransform(
-        latest.id,
+      const updated = commitSelectedTransform(
         { position, rotation, scale },
         { persistMode: "debounced", renderUi: false }
       );
@@ -457,11 +456,10 @@ function renderTransformToolbarSliders() {
     slider.addEventListener("change", () => {
       const parsed = Number(slider.value);
       if (!Number.isFinite(parsed)) return;
-      const latest = getPlacementById(selectedWorldPlacementId);
+      const latest = getSelectedTransformTarget();
       if (!latest) return;
       if (sliderMode === "delta") {
-        commitPlacementTransform(
-          latest.id,
+        commitSelectedTransform(
           {
             position: { ...latest.position },
             rotation: { ...latest.rotation },
@@ -477,8 +475,7 @@ function renderTransformToolbarSliders() {
       const rotation = { ...latest.rotation };
       const scale = { ...latest.scale };
       rotation[axis] = degToRad(parsed);
-      commitPlacementTransform(
-        latest.id,
+      commitSelectedTransform(
         { position, rotation, scale },
         { persistMode: "immediate", renderUi: true }
       );
@@ -487,7 +484,7 @@ function renderTransformToolbarSliders() {
     input.addEventListener("change", () => {
       const parsed = Number(input.value);
       if (!Number.isFinite(parsed)) return;
-      const latest = getPlacementById(selectedWorldPlacementId);
+      const latest = getSelectedTransformTarget();
       if (!latest) return;
       const position = { ...latest.position };
       const rotation = { ...latest.rotation };
@@ -501,8 +498,7 @@ function renderTransformToolbarSliders() {
         scale[axis] = Math.max(0.01, parsed);
       }
 
-      const updated = commitPlacementTransform(
-        latest.id,
+      const updated = commitSelectedTransform(
         { position, rotation, scale },
         { persistMode: "immediate", renderUi: true }
       );
@@ -537,10 +533,12 @@ function syncTransformToolbar() {
   ] as const;
   const canEditPlacements = worldViewActive && worldState?.canManage === true;
   const transformToolsEnabled = canEditPlacements && !transformToolbarCollapsed;
+  const editPanelOpen = canEditPlacements && !transformToolbarCollapsed;
   transformToolbar?.toggleAttribute("hidden", !canEditPlacements);
   transformToolbar?.classList.toggle("collapsed", transformToolbarCollapsed);
   game.setWorldPlacementTransformEnabled(transformToolsEnabled);
-  const hasSelection = Boolean(selectedWorldPlacementId);
+  game.setLocalPlayerMovementEnabled(!editPanelOpen);
+  const hasSelection = Boolean(getSelectedTransformTarget());
   buttons.forEach((button) => {
     if (!button) return;
     button.disabled = !hasSelection;
@@ -1190,6 +1188,55 @@ function getPhotoWallById(photoWallId: string | null) {
   return worldState.photoWalls.find((wall) => wall.id === photoWallId) ?? null;
 }
 
+function syncSceneTransformSelection() {
+  game.setSelectedPlacementId(selectedWorldPlacementId);
+  game.setSelectedPhotoWallId(selectedWorldPhotoWallId);
+}
+
+function getSelectedTransformTarget() {
+  if (selectedWorldPlacementId) {
+    const placement = getPlacementById(selectedWorldPlacementId);
+    if (placement) {
+      return {
+        kind: "placement" as const,
+        id: placement.id,
+        position: placement.position,
+        rotation: placement.rotation,
+        scale: placement.scale
+      };
+    }
+  }
+  if (selectedWorldPhotoWallId) {
+    const wall = getPhotoWallById(selectedWorldPhotoWallId);
+    if (wall) {
+      return {
+        kind: "photoWall" as const,
+        id: wall.id,
+        position: wall.position,
+        rotation: wall.rotation,
+        scale: wall.scale
+      };
+    }
+  }
+  return null;
+}
+
+function commitSelectedTransform(
+  transform: {
+    position: { x: number; y: number; z: number };
+    rotation: { x: number; y: number; z: number };
+    scale: { x: number; y: number; z: number };
+  },
+  options: { persistMode?: "immediate" | "debounced"; renderUi?: boolean } = {}
+) {
+  const target = getSelectedTransformTarget();
+  if (!target) return null;
+  if (target.kind === "placement") {
+    return commitPlacementTransform(target.id, transform, options);
+  }
+  return commitPhotoWallTransform(target.id, transform, options);
+}
+
 function getWorldPostById(postId: string | null) {
   if (!postId || !worldState) return null;
   return worldState.posts.find((post) => post.id === postId) ?? null;
@@ -1378,7 +1425,7 @@ function setSelectedWorldPost(postId: string | null) {
     selectedWorldPlacementId = null;
     selectedWorldPhotoWallId = null;
   }
-  game.setSelectedPlacementId(selectedWorldPlacementId);
+  syncSceneTransformSelection();
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPhotoWallEditor();
@@ -1405,7 +1452,7 @@ function setSelectedWorldPlacement(placementId: string | null) {
     selectedWorldPostId = null;
     selectedWorldPhotoWallId = null;
   }
-  game.setSelectedPlacementId(selectedWorldPlacementId);
+  syncSceneTransformSelection();
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPhotoWallEditor();
@@ -1429,7 +1476,7 @@ function setSelectedWorldPhotoWall(photoWallId: string | null) {
     selectedWorldPlacementId = null;
     selectedWorldPostId = null;
   }
-  game.setSelectedPlacementId(selectedWorldPlacementId);
+  syncSceneTransformSelection();
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPosts();
@@ -1696,7 +1743,7 @@ async function deleteSelectedPlacement() {
   }
 
   selectedWorldPlacementId = null;
-  game.setSelectedPlacementId(null);
+  syncSceneTransformSelection();
   await loadWorldState();
   setWorldNotice("Instance deleted");
 }
@@ -2589,7 +2636,7 @@ async function loadWorldState() {
     requestedPhotoWallId && payload.photoWalls.some((wall) => wall.id === requestedPhotoWallId)
       ? requestedPhotoWallId
       : null;
-  game.setSelectedPlacementId(selectedWorldPlacementId);
+  syncSceneTransformSelection();
   if (editingWorldPostId && !payload.posts.some((post) => post.id === editingWorldPostId)) {
     editingWorldPostId = null;
   }
@@ -2854,6 +2901,13 @@ const game = createGameScene({
   onWorldPlacementTransform(placementId, transform, options) {
     if (!worldState?.canManage) return;
     commitPlacementTransform(placementId, transform, {
+      persistMode: options.persistMode,
+      renderUi: true
+    });
+  },
+  onWorldPhotoWallTransform(photoWallId, transform, options) {
+    if (!worldState?.canManage) return;
+    commitPhotoWallTransform(photoWallId, transform, {
       persistMode: options.persistMode,
       renderUi: true
     });
@@ -4095,7 +4149,7 @@ worldPhotoWallForm?.addEventListener("submit", (event) => {
   cancelPlacementMode();
   cancelPostPlacementMode();
   selectedWorldPlacementId = null;
-  game.setSelectedPlacementId(null);
+  syncSceneTransformSelection();
   selectedWorldPostId = null;
   selectedWorldPhotoWallId = null;
   pendingPhotoWallDraft = { imageUrl: imageUrl || null, imageFile };
@@ -4131,7 +4185,7 @@ worldPostForm?.addEventListener("submit", (event) => {
   cancelPlacementMode();
   cancelWorldPostEdit();
   selectedWorldPlacementId = null;
-  game.setSelectedPlacementId(null);
+  syncSceneTransformSelection();
   selectedWorldPostId = null;
   pendingWorldPostDraft = { imageUrl: imageUrl || null, imageFile, message };
   isPlacingPost = true;

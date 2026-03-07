@@ -53,6 +53,11 @@ type GameSceneOptions = {
     transform: WorldTransform,
     options: { persistMode: "immediate" | "debounced" }
   ) => void;
+  onWorldPhotoWallTransform?: (
+    photoWallId: string,
+    transform: WorldTransform,
+    options: { persistMode: "immediate" | "debounced" }
+  ) => void;
   onWorldPlacementTransformModeChange?: (mode: TransformMode) => void;
   onWorldPhotoWallSelect?: (photoWallId: string) => void;
   onWorldPostSelect?: (postId: string) => void;
@@ -133,9 +138,11 @@ export function createGameScene(options: GameSceneOptions) {
   let worldRenderEpoch = 0;
   let pendingWorldPostSpinner: any | null = null;
   let selectedWorldPlacementId: string | null = null;
+  let selectedWorldPhotoWallId: string | null = null;
   let placementHighlight: PlacementHighlightState | null = null;
   let worldPlacementTransformEnabled = false;
   let worldPlacementTransformMode: TransformMode = "translate";
+  let localPlayerMovementEnabled = true;
   let placementTransformPointerActive = false;
   let placementTransformDragging = false;
   let cameraControls: CameraControlState = {
@@ -897,37 +904,59 @@ export function createGameScene(options: GameSceneOptions) {
     );
   }
 
+  function getSelectedTransformTarget() {
+    if (selectedWorldPlacementId) {
+      const node = findPlacementNodeById(selectedWorldPlacementId);
+      if (node) {
+        return {
+          kind: "placement" as const,
+          id: selectedWorldPlacementId,
+          node
+        };
+      }
+    }
+    if (selectedWorldPhotoWallId) {
+      const node = findPhotoWallNodeById(selectedWorldPhotoWallId);
+      if (node) {
+        return {
+          kind: "photoWall" as const,
+          id: selectedWorldPhotoWallId,
+          node
+        };
+      }
+    }
+    return null;
+  }
+
   function emitSelectedPlacementTransform(persistMode: "immediate" | "debounced") {
-    if (!selectedWorldPlacementId) return;
-    const node = findPlacementNodeById(selectedWorldPlacementId);
-    if (!node) return;
-    options.onWorldPlacementTransform?.(
-      selectedWorldPlacementId,
-      {
-        position: {
-          x: node.position.x,
-          y: node.position.y,
-          z: node.position.z
-        },
-        rotation: {
-          x: node.rotation.x,
-          y: node.rotation.y,
-          z: node.rotation.z
-        },
-        scale: {
-          x: node.scale.x,
-          y: node.scale.y,
-          z: node.scale.z
-        }
+    const target = getSelectedTransformTarget();
+    if (!target) return;
+    const transform: WorldTransform = {
+      position: {
+        x: target.node.position.x,
+        y: target.node.position.y,
+        z: target.node.position.z
       },
-      { persistMode }
-    );
+      rotation: {
+        x: target.node.rotation.x,
+        y: target.node.rotation.y,
+        z: target.node.rotation.z
+      },
+      scale: {
+        x: target.node.scale.x,
+        y: target.node.scale.y,
+        z: target.node.scale.z
+      }
+    };
+    if (target.kind === "placement") {
+      options.onWorldPlacementTransform?.(target.id, transform, { persistMode });
+      return;
+    }
+    options.onWorldPhotoWallTransform?.(target.id, transform, { persistMode });
   }
 
   function refreshPlacementTransformControls() {
-    const root = selectedWorldPlacementId
-      ? findPlacementNodeById(selectedWorldPlacementId)
-      : null;
+    const root = getSelectedTransformTarget()?.node ?? null;
     if (!worldPlacementTransformEnabled || !root) {
       placementTransformControls.detach();
       placementTransformHelper.visible = false;
@@ -952,7 +981,8 @@ export function createGameScene(options: GameSceneOptions) {
 
   function handleTransformShortcut(event: KeyboardEvent) {
     if (event.defaultPrevented) return;
-    if (!worldPlacementTransformEnabled || !selectedWorldPlacementId) return;
+    if (!worldPlacementTransformEnabled) return;
+    if (!getSelectedTransformTarget()) return;
     if (isEditableElement(event.target)) return;
     const key = event.key.toLowerCase();
     if (key === "w") {
@@ -986,14 +1016,17 @@ export function createGameScene(options: GameSceneOptions) {
     node.position.set(transform.position.x, transform.position.y, transform.position.z);
     node.rotation.set(transform.rotation.x, transform.rotation.y, transform.rotation.z);
     node.scale.set(transform.scale.x, transform.scale.y, transform.scale.z);
+    if (selectedWorldPhotoWallId === photoWallId) {
+      refreshPlacementHighlight();
+      refreshPlacementTransformControls();
+    }
     return true;
   }
 
   function refreshPlacementHighlight() {
     clearPlacementHighlight();
     if (!worldPlacementTransformEnabled) return;
-    if (!selectedWorldPlacementId) return;
-    const root = findPlacementNodeById(selectedWorldPlacementId);
+    const root = getSelectedTransformTarget()?.node ?? null;
     if (!root) return;
     placementHighlight = createPlacementHighlight(root);
   }
@@ -1907,6 +1940,10 @@ export function createGameScene(options: GameSceneOptions) {
       return;
     }
 
+    if (!localPlayerMovementEnabled) {
+      return;
+    }
+
     targetPosition.set(hitPoint.x, playerRadius, hitPoint.z);
   }
 
@@ -2047,10 +2084,20 @@ export function createGameScene(options: GameSceneOptions) {
     refreshPlacementTransformControls();
   }
 
+  function setSelectedPhotoWallId(photoWallId: string | null) {
+    selectedWorldPhotoWallId = photoWallId;
+    refreshPlacementHighlight();
+    refreshPlacementTransformControls();
+  }
+
   function setWorldPlacementTransformEnabled(enabled: boolean) {
     worldPlacementTransformEnabled = enabled;
     refreshPlacementHighlight();
     refreshPlacementTransformControls();
+  }
+
+  function setLocalPlayerMovementEnabled(enabled: boolean) {
+    localPlayerMovementEnabled = enabled;
   }
 
   return {
@@ -2070,8 +2117,10 @@ export function createGameScene(options: GameSceneOptions) {
     applyPlacementTransform,
     applyPhotoWallTransform,
     setSelectedPlacementId,
+    setSelectedPhotoWallId,
     setWorldPlacementTransformEnabled,
     setWorldPlacementTransformMode,
+    setLocalPlayerMovementEnabled,
     setPendingWorldPostPlacement,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,
