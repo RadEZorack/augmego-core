@@ -66,6 +66,16 @@ const worldMapWorldDesc = document.getElementById(
 const worldMapJoinWorldButton = document.getElementById(
   "world-map-join-world"
 ) as HTMLButtonElement | null;
+const transformToolbar = document.getElementById("transform-toolbar") as HTMLElement | null;
+const transformTranslateButton = document.getElementById(
+  "transform-mode-translate"
+) as HTMLButtonElement | null;
+const transformRotateButton = document.getElementById(
+  "transform-mode-rotate"
+) as HTMLButtonElement | null;
+const transformScaleButton = document.getElementById(
+  "transform-mode-scale"
+) as HTMLButtonElement | null;
 const homeMapButton = document.getElementById("home-map-button") as HTMLButtonElement | null;
 const dockMinimizeButton = document.getElementById("dock-minimize") as HTMLButtonElement | null;
 const dockHeightToggleButton = document.getElementById(
@@ -154,8 +164,10 @@ function readInitialLinkedWorldId() {
 type DockHeightState = "quarter" | "half" | "full";
 type PartySubtabKey = "world" | "objects" | "posts" | "walls";
 type MainTabKey = "chat" | "world" | "objects" | "walls" | "party" | "media" | "controls";
+type TransformMode = "translate" | "rotate" | "scale";
 let setActiveMainTab: ((tab: MainTabKey) => void) | null = null;
 let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
+let activeTransformMode: TransformMode = "translate";
 
 function setDockHeightState(
   panel: HTMLElement | null,
@@ -342,6 +354,37 @@ function setPanelMinimized(
     "aria-label",
     minimized ? `Restore ${label}` : `Minimize ${label}`
   );
+}
+
+function syncTransformToolbar() {
+  const buttons = [
+    transformTranslateButton,
+    transformRotateButton,
+    transformScaleButton
+  ] as const;
+  const canEditPlacements = worldViewActive && worldState?.canManage === true;
+  transformToolbar?.toggleAttribute("hidden", !canEditPlacements);
+  const hasSelection = Boolean(selectedWorldPlacementId);
+  buttons.forEach((button) => {
+    if (!button) return;
+    button.disabled = !hasSelection;
+  });
+  transformTranslateButton?.classList.toggle("active", activeTransformMode === "translate");
+  transformRotateButton?.classList.toggle("active", activeTransformMode === "rotate");
+  transformScaleButton?.classList.toggle("active", activeTransformMode === "scale");
+}
+
+function setupTransformToolbar() {
+  if (!transformToolbar) return;
+  const applyMode = (mode: TransformMode) => {
+    activeTransformMode = mode;
+    game.setWorldPlacementTransformMode(mode);
+    syncTransformToolbar();
+  };
+  transformTranslateButton?.addEventListener("click", () => applyMode("translate"));
+  transformRotateButton?.addEventListener("click", () => applyMode("rotate"));
+  transformScaleButton?.addEventListener("click", () => applyMode("scale"));
+  syncTransformToolbar();
 }
 
 function setupChatChannelToggles() {
@@ -1142,6 +1185,7 @@ function setSelectedWorldPost(postId: string | null) {
   renderWorldPhotoWallEditor();
   renderWorldPosts();
   syncWorldPostFormMode();
+  syncTransformToolbar();
   void loadCommentsForSelectedPost();
 }
 
@@ -1168,6 +1212,7 @@ function setSelectedWorldPlacement(placementId: string | null) {
   renderWorldPhotoWallEditor();
   renderWorldPosts();
   syncWorldPostFormMode();
+  syncTransformToolbar();
 }
 
 function setSelectedWorldPhotoWall(photoWallId: string | null) {
@@ -1192,6 +1237,7 @@ function setSelectedWorldPhotoWall(photoWallId: string | null) {
   renderWorldPhotoWalls();
   renderWorldPhotoWallEditor();
   renderWorldPostComments();
+  syncTransformToolbar();
 }
 
 function applyPlacementLocally(
@@ -2237,7 +2283,9 @@ async function loadWorldState() {
   if (!worldViewActive) {
     stopWorldGenerationPolling();
     game.setWorldData(null);
+    game.setWorldPlacementTransformEnabled(false);
     game.setPendingWorldPostPlacement(null);
+    syncTransformToolbar();
     syncShareWorldLinkButton();
     return;
   }
@@ -2263,7 +2311,9 @@ async function loadWorldState() {
     pendingPhotoWallDraft = null;
     stopWorldGenerationPolling();
     game.setWorldData(null);
+    game.setWorldPlacementTransformEnabled(false);
     game.setPendingWorldPostPlacement(null);
+    syncTransformToolbar();
     setWorldNotice("Sign in to load world");
     if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
     if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
@@ -2356,7 +2406,9 @@ async function loadWorldState() {
     party.setPartyState(partyState);
   }
   game.setWorldData(payload);
+  game.setWorldPlacementTransformEnabled(payload.canManage);
   game.setPendingWorldPostPlacement(null);
+  syncTransformToolbar();
   if (worldUploadButton) worldUploadButton.disabled = !payload.canManage;
   if (worldModelFileInput) worldModelFileInput.disabled = !payload.canManage;
   if (worldModelNameInput) worldModelNameInput.disabled = !payload.canManage;
@@ -2599,6 +2651,17 @@ const game = createGameScene({
   onWorldPlacementSelect(placementId) {
     setSelectedWorldPlacement(placementId);
   },
+  onWorldPlacementTransform(placementId, transform, options) {
+    if (!worldState?.canManage) return;
+    commitPlacementTransform(placementId, transform, {
+      persistMode: options.persistMode,
+      renderUi: true
+    });
+  },
+  onWorldPlacementTransformModeChange(mode) {
+    activeTransformMode = mode;
+    syncTransformToolbar();
+  },
   onWorldPhotoWallSelect(photoWallId) {
     setSelectedWorldPhotoWall(photoWallId);
     if (worldPhotoWallEditor && !dockPanel?.classList.contains("minimized")) {
@@ -2821,6 +2884,7 @@ const game = createGameScene({
 function setWorldViewMode(active: boolean) {
   worldViewActive = active;
   dockPanel?.toggleAttribute("hidden", !active);
+  syncTransformToolbar();
   if (active) {
     worldMap.activateWorldView();
     return;
@@ -3220,7 +3284,9 @@ const auth = createAuthController({
       worldPostCommentsForPostId = null;
       worldPostCommentsLoading = false;
       game.setWorldData(null);
+      game.setWorldPlacementTransformEnabled(false);
       game.setPendingWorldPostPlacement(null);
+      syncTransformToolbar();
       setWorldNotice("Sign in to load world");
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
       if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
@@ -3556,6 +3622,7 @@ setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
 setupPartySubtabs();
 setupCameraControlsTab();
+setupTransformToolbar();
 setupAvatarControls();
 setupChatChannelToggles();
 setupProfileMenu();

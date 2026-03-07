@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import * as SkeletonUtils from "three/examples/jsm/utils/SkeletonUtils.js";
 import type {
@@ -47,6 +48,12 @@ type GameSceneOptions = {
   onRemoteInviteClick?: (clientId: string) => void;
   canShowRemoteInvite?: (clientId: string) => boolean;
   onWorldPlacementSelect?: (placementId: string) => void;
+  onWorldPlacementTransform?: (
+    placementId: string,
+    transform: WorldTransform,
+    options: { persistMode: "immediate" | "debounced" }
+  ) => void;
+  onWorldPlacementTransformModeChange?: (mode: TransformMode) => void;
   onWorldPhotoWallSelect?: (photoWallId: string) => void;
   onWorldPostSelect?: (postId: string) => void;
   onWorldPostToggleMinimize?: (postId: string) => void;
@@ -91,6 +98,8 @@ type WorldTransform = {
   scale: { x: number; y: number; z: number };
 };
 
+type TransformMode = "translate" | "rotate" | "scale";
+
 export function createGameScene(options: GameSceneOptions) {
   const playerRadius = options.playerRadius ?? 0.35;
   const playerSpeed = options.playerSpeed ?? 3;
@@ -125,6 +134,10 @@ export function createGameScene(options: GameSceneOptions) {
   let pendingWorldPostSpinner: any | null = null;
   let selectedWorldPlacementId: string | null = null;
   let placementHighlight: PlacementHighlightState | null = null;
+  let worldPlacementTransformEnabled = false;
+  let worldPlacementTransformMode: TransformMode = "translate";
+  let placementTransformPointerActive = false;
+  let placementTransformDragging = false;
   let cameraControls: CameraControlState = {
     zoom: 1,
     rotateY: 0,
@@ -148,6 +161,16 @@ export function createGameScene(options: GameSceneOptions) {
     1000
   );
   camera.position.set(0, 6, 7);
+  const placementTransformControls: any = new TransformControls(
+    camera,
+    renderer.domElement
+  );
+  placementTransformControls.enabled = false;
+  placementTransformControls.setMode(worldPlacementTransformMode);
+  placementTransformControls.setSpace("world");
+  const placementTransformHelper: any = placementTransformControls.getHelper();
+  placementTransformHelper.visible = false;
+  scene.add(placementTransformHelper);
 
   const light = new THREE.DirectionalLight(0xffffff, 1.0);
   light.position.set(5, 10, 7.5);
@@ -193,6 +216,13 @@ export function createGameScene(options: GameSceneOptions) {
 
   function clamp(value: number, min: number, max: number) {
     return Math.min(max, Math.max(min, value));
+  }
+
+  function isEditableElement(target: EventTarget | null) {
+    if (!(target instanceof HTMLElement)) return false;
+    if (target.isContentEditable) return true;
+    const tagName = target.tagName.toUpperCase();
+    return tagName === "INPUT" || tagName === "TEXTAREA" || tagName === "SELECT";
   }
 
   function setCameraControls(next: Partial<CameraControlState>) {
@@ -621,6 +651,11 @@ export function createGameScene(options: GameSceneOptions) {
 
   function clearWorldModels() {
     clearPlacementHighlight();
+    placementTransformControls.detach();
+    placementTransformHelper.visible = false;
+    placementTransformControls.enabled = false;
+    placementTransformPointerActive = false;
+    placementTransformDragging = false;
     for (const mixer of worldModelMixers.values()) {
       mixer.stopAllAction?.();
     }
@@ -862,6 +897,76 @@ export function createGameScene(options: GameSceneOptions) {
     );
   }
 
+  function emitSelectedPlacementTransform(persistMode: "immediate" | "debounced") {
+    if (!selectedWorldPlacementId) return;
+    const node = findPlacementNodeById(selectedWorldPlacementId);
+    if (!node) return;
+    options.onWorldPlacementTransform?.(
+      selectedWorldPlacementId,
+      {
+        position: {
+          x: node.position.x,
+          y: node.position.y,
+          z: node.position.z
+        },
+        rotation: {
+          x: node.rotation.x,
+          y: node.rotation.y,
+          z: node.rotation.z
+        },
+        scale: {
+          x: node.scale.x,
+          y: node.scale.y,
+          z: node.scale.z
+        }
+      },
+      { persistMode }
+    );
+  }
+
+  function refreshPlacementTransformControls() {
+    const root = selectedWorldPlacementId
+      ? findPlacementNodeById(selectedWorldPlacementId)
+      : null;
+    if (!worldPlacementTransformEnabled || !root) {
+      placementTransformControls.detach();
+      placementTransformHelper.visible = false;
+      placementTransformControls.enabled = false;
+      placementTransformPointerActive = false;
+      placementTransformDragging = false;
+      return;
+    }
+    placementTransformControls.attach(root);
+    placementTransformControls.setMode(worldPlacementTransformMode);
+    placementTransformHelper.visible = true;
+    placementTransformControls.enabled = true;
+  }
+
+  function setWorldPlacementTransformMode(mode: TransformMode) {
+    if (worldPlacementTransformMode === mode) return worldPlacementTransformMode;
+    worldPlacementTransformMode = mode;
+    placementTransformControls.setMode(mode);
+    options.onWorldPlacementTransformModeChange?.(mode);
+    return worldPlacementTransformMode;
+  }
+
+  function handleTransformShortcut(event: KeyboardEvent) {
+    if (event.defaultPrevented) return;
+    if (!worldPlacementTransformEnabled || !selectedWorldPlacementId) return;
+    if (isEditableElement(event.target)) return;
+    const key = event.key.toLowerCase();
+    if (key === "w") {
+      setWorldPlacementTransformMode("translate");
+      event.preventDefault();
+    } else if (key === "e") {
+      setWorldPlacementTransformMode("rotate");
+      event.preventDefault();
+    } else if (key === "r") {
+      setWorldPlacementTransformMode("scale");
+      event.preventDefault();
+    }
+  }
+
   function applyPlacementTransform(placementId: string, transform: WorldTransform) {
     const node = findPlacementNodeById(placementId);
     if (!node) return false;
@@ -870,6 +975,7 @@ export function createGameScene(options: GameSceneOptions) {
     node.scale.set(transform.scale.x, transform.scale.y, transform.scale.z);
     if (selectedWorldPlacementId === placementId) {
       refreshPlacementHighlight();
+      refreshPlacementTransformControls();
     }
     return true;
   }
@@ -1550,6 +1656,7 @@ export function createGameScene(options: GameSceneOptions) {
       worldRoot.add(billboard);
     }
     refreshPlacementHighlight();
+    refreshPlacementTransformControls();
   }
 
   function updateRemotePlayers(deltaSeconds: number) {
@@ -1585,6 +1692,14 @@ export function createGameScene(options: GameSceneOptions) {
   }
 
   function handleWorldClick(event: PointerEvent) {
+    if (
+      placementTransformPointerActive ||
+      placementTransformDragging ||
+      Boolean(placementTransformControls?.axis)
+    ) {
+      return;
+    }
+
     const rect = renderer.domElement.getBoundingClientRect();
     pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
     pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
@@ -1824,7 +1939,23 @@ export function createGameScene(options: GameSceneOptions) {
 
   function start() {
     window.addEventListener("resize", onResize);
+    window.addEventListener("keydown", handleTransformShortcut);
     renderer.domElement.addEventListener("pointerdown", handleWorldClick);
+    placementTransformControls.addEventListener("mouseDown", () => {
+      placementTransformPointerActive = true;
+    });
+    placementTransformControls.addEventListener("mouseUp", () => {
+      if (!placementTransformPointerActive) return;
+      placementTransformPointerActive = false;
+      emitSelectedPlacementTransform("immediate");
+    });
+    placementTransformControls.addEventListener("dragging-changed", (event: any) => {
+      placementTransformDragging = Boolean(event?.value);
+    });
+    placementTransformControls.addEventListener("objectChange", () => {
+      if (!placementTransformPointerActive && !placementTransformDragging) return;
+      emitSelectedPlacementTransform("debounced");
+    });
     animate();
   }
 
@@ -1896,6 +2027,12 @@ export function createGameScene(options: GameSceneOptions) {
   function setSelectedPlacementId(placementId: string | null) {
     selectedWorldPlacementId = placementId;
     refreshPlacementHighlight();
+    refreshPlacementTransformControls();
+  }
+
+  function setWorldPlacementTransformEnabled(enabled: boolean) {
+    worldPlacementTransformEnabled = enabled;
+    refreshPlacementTransformControls();
   }
 
   return {
@@ -1915,6 +2052,8 @@ export function createGameScene(options: GameSceneOptions) {
     applyPlacementTransform,
     applyPhotoWallTransform,
     setSelectedPlacementId,
+    setWorldPlacementTransformEnabled,
+    setWorldPlacementTransformMode,
     setPendingWorldPostPlacement,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,

@@ -218,6 +218,46 @@ canvas {
   cursor: pointer;
 }
 
+.transform-toolbar {
+  position: fixed;
+  top: 84px;
+  right: 24px;
+  z-index: 9;
+  display: flex;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 12px;
+  border: 1px solid rgba(93, 154, 215, 0.45);
+  background: rgba(7, 16, 28, 0.88);
+  pointer-events: auto;
+  backdrop-filter: blur(8px);
+}
+
+.transform-mode-button {
+  border: 1px solid rgba(120, 165, 214, 0.45);
+  border-radius: 8px;
+  background: rgba(19, 36, 58, 0.9);
+  color: #d4e7ff;
+  min-width: 62px;
+  padding: 6px 10px;
+  font-size: 0.78rem;
+  line-height: 1;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.transform-mode-button:hover {
+  border-color: rgba(167, 206, 255, 0.9);
+}
+
+.transform-mode-button.active {
+  background: rgba(52, 125, 200, 0.35);
+  border-color: rgba(139, 195, 255, 0.95);
+  color: #f3f9ff;
+}
+
 .brand-logo {
   width: 28px;
   height: 28px;
@@ -1460,6 +1500,13 @@ canvas {
   .login-provider {
     width: 100%;
     min-width: 0;
+  }
+
+  .transform-toolbar {
+    top: auto;
+    right: auto;
+    left: 12px;
+    bottom: 148px;
   }
 
   .dock-panel {
