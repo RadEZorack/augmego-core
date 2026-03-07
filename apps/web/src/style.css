@@ -240,6 +240,18 @@ canvas {
   gap: 6px;
 }
 
+.transform-toolbar.collapsed .transform-slider-panel {
+  display: none;
+}
+
+.transform-toolbar.collapsed .transform-toolbar-modes .transform-mode-button:not(.transform-collapse-button) {
+  display: none;
+}
+
+.transform-toolbar.collapsed {
+  width: auto;
+}
+
 .transform-mode-button {
   border: 1px solid rgba(120, 165, 214, 0.45);
   border-radius: 8px;
@@ -263,6 +275,13 @@ canvas {
   background: rgba(52, 125, 200, 0.35);
   border-color: rgba(139, 195, 255, 0.95);
   color: #f3f9ff;
+}
+
+.transform-collapse-button {
+  min-width: 52px;
+  margin-left: auto;
+  text-transform: none;
+  letter-spacing: 0;
 }
 
 .transform-slider-panel {

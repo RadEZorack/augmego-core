@@ -991,6 +991,7 @@ export function createGameScene(options: GameSceneOptions) {
 
   function refreshPlacementHighlight() {
     clearPlacementHighlight();
+    if (!worldPlacementTransformEnabled) return;
     if (!selectedWorldPlacementId) return;
     const root = findPlacementNodeById(selectedWorldPlacementId);
     if (!root) return;
@@ -2048,6 +2049,7 @@ export function createGameScene(options: GameSceneOptions) {
 
   function setWorldPlacementTransformEnabled(enabled: boolean) {
     worldPlacementTransformEnabled = enabled;
+    refreshPlacementHighlight();
     refreshPlacementTransformControls();
   }
 

@@ -76,6 +76,9 @@ const transformRotateButton = document.getElementById(
 const transformScaleButton = document.getElementById(
   "transform-mode-scale"
 ) as HTMLButtonElement | null;
+const transformCollapseButton = document.getElementById(
+  "transform-toolbar-collapse"
+) as HTMLButtonElement | null;
 const transformSliderPanel = document.getElementById(
   "transform-slider-panel"
 ) as HTMLDivElement | null;
@@ -171,6 +174,7 @@ type TransformMode = "translate" | "rotate" | "scale";
 let setActiveMainTab: ((tab: MainTabKey) => void) | null = null;
 let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
 let activeTransformMode: TransformMode = "translate";
+let transformToolbarCollapsed = true;
 
 function setDockHeightState(
   panel: HTMLElement | null,
@@ -532,12 +536,33 @@ function syncTransformToolbar() {
     transformScaleButton
   ] as const;
   const canEditPlacements = worldViewActive && worldState?.canManage === true;
+  const transformToolsEnabled = canEditPlacements && !transformToolbarCollapsed;
   transformToolbar?.toggleAttribute("hidden", !canEditPlacements);
+  transformToolbar?.classList.toggle("collapsed", transformToolbarCollapsed);
+  game.setWorldPlacementTransformEnabled(transformToolsEnabled);
   const hasSelection = Boolean(selectedWorldPlacementId);
   buttons.forEach((button) => {
     if (!button) return;
     button.disabled = !hasSelection;
   });
+  if (transformCollapseButton) {
+    transformCollapseButton.disabled = !canEditPlacements;
+    transformCollapseButton.textContent = transformToolbarCollapsed ? "Edit" : "x";
+    transformCollapseButton.setAttribute(
+      "aria-label",
+      transformToolbarCollapsed
+        ? "Open transform editor"
+        : "Close transform editor"
+    );
+    transformCollapseButton.setAttribute(
+      "title",
+      transformToolbarCollapsed ? "Edit transform" : "Close transform editor"
+    );
+    transformCollapseButton.setAttribute(
+      "aria-expanded",
+      transformToolbarCollapsed ? "false" : "true"
+    );
+  }
   transformTranslateButton?.classList.toggle("active", activeTransformMode === "translate");
   transformRotateButton?.classList.toggle("active", activeTransformMode === "rotate");
   transformScaleButton?.classList.toggle("active", activeTransformMode === "scale");
@@ -554,6 +579,10 @@ function setupTransformToolbar() {
   transformTranslateButton?.addEventListener("click", () => applyMode("translate"));
   transformRotateButton?.addEventListener("click", () => applyMode("rotate"));
   transformScaleButton?.addEventListener("click", () => applyMode("scale"));
+  transformCollapseButton?.addEventListener("click", () => {
+    transformToolbarCollapsed = !transformToolbarCollapsed;
+    syncTransformToolbar();
+  });
   syncTransformToolbar();
 }
 
