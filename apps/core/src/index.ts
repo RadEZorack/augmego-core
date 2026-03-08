@@ -2966,13 +2966,31 @@ const api = new Elysia({ prefix: "/api/v1" })
       }
     });
 
+    const memberRows =
+      worlds.length > 0
+        ? await prisma.partyMember.findMany({
+            where: { partyId: { in: worlds.map((world) => world.id) } },
+            select: { partyId: true, userId: true }
+          })
+        : [];
+    const memberIdsByWorldId = new Map<string, string[]>();
+    for (const row of memberRows) {
+      const list = memberIdsByWorldId.get(row.partyId) ?? [];
+      list.push(row.userId);
+      memberIdsByWorldId.set(row.partyId, list);
+    }
+
     return jsonResponse({
       portals: worlds.map((world) => {
         const isOwnedWorld = Boolean(user && world.leaderId === user.id);
+        const onlineVisitorCount = countOnlineUsersByIds(
+          memberIdsByWorldId.get(world.id) ?? []
+        );
         return {
           worldId: world.id,
           worldName: world.name,
           worldDescription: world.description,
+          onlineVisitorCount,
           worldIsPublic: world.isPublic,
           portalIsPublic: world.portalIsPublic,
           homeCityName: world.portalCityName,

@@ -43,6 +43,10 @@ if (!app) {
 const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
 const worldMapScreen = document.getElementById("world-map-screen") as HTMLElement | null;
 const worldMapCanvas = document.getElementById("world-map-canvas") as HTMLElement | null;
+const worldMapControls = document.getElementById("world-map-controls") as HTMLDivElement | null;
+const worldMapControlsToggle = document.getElementById(
+  "world-map-controls-toggle"
+) as HTMLButtonElement | null;
 const worldMapStatus = document.getElementById("world-map-status") as HTMLDivElement | null;
 const worldMapWorldNameInput = document.getElementById(
   "world-map-world-name-input"
@@ -65,6 +69,22 @@ const worldMapZoomInButton = document.getElementById(
 const worldMapZoomOutButton = document.getElementById(
   "world-map-zoom-out"
 ) as HTMLButtonElement | null;
+const mapGlobalChat = document.getElementById("map-global-chat") as HTMLElement | null;
+const mapGlobalChatToggle = document.getElementById(
+  "map-global-chat-toggle"
+) as HTMLButtonElement | null;
+const mapGlobalChatLog = document.getElementById(
+  "map-global-chat-log"
+) as HTMLDivElement | null;
+const mapGlobalChatForm = document.getElementById(
+  "map-global-chat-form"
+) as HTMLFormElement | null;
+const mapGlobalChatInput = document.getElementById(
+  "map-global-chat-input"
+) as HTMLInputElement | null;
+const mapGlobalChatSend = document.getElementById(
+  "map-global-chat-send"
+) as HTMLButtonElement | null;
 const worldMapCitySelect = document.getElementById(
   "world-map-city-select"
 ) as HTMLSelectElement | null;
@@ -86,6 +106,9 @@ const worldMapWorldDesc = document.getElementById(
 const worldMapWorldAddress = document.getElementById(
   "world-map-world-address"
 ) as HTMLElement | null;
+const worldMapWorldCardCloseButton = document.getElementById(
+  "world-map-world-card-close"
+) as HTMLButtonElement | null;
 const worldMapJoinWorldButton = document.getElementById(
   "world-map-join-world"
 ) as HTMLButtonElement | null;
@@ -1156,6 +1179,47 @@ function renderCombinedChat() {
   );
 
   chat.replaceCombinedHistory(entries);
+  renderMapGlobalChat();
+}
+
+function syncMapGlobalChatState() {
+  const user = auth.getCurrentUser();
+  const visible = Boolean(user);
+  if (mapGlobalChat) {
+    mapGlobalChat.hidden = !visible;
+  }
+  if (!visible) return;
+  if (mapGlobalChatInput) {
+    mapGlobalChatInput.disabled = false;
+    mapGlobalChatInput.placeholder = "Type a global message";
+  }
+  if (mapGlobalChatSend) {
+    mapGlobalChatSend.disabled = false;
+  }
+}
+
+function renderMapGlobalChat() {
+  if (!mapGlobalChatLog) return;
+  if (!auth.getCurrentUser()) {
+    mapGlobalChatLog.innerHTML = "";
+    return;
+  }
+
+  mapGlobalChatLog.innerHTML = "";
+  const recent = [...globalChatMessages]
+    .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    .slice(-100);
+  for (const message of recent) {
+    const row = document.createElement("div");
+    row.className = "map-global-chat-row";
+    const timestamp = new Date(message.createdAt).toLocaleTimeString([], {
+      hour: "2-digit",
+      minute: "2-digit"
+    });
+    row.textContent = `[${timestamp}] ${message.user.name}: ${message.text}`;
+    mapGlobalChatLog.appendChild(row);
+  }
+  mapGlobalChatLog.scrollTop = mapGlobalChatLog.scrollHeight;
 }
 
 function syncChatToggleButtons() {
@@ -3603,6 +3667,7 @@ const worldMap = createWorldMapController({
   worldOwnerEl: worldMapWorldOwner,
   worldDescEl: worldMapWorldDesc,
   worldAddressEl: worldMapWorldAddress,
+  worldCardCloseButton: worldMapWorldCardCloseButton,
   joinButton: worldMapJoinWorldButton,
   savePinButton: worldMapSavePinButton,
   zoomInButton: worldMapZoomInButton,
@@ -3716,6 +3781,52 @@ worldMapSaveSettingsButton?.addEventListener("click", () => {
     syncProfileSettingsForm();
     worldMap.setStatus("World changes saved");
   })();
+});
+
+worldMapControlsToggle?.addEventListener("click", () => {
+  if (!worldMapControls) return;
+  const collapsed = worldMapControls.classList.toggle("collapsed");
+  worldMapControlsToggle.textContent = collapsed ? "+" : "x";
+  worldMapControlsToggle.setAttribute(
+    "aria-label",
+    collapsed ? "Expand map controls" : "Collapse map controls"
+  );
+  worldMapControlsToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  worldMapControlsToggle.setAttribute(
+    "title",
+    collapsed ? "Expand controls" : "Collapse controls"
+  );
+});
+
+worldMapWorldCardCloseButton?.addEventListener("click", (event) => {
+  event.preventDefault();
+  event.stopPropagation();
+  worldMap.selectPortal(null);
+});
+
+mapGlobalChatToggle?.addEventListener("click", () => {
+  if (!mapGlobalChat) return;
+  const collapsed = mapGlobalChat.classList.toggle("collapsed");
+  mapGlobalChatToggle.textContent = collapsed ? "+" : "x";
+  mapGlobalChatToggle.setAttribute(
+    "aria-label",
+    collapsed ? "Expand global chat" : "Collapse global chat"
+  );
+  mapGlobalChatToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
+  mapGlobalChatToggle.setAttribute("title", collapsed ? "Expand chat" : "Collapse chat");
+});
+
+mapGlobalChatForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  if (!auth.getCurrentUser() || !mapGlobalChatInput) return;
+  const text = mapGlobalChatInput.value.trim();
+  if (!text) return;
+  const sent = realtime.sendChat(text);
+  if (!sent) {
+    setWorldNotice("Global chat unavailable");
+    return;
+  }
+  mapGlobalChatInput.value = "";
 });
 
 function setupCameraControlsTab() {
@@ -3949,6 +4060,8 @@ const auth = createAuthController({
     game.setLocalIdentity(user?.name ?? "Guest", user?.avatarUrl ?? null);
     party.setCurrentUser(user);
     syncChatCanPost();
+    syncMapGlobalChatState();
+    renderMapGlobalChat();
     worldMap.setCurrentUser(user);
     syncProfileSettingsForm();
     applyAvatarSelectionFromCurrentUser(user);
@@ -4809,6 +4922,8 @@ media.setMicMuted(webrtc.getMicMuted());
 media.setCameraEnabled(webrtc.getCameraEnabled());
 game.setLocalMediaState(webrtc.getMicMuted(), webrtc.getCameraEnabled());
 media.setPermissionState("not_requested");
+syncMapGlobalChatState();
+renderMapGlobalChat();
 syncWorldMapControlState();
 void loadWorldHomeCities();
 syncChatCanPost();

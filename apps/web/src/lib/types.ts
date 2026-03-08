@@ -179,6 +179,7 @@ export type WorldPortal = {
   worldId: string;
   worldName: string;
   worldDescription: string | null;
+  onlineVisitorCount?: number;
   worldIsPublic: boolean;
   portalIsPublic: boolean;
   homeCityName?: string | null;

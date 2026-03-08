@@ -17,6 +17,7 @@ type WorldMapControllerOptions = {
   worldOwnerEl: HTMLElement | null;
   worldDescEl: HTMLElement | null;
   worldAddressEl: HTMLElement | null;
+  worldCardCloseButton: HTMLButtonElement | null;
   joinButton: HTMLButtonElement | null;
   savePinButton: HTMLButtonElement | null;
   zoomInButton: HTMLButtonElement | null;
@@ -36,6 +37,7 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
     worldOwnerEl,
     worldDescEl,
     worldAddressEl,
+    worldCardCloseButton,
     joinButton,
     savePinButton,
     zoomInButton,
@@ -148,7 +150,8 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
 
     worldCard.hidden = false;
     worldNameEl.textContent = portal.worldName;
-    worldOwnerEl.textContent = `Owner: ${portal.owner.name}`;
+    const onlineVisitorCount = portal.onlineVisitorCount ?? 0;
+    worldOwnerEl.textContent = `Owner: ${portal.owner.name} · ${onlineVisitorCount} online`;
     worldDescEl.textContent = portal.worldDescription ?? "No description";
     const city = portal.homeCityName?.trim();
     const country = portal.homeCountryName?.trim();
@@ -276,6 +279,11 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
       marker.addEventListener("pointerdown", (event) => {
         event.stopPropagation();
       });
+      const bubble = document.createElement("span");
+      bubble.className = "world-map-marker-bubble";
+      const onlineVisitorCount = portal.onlineVisitorCount ?? 0;
+      bubble.textContent = `${portal.worldName} · ${onlineVisitorCount} online`;
+      marker.appendChild(bubble);
 
       markerLayer.appendChild(marker);
     }
@@ -366,6 +374,9 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
   joinButton?.addEventListener("click", () => {
     if (!selectedPortalId) return;
     onJoinWorld(selectedPortalId);
+  });
+  worldCardCloseButton?.addEventListener("click", () => {
+    selectPortal(null);
   });
 
   savePinButton?.addEventListener("click", () => {

@@ -138,60 +138,98 @@
     </header>
     <section id="world-map-screen" class="world-map-screen" aria-label="World map">
       <div id="world-map-canvas" class="world-map-canvas"></div>
-      <div class="world-map-controls">
-        <label for="world-map-world-name-input" class="profile-settings-label">World name</label>
-        <input
-          id="world-map-world-name-input"
-          class="party-search-input"
-          type="text"
-          maxlength="80"
-          placeholder="World name"
-          autocomplete="off"
-        />
-        <label for="world-map-world-description-input" class="profile-settings-label">
-          World description
-        </label>
-        <textarea
-          id="world-map-world-description-input"
-          class="party-search-input world-description-input"
-          rows="4"
-          maxlength="240"
-          placeholder="Describe your world"
-        ></textarea>
-        <hr class="world-map-divider" />
-        <select id="world-map-city-select" class="world-map-select" aria-label="Choose start city">
-          <option value="">Choose your world city</option>
-        </select>
-        <button id="world-map-save-pin" class="world-map-action" type="button" disabled>
-          Assign Fictional Address
-        </button>
-        <div id="world-map-home-address" class="world-map-home-address" hidden></div>
-        <hr class="world-map-divider" />
-        World's are required to be public for now. Private worlds will be unlocked with billing.
-        <button id="world-map-save-settings" class="world-map-action" type="button" disabled>
-          Save Changes
-        </button>
-        <button id="world-map-join-mine" class="world-map-action" type="button" disabled>
-          Join My World
-        </button>
-        <hr class="world-map-divider" />
-        <div id="world-map-status" class="world-map-status">
-          Edit your world and save changes.
-        </div>
-        <div class="world-section" hidden>
-          <div class="party-members-title">Find Worlds</div>
-          <div class="party-search">
-            <input
-              id="party-search-input"
-              class="party-search-input"
-              type="text"
-              placeholder="Search worlds or owners"
-              autocomplete="off"
-            />
-            <button id="party-search-button" class="party-search-button" type="button">Find</button>
+      <div class="world-map-panels">
+        <div id="world-map-controls" class="world-map-controls collapsed">
+          <div class="world-map-controls-header">
+            <div class="world-map-controls-title">My World</div>
+            <button
+              id="world-map-controls-toggle"
+              class="world-map-controls-collapse"
+              type="button"
+              aria-label="Collapse map controls"
+              aria-expanded="false"
+              title="Expand controls"
+            >
+              +
+            </button>
           </div>
-          <div class="party-search-results" id="party-search-results"></div>
+          <label for="world-map-world-name-input" class="profile-settings-label">World name</label>
+          <input
+            id="world-map-world-name-input"
+            class="party-search-input"
+            type="text"
+            maxlength="80"
+            placeholder="World name"
+            autocomplete="off"
+          />
+          <label for="world-map-world-description-input" class="profile-settings-label">
+            World description
+          </label>
+          <textarea
+            id="world-map-world-description-input"
+            class="party-search-input world-description-input"
+            rows="4"
+            maxlength="240"
+            placeholder="Describe your world"
+          ></textarea>
+          <hr class="world-map-divider" />
+          <select id="world-map-city-select" class="world-map-select" aria-label="Choose start city">
+            <option value="">Choose your world city</option>
+          </select>
+          <button id="world-map-save-pin" class="world-map-action" type="button" disabled>
+            Assign Fictional Address
+          </button>
+          <div id="world-map-home-address" class="world-map-home-address" hidden></div>
+          <hr class="world-map-divider" />
+          <div class="world-map-note">
+            Worlds are public for now. Private worlds unlock with billing.
+          </div>
+          <button id="world-map-save-settings" class="world-map-action" type="button" disabled>
+            Save Changes
+          </button>
+          <button id="world-map-join-mine" class="world-map-action" type="button" disabled>
+            Join My World
+          </button>
+          <hr class="world-map-divider" />
+          <div id="world-map-status" class="world-map-status">
+            Edit your world and save changes.
+          </div>
+          <div class="world-section" hidden>
+            <div class="party-members-title">Find Worlds</div>
+            <div class="party-search">
+              <input
+                id="party-search-input"
+                class="party-search-input"
+                type="text"
+                placeholder="Search worlds or owners"
+                autocomplete="off"
+              />
+              <button id="party-search-button" class="party-search-button" type="button">Find</button>
+            </div>
+            <div class="party-search-results" id="party-search-results"></div>
+          </div>
         </div>
+        <article id="world-map-world-card" class="world-map-world-card" hidden>
+          <div class="world-map-world-card-header">
+            <div class="world-map-world-section-title">Selected World</div>
+            <button
+              id="world-map-world-card-close"
+              class="world-map-controls-collapse"
+              type="button"
+              aria-label="Close selected world"
+              title="Close selected world"
+            >
+              x
+            </button>
+          </div>
+          <div id="world-map-world-name" class="world-map-world-name"></div>
+          <div id="world-map-world-owner" class="world-map-world-owner"></div>
+          <div id="world-map-world-desc" class="world-map-world-desc"></div>
+          <div id="world-map-world-address" class="world-map-world-address"></div>
+          <button id="world-map-join-world" class="world-map-action" type="button">
+            Join World
+          </button>
+        </article>
       </div>
       <div class="world-map-zoom-controls">
         <button id="world-map-zoom-in" class="world-map-action" type="button" aria-label="Zoom in">
@@ -201,15 +239,33 @@
           -
         </button>
       </div>
-      <article id="world-map-world-card" class="world-map-world-card" hidden>
-        <div id="world-map-world-name" class="world-map-world-name"></div>
-        <div id="world-map-world-owner" class="world-map-world-owner"></div>
-        <div id="world-map-world-desc" class="world-map-world-desc"></div>
-        <div id="world-map-world-address" class="world-map-world-address"></div>
-        <button id="world-map-join-world" class="world-map-action" type="button">
-          Join World
-        </button>
-      </article>
+      <section id="map-global-chat" class="map-global-chat collapsed" hidden aria-label="Global chat">
+        <div class="map-global-chat-header">
+          <div class="map-global-chat-title">Global Chat</div>
+          <button
+            id="map-global-chat-toggle"
+            class="world-map-controls-collapse"
+            type="button"
+            aria-label="Expand global chat"
+            aria-expanded="false"
+            title="Expand chat"
+          >
+            +
+          </button>
+        </div>
+        <div id="map-global-chat-log" class="map-global-chat-log" role="log" aria-live="polite"></div>
+        <form id="map-global-chat-form" class="map-global-chat-form">
+          <input
+            id="map-global-chat-input"
+            class="map-global-chat-input"
+            type="text"
+            maxlength="500"
+            placeholder="Type a global message"
+            autocomplete="off"
+          />
+          <button id="map-global-chat-send" class="map-global-chat-send" type="submit">Send</button>
+        </form>
+      </section>
     </section>
     <div id="app"></div>
     <div class="transform-toolbar" id="transform-toolbar" hidden aria-label="Transform mode">
