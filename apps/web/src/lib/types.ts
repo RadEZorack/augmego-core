@@ -207,6 +207,8 @@ export type WorldHomeCity = {
 
 export type WorldHomePortal = {
   worldId: string;
+  worldName: string;
+  worldDescription: string | null;
   portal: {
     lat: number;
     lng: number;

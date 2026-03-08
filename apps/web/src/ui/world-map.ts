@@ -196,8 +196,6 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
         return;
       }
       if (savePinButton) savePinButton.disabled = !currentUser || !homeAssignmentReady;
-      setStatus("Fictional world home assigned");
-      renderMarkers();
     })();
   }
 

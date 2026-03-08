@@ -139,26 +139,44 @@
     <section id="world-map-screen" class="world-map-screen" aria-label="World map">
       <div id="world-map-canvas" class="world-map-canvas"></div>
       <div class="world-map-controls">
-        <div id="world-map-status" class="world-map-status">
-          Loading world portals...
-        </div>
-        <div class="world-map-zoom-controls">
-          <button id="world-map-zoom-in" class="world-map-action" type="button" aria-label="Zoom in">
-            +
-          </button>
-          <button id="world-map-zoom-out" class="world-map-action" type="button" aria-label="Zoom out">
-            -
-          </button>
-        </div>
+        <label for="world-map-world-name-input" class="profile-settings-label">World name</label>
+        <input
+          id="world-map-world-name-input"
+          class="party-search-input"
+          type="text"
+          maxlength="80"
+          placeholder="World name"
+          autocomplete="off"
+        />
+        <label for="world-map-world-description-input" class="profile-settings-label">
+          World description
+        </label>
+        <textarea
+          id="world-map-world-description-input"
+          class="party-search-input world-description-input"
+          rows="4"
+          maxlength="240"
+          placeholder="Describe your world"
+        ></textarea>
+        <hr class="world-map-divider" />
         <select id="world-map-city-select" class="world-map-select" aria-label="Choose start city">
           <option value="">Choose your world city</option>
         </select>
         <button id="world-map-save-pin" class="world-map-action" type="button" disabled>
-          Assign Fictional World Home
+          Assign Fictional Address
         </button>
         <div id="world-map-home-address" class="world-map-home-address" hidden></div>
-        <div class="world-map-disclaimer">
-          Fictional World Address (not real). City and country are real.
+        <hr class="world-map-divider" />
+        World's are required to be public for now. Private worlds will be unlocked with billing.
+        <button id="world-map-save-settings" class="world-map-action" type="button" disabled>
+          Save Changes
+        </button>
+        <button id="world-map-join-mine" class="world-map-action" type="button" disabled>
+          Join My World
+        </button>
+        <hr class="world-map-divider" />
+        <div id="world-map-status" class="world-map-status">
+          Edit your world and save changes.
         </div>
         <div class="world-section" hidden>
           <div class="party-members-title">Find Worlds</div>
@@ -174,6 +192,14 @@
           </div>
           <div class="party-search-results" id="party-search-results"></div>
         </div>
+      </div>
+      <div class="world-map-zoom-controls">
+        <button id="world-map-zoom-in" class="world-map-action" type="button" aria-label="Zoom in">
+          +
+        </button>
+        <button id="world-map-zoom-out" class="world-map-action" type="button" aria-label="Zoom out">
+          -
+        </button>
       </div>
       <article id="world-map-world-card" class="world-map-world-card" hidden>
         <div id="world-map-world-name" class="world-map-world-name"></div>
