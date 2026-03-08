@@ -546,7 +546,9 @@ function syncTransformToolbar() {
     transformRotateButton,
     transformScaleButton
   ] as const;
-  const canEditPlacements = worldViewActive && worldState?.canManage === true;
+  const inWorldRoute = Boolean(parseWorldIdFromUrl(new URL(window.location.href)));
+  const canEditPlacements =
+    inWorldRoute && worldViewActive && worldState?.canManage === true;
   const transformToolsEnabled = canEditPlacements && !transformToolbarCollapsed;
   const editPanelOpen = canEditPlacements && !transformToolbarCollapsed;
   const createPanelOpen = canEditPlacements && !createToolbarCollapsed;
@@ -3372,6 +3374,7 @@ const game = createGameScene({
 function setWorldViewMode(active: boolean) {
   worldViewActive = active;
   dockPanel?.toggleAttribute("hidden", !active);
+  transformToolbar?.setAttribute("style", active ? "display: flex" : "display: none");
   syncTransformToolbar();
   if (active) {
     worldMap.activateWorldView();
