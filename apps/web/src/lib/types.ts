@@ -181,6 +181,9 @@ export type WorldPortal = {
   worldDescription: string | null;
   worldIsPublic: boolean;
   portalIsPublic: boolean;
+  homeCityName?: string | null;
+  homeCountryName?: string | null;
+  fictionalAddress?: string | null;
   portal: {
     lat: number;
     lng: number;
@@ -193,6 +196,26 @@ export type WorldPortal = {
   isOwnedWorld: boolean;
   canJoin: boolean;
   updatedAt: string;
+};
+
+export type WorldHomeCity = {
+  key: string;
+  cityName: string;
+  countryName: string;
+  timezone: string;
+};
+
+export type WorldHomePortal = {
+  worldId: string;
+  portal: {
+    lat: number;
+    lng: number;
+  };
+  homeCityKey: string | null;
+  homeCityName: string | null;
+  homeCountryName: string | null;
+  homeTimezone: string | null;
+  fictionalAddress: string | null;
 };
 
 export type WorldAssetGenerationTask = {

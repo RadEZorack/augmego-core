@@ -150,10 +150,17 @@
             -
           </button>
         </div>
+        <select id="world-map-city-select" class="world-map-select" aria-label="Choose start city">
+          <option value="">Choose your world city</option>
+        </select>
         <button id="world-map-save-pin" class="world-map-action" type="button" disabled>
-          Save Home Portal Here
+          Assign Fictional World Home
         </button>
-        <div class="world-section">
+        <div id="world-map-home-address" class="world-map-home-address" hidden></div>
+        <div class="world-map-disclaimer">
+          Fictional World Address (not real). City and country are real.
+        </div>
+        <div class="world-section" hidden>
           <div class="party-members-title">Find Worlds</div>
           <div class="party-search">
             <input
@@ -172,6 +179,7 @@
         <div id="world-map-world-name" class="world-map-world-name"></div>
         <div id="world-map-world-owner" class="world-map-world-owner"></div>
         <div id="world-map-world-desc" class="world-map-world-desc"></div>
+        <div id="world-map-world-address" class="world-map-world-address"></div>
         <button id="world-map-join-world" class="world-map-action" type="button">
           Join World
         </button>

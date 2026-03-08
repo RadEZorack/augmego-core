@@ -16,13 +16,14 @@ type WorldMapControllerOptions = {
   worldNameEl: HTMLElement | null;
   worldOwnerEl: HTMLElement | null;
   worldDescEl: HTMLElement | null;
+  worldAddressEl: HTMLElement | null;
   joinButton: HTMLButtonElement | null;
   savePinButton: HTMLButtonElement | null;
   zoomInButton: HTMLButtonElement | null;
   zoomOutButton: HTMLButtonElement | null;
   onStatus: (message: string) => void;
   onJoinWorld: (worldId: string) => void;
-  onSavePortal: (position: LatLng) => Promise<boolean>;
+  onAssignHomePortal: () => Promise<boolean>;
 };
 
 export function createWorldMapController(options: WorldMapControllerOptions) {
@@ -34,24 +35,24 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
     worldNameEl,
     worldOwnerEl,
     worldDescEl,
+    worldAddressEl,
     joinButton,
     savePinButton,
     zoomInButton,
     zoomOutButton,
     onStatus,
     onJoinWorld,
-    onSavePortal
+    onAssignHomePortal
   } = options;
 
   let portals: WorldPortal[] = [];
   let selectedPortalId: string | null = null;
   let currentUser: CurrentUser | null = null;
   let homePortalPosition: LatLng | null = null;
-  let draftPortalPosition: LatLng | null = null;
+  let homeAssignmentReady = false;
   let center = { ...DEFAULT_CENTER };
   let zoom = DEFAULT_ZOOM;
   let isDragging = false;
-  let dragMoved = false;
   let dragStartX = 0;
   let dragStartY = 0;
   let dragCenterPixel = latLngToWorldPixel(center, zoom);
@@ -82,10 +83,17 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
   function setCurrentUser(user: CurrentUser | null) {
     currentUser = user;
     if (savePinButton) {
-      savePinButton.disabled = !currentUser || !draftPortalPosition;
+      savePinButton.disabled = !currentUser || !homeAssignmentReady;
       savePinButton.title = currentUser
-        ? "Save your world portal at the selected point"
-        : "Sign in to set your world portal";
+        ? "Assign a fictional home in your selected city"
+        : "Sign in to assign your fictional world home";
+    }
+  }
+
+  function setHomeAssignmentReady(ready: boolean) {
+    homeAssignmentReady = ready;
+    if (savePinButton) {
+      savePinButton.disabled = !currentUser || !homeAssignmentReady;
     }
   }
 
@@ -127,12 +135,31 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
   }
 
   function showCardForPortal(portal: WorldPortal) {
-    if (!worldCard || !worldNameEl || !worldOwnerEl || !worldDescEl || !joinButton) return;
+    if (
+      !worldCard ||
+      !worldNameEl ||
+      !worldOwnerEl ||
+      !worldDescEl ||
+      !worldAddressEl ||
+      !joinButton
+    ) {
+      return;
+    }
 
     worldCard.hidden = false;
     worldNameEl.textContent = portal.worldName;
     worldOwnerEl.textContent = `Owner: ${portal.owner.name}`;
     worldDescEl.textContent = portal.worldDescription ?? "No description";
+    const city = portal.homeCityName?.trim();
+    const country = portal.homeCountryName?.trim();
+    const address = portal.fictionalAddress?.trim();
+    if (address && city && country) {
+      worldAddressEl.textContent = `Fictional address: ${address}, ${city}, ${country}`;
+    } else if (city && country) {
+      worldAddressEl.textContent = `Location: ${city}, ${country}`;
+    } else {
+      worldAddressEl.textContent = "Fictional address available after assignment.";
+    }
     joinButton.disabled = !portal.canJoin;
     joinButton.textContent = portal.canJoin ? "Join World" : "World Not Joinable";
   }
@@ -159,18 +186,17 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
     renderMarkers();
   }
 
-  function saveDraftPortal() {
-    if (!draftPortalPosition || !currentUser) return;
+  function assignHomePortal() {
+    if (!currentUser || !homeAssignmentReady) return;
     if (savePinButton) savePinButton.disabled = true;
     void (async () => {
-      const saved = await onSavePortal(draftPortalPosition);
+      const saved = await onAssignHomePortal();
       if (!saved) {
-        if (savePinButton) savePinButton.disabled = false;
+        if (savePinButton) savePinButton.disabled = !currentUser || !homeAssignmentReady;
         return;
       }
-      draftPortalPosition = null;
-      if (savePinButton) savePinButton.disabled = true;
-      setStatus("Home portal saved");
+      if (savePinButton) savePinButton.disabled = !currentUser || !homeAssignmentReady;
+      setStatus("Fictional world home assigned");
       renderMarkers();
     })();
   }
@@ -198,7 +224,7 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
         img.className = "world-map-tile";
         img.alt = "";
         img.draggable = false;
-        img.src = `https://tile.openstreetmap.org/${zoom}/${wrappedX}/${tileY}.png`;
+        img.src = `https://a.basemaps.cartocdn.com/light_nolabels/${zoom}/${wrappedX}/${tileY}.png`;
         img.style.left = `${Math.round(tileX * TILE_SIZE - (centerPixel.x - width / 2))}px`;
         img.style.top = `${Math.round(tileY * TILE_SIZE - (centerPixel.y - height / 2))}px`;
         tileLayer.appendChild(img);
@@ -256,18 +282,6 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
       markerLayer.appendChild(marker);
     }
 
-    if (draftPortalPosition) {
-      const draft = createMarkerAt(
-        draftPortalPosition,
-        "world-map-marker-draft",
-        "Pending home portal"
-      );
-      if (draft) {
-        draft.setAttribute("aria-label", "Pending home portal");
-        draft.disabled = true;
-        markerLayer.appendChild(draft);
-      }
-    }
   }
 
   function render() {
@@ -298,26 +312,6 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
     render();
   }
 
-  function handleMapClick(clientX: number, clientY: number) {
-    if (!mapCanvas) return;
-    if (!currentUser) {
-      setStatus("Sign in to place your home portal pin");
-      return;
-    }
-    const rect = mapCanvas.getBoundingClientRect();
-    const pointX = clientX - rect.left;
-    const pointY = clientY - rect.top;
-    const centerPixel = latLngToWorldPixel(center, zoom);
-    const worldPixel = {
-      x: centerPixel.x - mapCanvas.clientWidth / 2 + pointX,
-      y: centerPixel.y - mapCanvas.clientHeight / 2 + pointY
-    };
-    draftPortalPosition = worldPixelToLatLng(worldPixel, zoom);
-    if (savePinButton) savePinButton.disabled = false;
-    setStatus("Pin selected. Save Home Portal Here to publish it.");
-    renderMarkers();
-  }
-
   function setupInteractions() {
     if (!mapCanvas) return;
 
@@ -327,7 +321,6 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
         return;
       }
       isDragging = true;
-      dragMoved = false;
       dragStartX = event.clientX;
       dragStartY = event.clientY;
       dragCenterPixel = latLngToWorldPixel(center, zoom);
@@ -339,9 +332,6 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
       if (!isDragging || !mapCanvas) return;
       const dx = event.clientX - dragStartX;
       const dy = event.clientY - dragStartY;
-      if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-        dragMoved = true;
-      }
       const nextPixel = {
         x: dragCenterPixel.x - dx,
         y: dragCenterPixel.y - dy
@@ -355,11 +345,6 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
       isDragging = false;
       mapCanvas.classList.remove("is-dragging");
       mapCanvas.releasePointerCapture(event.pointerId);
-      const target = event.target as HTMLElement | null;
-      const clickedMarker = Boolean(target?.closest(".world-map-marker"));
-      if (!dragMoved && !clickedMarker) {
-        handleMapClick(event.clientX, event.clientY);
-      }
     });
 
     mapCanvas.addEventListener(
@@ -386,7 +371,7 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
   });
 
   savePinButton?.addEventListener("click", () => {
-    saveDraftPortal();
+    assignHomePortal();
   });
   zoomInButton?.addEventListener("click", () => {
     if (!mapCanvas) return;
@@ -407,6 +392,7 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
     setHomePortal,
     focusDefault,
     setStatus,
+    setHomeAssignmentReady,
     selectPortal,
     render
   };

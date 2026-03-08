@@ -78,6 +78,11 @@ model Party {
   isPublic  Boolean      @default(false)
   portalLat Float        @default(43.090003)
   portalLng Float        @default(-79.068051)
+  portalCityKey String?
+  portalCityName String?
+  portalCountryName String?
+  portalTimezone String?
+  portalFictionalAddress String?
   portalIsPublic Boolean @default(true)
   leader    User         @relation("PartyLeader", fields: [leaderId], references: [id], onDelete: Cascade)
   members   PartyMember[]

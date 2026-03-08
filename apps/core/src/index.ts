@@ -133,6 +133,109 @@ const WORLD_ASSET_GENERATION_MAX_ATTEMPTS = toPositiveInteger(
 const DEFAULT_WORLD_PORTAL_LAT = 43.090003;
 const DEFAULT_WORLD_PORTAL_LNG = -79.068051;
 
+type WorldHomeCity = {
+  key: string;
+  cityName: string;
+  countryName: string;
+  timezone: string;
+  centerLat: number;
+  centerLng: number;
+  radiusKm: number;
+};
+
+const WORLD_HOME_CITIES: readonly WorldHomeCity[] = [
+  {
+    key: "us-new-york",
+    cityName: "New York",
+    countryName: "United States",
+    timezone: "America/New_York",
+    centerLat: 40.7128,
+    centerLng: -74.006,
+    radiusKm: 18
+  },
+  {
+    key: "us-chicago",
+    cityName: "Chicago",
+    countryName: "United States",
+    timezone: "America/Chicago",
+    centerLat: 41.8781,
+    centerLng: -87.6298,
+    radiusKm: 16
+  },
+  {
+    key: "us-denver",
+    cityName: "Denver",
+    countryName: "United States",
+    timezone: "America/Denver",
+    centerLat: 39.7392,
+    centerLng: -104.9903,
+    radiusKm: 16
+  },
+  {
+    key: "us-los-angeles",
+    cityName: "Los Angeles",
+    countryName: "United States",
+    timezone: "America/Los_Angeles",
+    centerLat: 34.0522,
+    centerLng: -118.2437,
+    radiusKm: 20
+  },
+  {
+    key: "ca-toronto",
+    cityName: "Toronto",
+    countryName: "Canada",
+    timezone: "America/Toronto",
+    centerLat: 43.6532,
+    centerLng: -79.3832,
+    radiusKm: 14
+  },
+  {
+    key: "ca-winnipeg",
+    cityName: "Winnipeg",
+    countryName: "Canada",
+    timezone: "America/Winnipeg",
+    centerLat: 49.8951,
+    centerLng: -97.1384,
+    radiusKm: 14
+  },
+  {
+    key: "ca-vancouver",
+    cityName: "Vancouver",
+    countryName: "Canada",
+    timezone: "America/Vancouver",
+    centerLat: 49.2827,
+    centerLng: -123.1207,
+    radiusKm: 14
+  },
+  {
+    key: "uk-london",
+    cityName: "London",
+    countryName: "United Kingdom",
+    timezone: "Europe/London",
+    centerLat: 51.5074,
+    centerLng: -0.1278,
+    radiusKm: 18
+  },
+  {
+    key: "eu-amsterdam",
+    cityName: "Amsterdam",
+    countryName: "Netherlands",
+    timezone: "Europe/Amsterdam",
+    centerLat: 52.3676,
+    centerLng: 4.9041,
+    radiusKm: 12
+  },
+  {
+    key: "mx-mexico-city",
+    cityName: "Mexico City",
+    countryName: "Mexico",
+    timezone: "America/Mexico_City",
+    centerLat: 19.4326,
+    centerLng: -99.1332,
+    radiusKm: 18
+  }
+];
+
 const webOrigin = (() => {
   try {
     return new URL(WEB_BASE_URL).origin;
@@ -544,6 +647,94 @@ function normalizePortalLongitude(value: unknown) {
   if (!Number.isFinite(parsed)) return null;
   if (parsed < -180 || parsed > 180) return null;
   return parsed;
+}
+
+function normalizeLongitude(value: number) {
+  let lng = value;
+  while (lng < -180) lng += 360;
+  while (lng > 180) lng -= 360;
+  return lng;
+}
+
+function toRadians(degrees: number) {
+  return (degrees * Math.PI) / 180;
+}
+
+function toDegrees(radians: number) {
+  return (radians * 180) / Math.PI;
+}
+
+function randomPointNearCity(city: WorldHomeCity) {
+  const earthRadiusM = 6_371_000;
+  const distanceM = Math.sqrt(Math.random()) * city.radiusKm * 1000;
+  const bearing = Math.random() * Math.PI * 2;
+
+  const lat1 = toRadians(city.centerLat);
+  const lng1 = toRadians(city.centerLng);
+  const angularDistance = distanceM / earthRadiusM;
+
+  const sinLat1 = Math.sin(lat1);
+  const cosLat1 = Math.cos(lat1);
+  const sinAngularDistance = Math.sin(angularDistance);
+  const cosAngularDistance = Math.cos(angularDistance);
+
+  const lat2 = Math.asin(
+    sinLat1 * cosAngularDistance +
+      cosLat1 * sinAngularDistance * Math.cos(bearing)
+  );
+  const lng2 =
+    lng1 +
+    Math.atan2(
+      Math.sin(bearing) * sinAngularDistance * cosLat1,
+      cosAngularDistance - sinLat1 * Math.sin(lat2)
+    );
+
+  return {
+    lat: Number(toDegrees(lat2).toFixed(6)),
+    lng: Number(normalizeLongitude(toDegrees(lng2)).toFixed(6))
+  };
+}
+
+function randomInt(min: number, max: number) {
+  return Math.floor(Math.random() * (max - min + 1)) + min;
+}
+
+function generateFictionalAddress(city: WorldHomeCity) {
+  const adjectives = [
+    "North",
+    "South",
+    "East",
+    "West",
+    "Grand",
+    "Liberty",
+    "Cedar",
+    "Maple",
+    "King",
+    "Queen",
+    "River",
+    "Harbor"
+  ];
+  const nouns = [
+    "Beacon",
+    "Harbor",
+    "Summit",
+    "Garden",
+    "Bridge",
+    "Market",
+    "Park",
+    "Gate",
+    "Heights",
+    "Station",
+    "Point",
+    "Square"
+  ];
+  const suffixes = ["St", "Ave", "Blvd", "Rd", "Ln", "Way", "Dr", "Pl"];
+  const number = randomInt(10, 9999);
+  const adjective = adjectives[randomInt(0, adjectives.length - 1)]!;
+  const noun = nouns[randomInt(0, nouns.length - 1)]!;
+  const suffix = suffixes[randomInt(0, suffixes.length - 1)]!;
+  const districtCode = `${city.cityName.slice(0, 2).toUpperCase()}-${randomInt(100, 999)}`;
+  return `${number} ${adjective} ${noun} ${suffix} (${districtCode})`;
 }
 
 async function resolveActiveWorldOwnerId(userId: string) {
@@ -2760,6 +2951,9 @@ const api = new Elysia({ prefix: "/api/v1" })
         portalIsPublic: true,
         portalLat: true,
         portalLng: true,
+        portalCityName: true,
+        portalCountryName: true,
+        portalFictionalAddress: true,
         updatedAt: true,
         leader: {
           select: {
@@ -2781,6 +2975,9 @@ const api = new Elysia({ prefix: "/api/v1" })
           worldDescription: world.description,
           worldIsPublic: world.isPublic,
           portalIsPublic: world.portalIsPublic,
+          homeCityName: world.portalCityName,
+          homeCountryName: world.portalCountryName,
+          fictionalAddress: world.portalFictionalAddress,
           portal: {
             lat: world.portalLat,
             lng: world.portalLng
@@ -2795,6 +2992,16 @@ const api = new Elysia({ prefix: "/api/v1" })
           updatedAt: world.updatedAt.toISOString()
         };
       })
+    });
+  })
+  .get("/world/home-cities", async () => {
+    return jsonResponse({
+      cities: WORLD_HOME_CITIES.map((city) => ({
+        key: city.key,
+        cityName: city.cityName,
+        countryName: city.countryName,
+        timezone: city.timezone
+      }))
     });
   })
   .get("/world/home-portal", async ({ request }) => {
@@ -2813,7 +3020,12 @@ const api = new Elysia({ prefix: "/api/v1" })
         isPublic: true,
         portalIsPublic: true,
         portalLat: true,
-        portalLng: true
+        portalLng: true,
+        portalCityKey: true,
+        portalCityName: true,
+        portalCountryName: true,
+        portalTimezone: true,
+        portalFictionalAddress: true
       }
     });
     if (!world) {
@@ -2829,7 +3041,12 @@ const api = new Elysia({ prefix: "/api/v1" })
       portal: {
         lat: world.portalLat,
         lng: world.portalLng
-      }
+      },
+      homeCityKey: world.portalCityKey,
+      homeCityName: world.portalCityName,
+      homeCountryName: world.portalCountryName,
+      homeTimezone: world.portalTimezone,
+      fictionalAddress: world.portalFictionalAddress
     });
   })
   .patch("/world/home-portal", async ({ request }) => {
@@ -2841,6 +3058,7 @@ const api = new Elysia({ prefix: "/api/v1" })
     const body = (await request.json().catch(() => null)) as {
       lat?: unknown;
       lng?: unknown;
+      cityKey?: unknown;
       portalIsPublic?: unknown;
     } | null;
     if (!body) {
@@ -2851,16 +3069,22 @@ const api = new Elysia({ prefix: "/api/v1" })
       body.lat === undefined ? undefined : normalizePortalLatitude(body.lat);
     const lng =
       body.lng === undefined ? undefined : normalizePortalLongitude(body.lng);
+    const cityKey =
+      typeof body.cityKey === "string" ? body.cityKey.trim() : undefined;
     if (body.lat !== undefined && lat === null) {
       return jsonResponse({ error: "INVALID_PORTAL_LATITUDE" }, { status: 400 });
     }
     if (body.lng !== undefined && lng === null) {
       return jsonResponse({ error: "INVALID_PORTAL_LONGITUDE" }, { status: 400 });
     }
+    if (body.cityKey !== undefined && !cityKey) {
+      return jsonResponse({ error: "INVALID_PORTAL_CITY_KEY" }, { status: 400 });
+    }
 
     if (
       lat === undefined &&
       lng === undefined &&
+      cityKey === undefined &&
       typeof body.portalIsPublic !== "boolean"
     ) {
       return jsonResponse({ error: "INVALID_PORTAL_PAYLOAD" }, { status: 400 });
@@ -2868,13 +3092,35 @@ const api = new Elysia({ prefix: "/api/v1" })
 
     const latValue = lat === null ? undefined : lat;
     const lngValue = lng === null ? undefined : lng;
+    const selectedCity = cityKey
+      ? WORLD_HOME_CITIES.find((city) => city.key === cityKey) ?? null
+      : null;
+    if (cityKey && !selectedCity) {
+      return jsonResponse({ error: "UNKNOWN_PORTAL_CITY_KEY" }, { status: 400 });
+    }
+    const generatedPoint = selectedCity ? randomPointNearCity(selectedCity) : null;
+    const generatedAddress = selectedCity
+      ? generateFictionalAddress(selectedCity)
+      : null;
 
     const ownedWorld = await resolveOwnedWorldParty(user.id);
     const updated = await prisma.party.update({
       where: { id: ownedWorld.id },
       data: {
+        ...(generatedPoint
+          ? { portalLat: generatedPoint.lat, portalLng: generatedPoint.lng }
+          : {}),
         ...(latValue !== undefined ? { portalLat: latValue } : {}),
         ...(lngValue !== undefined ? { portalLng: lngValue } : {}),
+        ...(selectedCity
+          ? {
+              portalCityKey: selectedCity.key,
+              portalCityName: selectedCity.cityName,
+              portalCountryName: selectedCity.countryName,
+              portalTimezone: selectedCity.timezone,
+              portalFictionalAddress: generatedAddress
+            }
+          : {}),
         ...(typeof body.portalIsPublic === "boolean"
           ? { portalIsPublic: body.portalIsPublic }
           : {})
@@ -2886,7 +3132,12 @@ const api = new Elysia({ prefix: "/api/v1" })
         isPublic: true,
         portalIsPublic: true,
         portalLat: true,
-        portalLng: true
+        portalLng: true,
+        portalCityKey: true,
+        portalCityName: true,
+        portalCountryName: true,
+        portalTimezone: true,
+        portalFictionalAddress: true
       }
     });
 
@@ -2900,7 +3151,12 @@ const api = new Elysia({ prefix: "/api/v1" })
       portal: {
         lat: updated.portalLat,
         lng: updated.portalLng
-      }
+      },
+      homeCityKey: updated.portalCityKey,
+      homeCityName: updated.portalCityName,
+      homeCountryName: updated.portalCountryName,
+      homeTimezone: updated.portalTimezone,
+      fictionalAddress: updated.portalFictionalAddress
     });
   })
   .get("/world", async ({ request }) => {
