@@ -422,7 +422,11 @@ function setupTimelineControls() {
     const frame = captureTimelineFrameAtTime(timelineScrubSeconds);
     timelineFrames.push(frame);
     timelineFrames.sort((a, b) => a.time - b.time);
+    timelineFrames = compactTimelineFrames(timelineFrames);
     selectedTimelineFrameIndex = timelineFrames.indexOf(frame);
+    if (selectedTimelineFrameIndex < 0) {
+      selectedTimelineFrameIndex = Math.max(0, timelineFrames.length - 1);
+    }
     setTimelineStatus(`Added frame at ${formatTimelineTime(frame.time)}`);
     renderTimelineEditor();
     syncTimelinePreviewWindow();
@@ -438,6 +442,7 @@ function setupTimelineControls() {
     const current = timelineFrames[selectedTimelineFrameIndex]!;
     const updated = captureTimelineFrameAtTime(current.time);
     timelineFrames[selectedTimelineFrameIndex] = updated;
+    timelineFrames = compactTimelineFrames(timelineFrames);
     setTimelineStatus(`Updated frame at ${formatTimelineTime(updated.time)}`);
     renderTimelineEditor();
     syncTimelinePreviewWindow();
@@ -465,7 +470,7 @@ function setupTimelineControls() {
         headers: {
           "Content-Type": "application/json"
         },
-        body: JSON.stringify({ frames: timelineFrames })
+        body: JSON.stringify({ frames: compactTimelineFrames(timelineFrames) })
       });
       if (!response.ok) {
         setTimelineStatus("Timeline save failed");
@@ -2979,6 +2984,21 @@ function formatTimelineTime(seconds: number) {
   return `${seconds.toFixed(1)}s`;
 }
 
+function nearlyEqual(a: number, b: number, epsilon = 0.0001) {
+  return Math.abs(a - b) <= epsilon;
+}
+
+function vec3Equal(
+  left: { x: number; y: number; z: number },
+  right: { x: number; y: number; z: number }
+) {
+  return (
+    nearlyEqual(left.x, right.x) &&
+    nearlyEqual(left.y, right.y) &&
+    nearlyEqual(left.z, right.z)
+  );
+}
+
 function normalizeTimelineFramesLocal(frames: unknown): TimelineFrame[] {
   if (!Array.isArray(frames)) return [];
   const normalized: TimelineFrame[] = [];
@@ -3005,11 +3025,22 @@ function getTimelineDuration() {
   return Math.max(last?.time ?? 0, 10);
 }
 
+function getLastFrameIndexBefore(time: number, frames = timelineFrames) {
+  let index = -1;
+  for (let i = 0; i < frames.length; i += 1) {
+    if ((frames[i]?.time ?? Infinity) < time) index = i;
+  }
+  return index;
+}
+
 function setTimelineStatus(text: string) {
   if (timelineStatus) timelineStatus.textContent = text;
 }
 
 function captureTimelineFrameAtTime(time: number): TimelineFrame {
+  const prevIndex = getLastFrameIndexBefore(time);
+  const isFirstFrame = prevIndex < 0;
+  const baseline = buildFrameState(prevIndex);
   const frame: TimelineFrame = {
     time: Math.max(0, Number(time.toFixed(3))),
     models: {},
@@ -3018,24 +3049,64 @@ function captureTimelineFrameAtTime(time: number): TimelineFrame {
   const placements = worldState?.placements ?? [];
   for (const placement of placements) {
     const applied = timelineAppliedPlacementState.get(placement.id);
-    const position = applied?.position ?? placement.position;
-    const rotation = applied?.rotation ?? placement.rotation;
-    const scale = applied?.scale ?? placement.scale;
+    // Use the live world placement transform as source-of-truth for capture.
+    // Timeline-applied cache can be stale after gizmo edits.
+    const position = placement.position;
+    const rotation = placement.rotation;
+    const scale = placement.scale;
     const visible = applied?.visible ?? true;
-    frame.models![placement.id] = {
-      visible,
-      position: [position.x, position.y, position.z],
-      rotation: [rotation.x, rotation.y, rotation.z],
-      scale: [scale.x, scale.y, scale.z]
+    const prior = baseline.models.get(placement.id) ?? {
+      visible: true,
+      position: placement.position,
+      rotation: placement.rotation,
+      scale: placement.scale
     };
+    const modelDiff: NonNullable<TimelineFrame["models"]>[string] = {};
+    if (isFirstFrame || visible !== prior.visible) {
+      modelDiff.visible = visible;
+    }
+    if (isFirstFrame || !vec3Equal(position, prior.position)) {
+      modelDiff.position = [position.x, position.y, position.z];
+    }
+    if (isFirstFrame || !vec3Equal(rotation, prior.rotation)) {
+      modelDiff.rotation = [rotation.x, rotation.y, rotation.z];
+    }
+    if (isFirstFrame || !vec3Equal(scale, prior.scale)) {
+      modelDiff.scale = [scale.x, scale.y, scale.z];
+    }
+    if (Object.keys(modelDiff).length > 0) {
+      frame.models![placement.id] = modelDiff;
+    }
   }
 
   const cameraPose = game.getCameraPose();
-  frame.cameras![DEFAULT_TIMELINE_CAMERA_ID] = {
-    active: true,
-    position: [cameraPose.position.x, cameraPose.position.y, cameraPose.position.z],
-    lookAt: [cameraPose.lookAt.x, cameraPose.lookAt.y, cameraPose.lookAt.z]
-  };
+  const priorCamera = baseline.camera;
+  const cameraDiff: NonNullable<TimelineFrame["cameras"]>[string] = {};
+  if (
+    isFirstFrame ||
+    !priorCamera ||
+    !vec3Equal(cameraPose.position, priorCamera.position)
+  ) {
+    cameraDiff.position = [
+      cameraPose.position.x,
+      cameraPose.position.y,
+      cameraPose.position.z
+    ];
+  }
+  if (isFirstFrame || !priorCamera || !vec3Equal(cameraPose.lookAt, priorCamera.lookAt)) {
+    cameraDiff.lookAt = [cameraPose.lookAt.x, cameraPose.lookAt.y, cameraPose.lookAt.z];
+  }
+  if (Object.keys(cameraDiff).length > 0) {
+    cameraDiff.active = true;
+    frame.cameras![DEFAULT_TIMELINE_CAMERA_ID] = cameraDiff;
+  }
+
+  if (Object.keys(frame.models!).length === 0) {
+    delete frame.models;
+  }
+  if (Object.keys(frame.cameras!).length === 0) {
+    delete frame.cameras;
+  }
   return frame;
 }
 
@@ -3055,6 +3126,11 @@ function parseSelectedFrameJson() {
         ? (parsed.cameras as TimelineFrame["cameras"])
         : {};
     timelineFrames[selectedTimelineFrameIndex] = next;
+    const selectedTime = next.time;
+    timelineFrames = compactTimelineFrames(timelineFrames);
+    selectedTimelineFrameIndex = timelineFrames.findIndex((frame) =>
+      nearlyEqual(frame.time, selectedTime)
+    );
     setTimelineStatus("Frame JSON updated");
     return true;
   } catch {
@@ -3078,6 +3154,86 @@ function findActiveCamera(frame: TimelineFrame | null | undefined) {
     position: { x: position[0] ?? 0, y: position[1] ?? 0, z: position[2] ?? 0 },
     lookAt: { x: lookAt[0] ?? 0, y: lookAt[1] ?? 0, z: lookAt[2] ?? 0 }
   };
+}
+
+function compactTimelineFrames(frames: TimelineFrame[]) {
+  if (!worldState) return normalizeTimelineFramesLocal(frames);
+  const source = normalizeTimelineFramesLocal(frames);
+  const compacted: TimelineFrame[] = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const frame = source[i]!;
+    const isFirstFrame = i === 0;
+    timelineFrames = compacted;
+    const prevIndex = getLastFrameIndexBefore(frame.time, compacted);
+    const baseline = buildFrameState(prevIndex);
+    const nextFrame: TimelineFrame = { time: frame.time };
+
+    if (frame.models) {
+      const models: NonNullable<TimelineFrame["models"]> = {};
+      for (const [placementId, diff] of Object.entries(frame.models)) {
+        const placement = worldState.placements.find((item) => item.id === placementId);
+        const prior = baseline.models.get(placementId) ?? {
+          visible: true,
+          position: placement?.position ?? { x: 0, y: 0, z: 0 },
+          rotation: placement?.rotation ?? { x: 0, y: 0, z: 0 },
+          scale: placement?.scale ?? { x: 1, y: 1, z: 1 }
+        };
+        const current = {
+          visible: typeof diff.visible === "boolean" ? diff.visible : prior.visible,
+          position: Array.isArray(diff.position)
+            ? { x: diff.position[0] ?? 0, y: diff.position[1] ?? 0, z: diff.position[2] ?? 0 }
+            : prior.position,
+          rotation: Array.isArray(diff.rotation)
+            ? { x: diff.rotation[0] ?? 0, y: diff.rotation[1] ?? 0, z: diff.rotation[2] ?? 0 }
+            : prior.rotation,
+          scale: Array.isArray(diff.scale)
+            ? { x: diff.scale[0] ?? 1, y: diff.scale[1] ?? 1, z: diff.scale[2] ?? 1 }
+            : prior.scale
+        };
+        const entry: NonNullable<TimelineFrame["models"]>[string] = {};
+        if (isFirstFrame || current.visible !== prior.visible) entry.visible = current.visible;
+        if (isFirstFrame || !vec3Equal(current.position, prior.position)) {
+          entry.position = [current.position.x, current.position.y, current.position.z];
+        }
+        if (isFirstFrame || !vec3Equal(current.rotation, prior.rotation)) {
+          entry.rotation = [current.rotation.x, current.rotation.y, current.rotation.z];
+        }
+        if (isFirstFrame || !vec3Equal(current.scale, prior.scale)) {
+          entry.scale = [current.scale.x, current.scale.y, current.scale.z];
+        }
+        if (Object.keys(entry).length > 0) {
+          models[placementId] = entry;
+        }
+      }
+      if (Object.keys(models).length > 0) nextFrame.models = models;
+    }
+
+    const currentCamera = findActiveCamera(frame);
+    const priorCamera = baseline.camera;
+    if (currentCamera) {
+      const cameraDiff: NonNullable<TimelineFrame["cameras"]>[string] = {};
+      if (isFirstFrame || !priorCamera || !vec3Equal(currentCamera.position, priorCamera.position)) {
+        cameraDiff.position = [
+          currentCamera.position.x,
+          currentCamera.position.y,
+          currentCamera.position.z
+        ];
+      }
+      if (isFirstFrame || !priorCamera || !vec3Equal(currentCamera.lookAt, priorCamera.lookAt)) {
+        cameraDiff.lookAt = [currentCamera.lookAt.x, currentCamera.lookAt.y, currentCamera.lookAt.z];
+      }
+      if (Object.keys(cameraDiff).length > 0) {
+        cameraDiff.active = true;
+        nextFrame.cameras = {
+          [DEFAULT_TIMELINE_CAMERA_ID]: cameraDiff
+        };
+      }
+    }
+
+    compacted.push(nextFrame);
+  }
+  timelineFrames = source;
+  return compacted;
 }
 
 function interpolateValue(a: number, b: number, t: number) {
@@ -3296,14 +3452,10 @@ function renderTimelineEditor() {
       selectedTimelineFrameIndex = index;
       timelineScrubSeconds = frame.time;
       if (timelineFrameJsonInput) {
-        timelineFrameJsonInput.value = JSON.stringify(
-          {
-            models: frame.models ?? {},
-            cameras: frame.cameras ?? {}
-          },
-          null,
-          2
-        );
+        timelineFrameJsonInput.value = JSON.stringify({
+          models: frame.models ?? {},
+          cameras: frame.cameras ?? {}
+        });
       }
       applyTimelineAtTime(timelineScrubSeconds);
       renderTimelineEditor();
@@ -3316,14 +3468,10 @@ function renderTimelineEditor() {
     if (selectedTimelineFrameIndex >= 0) {
       const selectedFrame = timelineFrames[selectedTimelineFrameIndex];
       timelineFrameJsonInput.disabled = false;
-      timelineFrameJsonInput.value = JSON.stringify(
-        {
-          models: selectedFrame?.models ?? {},
-          cameras: selectedFrame?.cameras ?? {}
-        },
-        null,
-        2
-      );
+      timelineFrameJsonInput.value = JSON.stringify({
+        models: selectedFrame?.models ?? {},
+        cameras: selectedFrame?.cameras ?? {}
+      });
     } else {
       timelineFrameJsonInput.disabled = true;
       timelineFrameJsonInput.value = "";
@@ -3443,7 +3591,7 @@ async function loadWorldState() {
 
   const payload = (await response.json()) as WorldState;
   worldState = payload;
-  timelineFrames = normalizeTimelineFramesLocal(payload.timelineFrames);
+  timelineFrames = compactTimelineFrames(normalizeTimelineFramesLocal(payload.timelineFrames));
   if (timelineFrames.length === 0) {
     selectedTimelineFrameIndex = -1;
     timelineScrubSeconds = 0;
