@@ -1185,6 +1185,115 @@ canvas {
   width: 100%;
 }
 
+.timeline-toolbar {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.timeline-scrub-row {
+  display: grid;
+  grid-template-columns: auto 1fr 84px;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.timeline-ruler {
+  position: relative;
+  height: 72px;
+  border-radius: 10px;
+  border: 1px solid rgba(111, 186, 255, 0.24);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(158, 206, 255, 0.12) 0px,
+      rgba(158, 206, 255, 0.12) 1px,
+      transparent 1px,
+      transparent 16px
+    ),
+    rgba(7, 16, 28, 0.66);
+  margin-bottom: 10px;
+  overflow: hidden;
+}
+
+.timeline-ruler::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 36px;
+  height: 2px;
+  background: rgba(108, 175, 244, 0.55);
+}
+
+.timeline-frame-marker {
+  position: absolute;
+  top: 22px;
+  transform: translateX(-50%);
+  min-width: 72px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(130, 195, 255, 0.45);
+  background: rgba(9, 24, 41, 0.86);
+  color: #e6f1ff;
+  font-size: 0.72rem;
+  text-align: center;
+  cursor: pointer;
+}
+
+.timeline-frame-marker.active {
+  border-color: #7fe7ff;
+  box-shadow: 0 0 0 2px rgba(127, 231, 255, 0.25);
+}
+
+.timeline-frame-scrubber {
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  width: 2px;
+  background: #f8f9ff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.65);
+}
+
+.timeline-json-editor {
+  width: 100%;
+  min-height: 180px;
+  font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
+  resize: vertical;
+}
+
+.timeline-camera-preview-window {
+  position: fixed;
+  top: 86px;
+  left: 18px;
+  z-index: 4;
+  width: min(360px, 40vw);
+  min-width: 220px;
+  border-radius: 12px;
+  border: 1px solid rgba(111, 186, 255, 0.35);
+  background: rgba(7, 16, 28, 0.54);
+  backdrop-filter: blur(4px);
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.timeline-camera-preview-title {
+  padding: 7px 10px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #cbe2ff;
+  border-bottom: 1px solid rgba(111, 186, 255, 0.2);
+}
+
+.timeline-camera-preview-viewport {
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
 .chat-panel {
   display: grid;
   grid-template-rows: auto 1fr auto;

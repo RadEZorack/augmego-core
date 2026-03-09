@@ -158,6 +158,27 @@ export type WorldPhotoWall = {
   updatedAt: string;
 };
 
+export type TimelineVec3 = [number, number, number];
+
+export type TimelineModelDiff = {
+  visible?: boolean;
+  position?: TimelineVec3;
+  rotation?: TimelineVec3;
+  scale?: TimelineVec3;
+};
+
+export type TimelineCameraDiff = {
+  active?: boolean;
+  position?: TimelineVec3;
+  lookAt?: TimelineVec3;
+};
+
+export type TimelineFrame = {
+  time: number;
+  models?: Record<string, TimelineModelDiff>;
+  cameras?: Record<string, TimelineCameraDiff>;
+};
+
 export type WorldState = {
   worldId: string;
   worldName: string;
@@ -173,6 +194,7 @@ export type WorldState = {
   placements: WorldPlacement[];
   posts: WorldPost[];
   photoWalls: WorldPhotoWall[];
+  timelineFrames: TimelineFrame[];
 };
 
 export type WorldPortal = {

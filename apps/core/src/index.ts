@@ -656,6 +656,105 @@ function normalizeLongitude(value: number) {
   return lng;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function normalizeTimelineVec3(value: unknown) {
+  if (!Array.isArray(value) || value.length !== 3) return undefined;
+  const x = Number(value[0]);
+  const y = Number(value[1]);
+  const z = Number(value[2]);
+  if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(z)) {
+    return undefined;
+  }
+  return [x, y, z] as [number, number, number];
+}
+
+function normalizeTimelineFrames(value: unknown) {
+  if (!Array.isArray(value)) return null;
+  const frames: Array<{
+    time: number;
+    models?: Record<
+      string,
+      {
+        visible?: boolean;
+        position?: [number, number, number];
+        rotation?: [number, number, number];
+        scale?: [number, number, number];
+      }
+    >;
+    cameras?: Record<
+      string,
+      {
+        active?: boolean;
+        position?: [number, number, number];
+        lookAt?: [number, number, number];
+      }
+    >;
+  }> = [];
+
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const time = Number(item.time);
+    if (!Number.isFinite(time) || time < 0) continue;
+
+    const frame: (typeof frames)[number] = { time };
+    const models = isRecord(item.models) ? item.models : null;
+    if (models) {
+      const normalizedModels: NonNullable<(typeof frame)["models"]> = {};
+      for (const [modelId, rawModel] of Object.entries(models)) {
+        if (!modelId.trim()) continue;
+        if (!isRecord(rawModel)) continue;
+        const model: NonNullable<(typeof normalizedModels)[string]> = {};
+        if (typeof rawModel.visible === "boolean") {
+          model.visible = rawModel.visible;
+        }
+        const position = normalizeTimelineVec3(rawModel.position);
+        if (position) model.position = position;
+        const rotation = normalizeTimelineVec3(rawModel.rotation);
+        if (rotation) model.rotation = rotation;
+        const scale = normalizeTimelineVec3(rawModel.scale);
+        if (scale) model.scale = scale;
+        if (Object.keys(model).length > 0) {
+          normalizedModels[modelId] = model;
+        }
+      }
+      if (Object.keys(normalizedModels).length > 0) {
+        frame.models = normalizedModels;
+      }
+    }
+
+    const cameras = isRecord(item.cameras) ? item.cameras : null;
+    if (cameras) {
+      const normalizedCameras: NonNullable<(typeof frame)["cameras"]> = {};
+      for (const [cameraId, rawCamera] of Object.entries(cameras)) {
+        if (!cameraId.trim()) continue;
+        if (!isRecord(rawCamera)) continue;
+        const camera: NonNullable<(typeof normalizedCameras)[string]> = {};
+        if (typeof rawCamera.active === "boolean") {
+          camera.active = rawCamera.active;
+        }
+        const position = normalizeTimelineVec3(rawCamera.position);
+        if (position) camera.position = position;
+        const lookAt = normalizeTimelineVec3(rawCamera.lookAt);
+        if (lookAt) camera.lookAt = lookAt;
+        if (Object.keys(camera).length > 0) {
+          normalizedCameras[cameraId] = camera;
+        }
+      }
+      if (Object.keys(normalizedCameras).length > 0) {
+        frame.cameras = normalizedCameras;
+      }
+    }
+
+    frames.push(frame);
+  }
+
+  frames.sort((a, b) => a.time - b.time);
+  return frames.slice(0, 500);
+}
+
 function toRadians(degrees: number) {
   return (degrees * Math.PI) / 180;
 }
@@ -3194,6 +3293,7 @@ const api = new Elysia({ prefix: "/api/v1" })
         leaderId: true,
         name: true,
         description: true,
+        timelineFrames: true,
         portalIsPublic: true,
         portalLat: true,
         portalLng: true
@@ -3283,6 +3383,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       canManage,
       isPublic: activeWorld?.isPublic ?? false,
       canManageVisibility: (activeWorld?.leaderId ?? "") === user.id,
+      timelineFrames: normalizeTimelineFrames(activeWorld?.timelineFrames ?? []) ?? [],
       assets: assets.map((asset) => ({
         id: asset.id,
         ownerId: asset.worldOwnerId,
@@ -3453,6 +3554,47 @@ const api = new Elysia({ prefix: "/api/v1" })
         description: updated.description,
         isPublic: updated.isPublic
       }
+    });
+  })
+  .patch("/world/timeline", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const body = (await request.json().catch(() => null)) as {
+      frames?: unknown;
+    } | null;
+    const normalizedFrames = normalizeTimelineFrames(body?.frames);
+    if (!body || !normalizedFrames) {
+      return jsonResponse({ error: "INVALID_TIMELINE" }, { status: 400 });
+    }
+
+    const activeWorldPartyId = await resolveActiveWorldPartyId(user.id);
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const updated = await prisma.party.update({
+      where: { id: activeWorldPartyId },
+      data: {
+        timelineFrames: normalizedFrames
+      },
+      select: {
+        id: true,
+        timelineFrames: true
+      }
+    });
+
+    return jsonResponse({
+      ok: true,
+      worldId: updated.id,
+      timelineFrames: normalizeTimelineFrames(updated.timelineFrames) ?? []
     });
   })
   .patch("/world/visibility", async ({ request }) => {

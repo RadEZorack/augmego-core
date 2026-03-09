@@ -19,6 +19,7 @@ import type {
   WorldAssetGenerationTask,
   WorldHomeCity,
   WorldHomePortal,
+  TimelineFrame,
   WorldPortal,
   WorldPhotoWall,
   WorldPost,
@@ -149,10 +150,12 @@ const dockHeightToggleButton = document.getElementById(
 ) as HTMLButtonElement | null;
 const chatTabButton = document.getElementById("tab-chat") as HTMLButtonElement | null;
 const worldTabButton = document.getElementById("tab-world") as HTMLButtonElement | null;
+const timelineTabButton = document.getElementById("tab-timeline") as HTMLButtonElement | null;
 const mediaTabButton = document.getElementById("tab-media") as HTMLButtonElement | null;
 const controlsTabButton = document.getElementById("tab-controls") as HTMLButtonElement | null;
 const chatPane = document.getElementById("pane-chat") as HTMLElement | null;
 const partyPane = document.getElementById("pane-party") as HTMLElement | null;
+const timelinePane = document.getElementById("pane-timeline") as HTMLElement | null;
 const mediaPane = document.getElementById("pane-media") as HTMLElement | null;
 const controlsPane = document.getElementById("pane-controls") as HTMLElement | null;
 const partyWorldSubtabButton = document.getElementById(
@@ -227,7 +230,15 @@ function readInitialLinkedWorldId() {
 
 type DockHeightState = "quarter" | "half" | "full";
 type PartySubtabKey = "world" | "objects" | "posts" | "walls";
-type MainTabKey = "chat" | "world" | "objects" | "walls" | "party" | "media" | "controls";
+type MainTabKey =
+  | "chat"
+  | "world"
+  | "objects"
+  | "walls"
+  | "party"
+  | "timeline"
+  | "media"
+  | "controls";
 type TransformMode = "translate" | "rotate" | "scale";
 let setActiveMainTab: ((tab: MainTabKey) => void) | null = null;
 let setActivePartySubtab: ((tab: PartySubtabKey) => void) | null = null;
@@ -304,10 +315,12 @@ function setupTabs() {
   if (
     !chatTabButton ||
     !worldTabButton ||
+    !timelineTabButton ||
     !mediaTabButton ||
     !controlsTabButton ||
     !chatPane ||
     !partyPane ||
+    !timelinePane ||
     !mediaPane ||
     !controlsPane
   ) {
@@ -317,6 +330,7 @@ function setupTabs() {
   const tabs = [
     chatTabButton,
     worldTabButton,
+    timelineTabButton,
     mediaTabButton,
     controlsTabButton
   ];
@@ -328,9 +342,11 @@ function setupTabs() {
         ? 0
         : normalizedTab === "world"
           ? 1
-          : normalizedTab === "media"
+          : normalizedTab === "timeline"
             ? 2
-            : 3;
+            : normalizedTab === "media"
+              ? 3
+              : 4;
 
     for (let i = 0; i < tabs.length; i += 1) {
       const active = i === activeIndex;
@@ -343,17 +359,20 @@ function setupTabs() {
       "active",
       normalizedTab === "world" || normalizedTab === "objects" || normalizedTab === "walls"
     );
+    timelinePane.classList.toggle("active", normalizedTab === "timeline");
     mediaPane.classList.toggle("active", normalizedTab === "media");
     controlsPane.classList.toggle("active", normalizedTab === "controls");
 
     if (normalizedTab === "world" || normalizedTab === "objects" || normalizedTab === "walls") {
       setActivePartySubtab?.(normalizedTab);
     }
+    syncTimelinePreviewWindow();
   };
   setActiveMainTab = setActive;
 
   chatTabButton.addEventListener("click", () => setActive("chat"));
   worldTabButton.addEventListener("click", () => setActive("world"));
+  timelineTabButton.addEventListener("click", () => setActive("timeline"));
   mediaTabButton.addEventListener("click", () => setActive("media"));
   controlsTabButton.addEventListener("click", () => setActive("controls"));
 }
@@ -395,6 +414,98 @@ function setupPartySubtabs() {
     button?.addEventListener("click", () => setActive(key));
   });
   setActive(defaultKey);
+}
+
+function setupTimelineControls() {
+  timelineAddFrameButton?.addEventListener("click", () => {
+    if (!worldState?.canManage) return;
+    const frame = captureTimelineFrameAtTime(timelineScrubSeconds);
+    timelineFrames.push(frame);
+    timelineFrames.sort((a, b) => a.time - b.time);
+    selectedTimelineFrameIndex = timelineFrames.indexOf(frame);
+    setTimelineStatus(`Added frame at ${formatTimelineTime(frame.time)}`);
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
+  });
+
+  timelineUpdateFrameButton?.addEventListener("click", () => {
+    if (!worldState?.canManage) return;
+    if (selectedTimelineFrameIndex < 0 || selectedTimelineFrameIndex >= timelineFrames.length) {
+      setTimelineStatus("Select a frame to update");
+      return;
+    }
+    parseSelectedFrameJson();
+    const current = timelineFrames[selectedTimelineFrameIndex]!;
+    const updated = captureTimelineFrameAtTime(current.time);
+    timelineFrames[selectedTimelineFrameIndex] = updated;
+    setTimelineStatus(`Updated frame at ${formatTimelineTime(updated.time)}`);
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
+  });
+
+  timelineDeleteFrameButton?.addEventListener("click", () => {
+    if (!worldState?.canManage) return;
+    if (selectedTimelineFrameIndex < 0 || selectedTimelineFrameIndex >= timelineFrames.length) {
+      return;
+    }
+    timelineFrames.splice(selectedTimelineFrameIndex, 1);
+    selectedTimelineFrameIndex = Math.min(selectedTimelineFrameIndex, timelineFrames.length - 1);
+    setTimelineStatus("Deleted frame");
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
+  });
+
+  timelineSaveButton?.addEventListener("click", () => {
+    if (!worldState?.canManage) return;
+    parseSelectedFrameJson();
+    void (async () => {
+      const response = await fetch(apiUrl("/api/v1/world/timeline"), {
+        method: "PATCH",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ frames: timelineFrames })
+      });
+      if (!response.ok) {
+        setTimelineStatus("Timeline save failed");
+        return;
+      }
+      setTimelineStatus("Timeline saved");
+      await loadWorldState();
+    })();
+  });
+
+  timelineScrubInput?.addEventListener("input", () => {
+    const next = Number(timelineScrubInput.value);
+    if (!Number.isFinite(next)) return;
+    timelineScrubSeconds = Math.max(0, next);
+    if (timelineTimeInput) {
+      timelineTimeInput.value = timelineScrubSeconds.toFixed(1);
+    }
+    applyTimelineAtTime(timelineScrubSeconds);
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
+  });
+
+  timelineTimeInput?.addEventListener("change", () => {
+    const next = Number(timelineTimeInput.value);
+    if (!Number.isFinite(next)) return;
+    timelineScrubSeconds = Math.max(0, next);
+    if (timelineScrubInput) {
+      timelineScrubInput.value = String(timelineScrubSeconds);
+    }
+    applyTimelineAtTime(timelineScrubSeconds);
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
+  });
+
+  timelineFrameJsonInput?.addEventListener("change", () => {
+    if (!parseSelectedFrameJson()) return;
+    applyTimelineAtTime(timelineScrubSeconds);
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
+  });
 }
 
 function setPanelMinimized(
@@ -844,6 +955,19 @@ let playerAvatarSelection: PlayerAvatarSelection = {
   moveModelUrl: null,
   specialModelUrl: null
 };
+let timelineFrames: TimelineFrame[] = [];
+let selectedTimelineFrameIndex = -1;
+let timelineScrubSeconds = 0;
+let timelinePreviewActive = false;
+let timelineAppliedPlacementState = new Map<
+  string,
+  {
+    visible: boolean;
+    position: { x: number; y: number; z: number };
+    rotation: { x: number; y: number; z: number };
+    scale: { x: number; y: number; z: number };
+  }
+>();
 
 const worldStatus = document.getElementById("world-status") as HTMLDivElement | null;
 const worldGenerationStatusList = document.getElementById(
@@ -969,6 +1093,29 @@ const worldDescriptionInput = document.getElementById(
 const worldSettingsSaveButton = document.getElementById(
   "world-settings-save"
 ) as HTMLButtonElement | null;
+const timelineAddFrameButton = document.getElementById(
+  "timeline-add-frame"
+) as HTMLButtonElement | null;
+const timelineUpdateFrameButton = document.getElementById(
+  "timeline-update-frame"
+) as HTMLButtonElement | null;
+const timelineDeleteFrameButton = document.getElementById(
+  "timeline-delete-frame"
+) as HTMLButtonElement | null;
+const timelineSaveButton = document.getElementById("timeline-save") as HTMLButtonElement | null;
+const timelineStatus = document.getElementById("timeline-status") as HTMLDivElement | null;
+const timelineRuler = document.getElementById("timeline-ruler") as HTMLDivElement | null;
+const timelineScrubInput = document.getElementById("timeline-scrub") as HTMLInputElement | null;
+const timelineTimeInput = document.getElementById("timeline-time-input") as HTMLInputElement | null;
+const timelineFrameJsonInput = document.getElementById(
+  "timeline-frame-json"
+) as HTMLTextAreaElement | null;
+const timelineCameraPreviewWindow = document.getElementById(
+  "timeline-camera-preview-window"
+) as HTMLDivElement | null;
+const timelineCameraPreviewViewport = document.getElementById(
+  "timeline-camera-preview-viewport"
+) as HTMLDivElement | null;
 
 const playersByClientId = new Map<string, PlayerPayload>();
 const knownRemoteVolumeIds = new Set<string>();
@@ -2825,9 +2972,384 @@ function createReplaceInput(onSelect: (file: File) => void) {
   input.click();
 }
 
+const DEFAULT_TIMELINE_CAMERA_ID = "timeline-camera-main";
+
+function formatTimelineTime(seconds: number) {
+  if (!Number.isFinite(seconds)) return "0.0s";
+  return `${seconds.toFixed(1)}s`;
+}
+
+function normalizeTimelineFramesLocal(frames: unknown): TimelineFrame[] {
+  if (!Array.isArray(frames)) return [];
+  const normalized: TimelineFrame[] = [];
+  for (const item of frames) {
+    if (!item || typeof item !== "object") continue;
+    const source = item as Record<string, unknown>;
+    const time = Number(source.time);
+    if (!Number.isFinite(time) || time < 0) continue;
+    const frame: TimelineFrame = { time };
+    if (source.models && typeof source.models === "object" && !Array.isArray(source.models)) {
+      frame.models = source.models as TimelineFrame["models"];
+    }
+    if (source.cameras && typeof source.cameras === "object" && !Array.isArray(source.cameras)) {
+      frame.cameras = source.cameras as TimelineFrame["cameras"];
+    }
+    normalized.push(frame);
+  }
+  normalized.sort((a, b) => a.time - b.time);
+  return normalized;
+}
+
+function getTimelineDuration() {
+  const last = timelineFrames[timelineFrames.length - 1];
+  return Math.max(last?.time ?? 0, 10);
+}
+
+function setTimelineStatus(text: string) {
+  if (timelineStatus) timelineStatus.textContent = text;
+}
+
+function captureTimelineFrameAtTime(time: number): TimelineFrame {
+  const frame: TimelineFrame = {
+    time: Math.max(0, Number(time.toFixed(3))),
+    models: {},
+    cameras: {}
+  };
+  const placements = worldState?.placements ?? [];
+  for (const placement of placements) {
+    const applied = timelineAppliedPlacementState.get(placement.id);
+    const position = applied?.position ?? placement.position;
+    const rotation = applied?.rotation ?? placement.rotation;
+    const scale = applied?.scale ?? placement.scale;
+    const visible = applied?.visible ?? true;
+    frame.models![placement.id] = {
+      visible,
+      position: [position.x, position.y, position.z],
+      rotation: [rotation.x, rotation.y, rotation.z],
+      scale: [scale.x, scale.y, scale.z]
+    };
+  }
+
+  const cameraPose = game.getCameraPose();
+  frame.cameras![DEFAULT_TIMELINE_CAMERA_ID] = {
+    active: true,
+    position: [cameraPose.position.x, cameraPose.position.y, cameraPose.position.z],
+    lookAt: [cameraPose.lookAt.x, cameraPose.lookAt.y, cameraPose.lookAt.z]
+  };
+  return frame;
+}
+
+function parseSelectedFrameJson() {
+  if (selectedTimelineFrameIndex < 0 || !timelineFrameJsonInput) return false;
+  const raw = timelineFrameJsonInput.value.trim();
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const next = { ...timelineFrames[selectedTimelineFrameIndex]! };
+    next.models =
+      parsed.models && typeof parsed.models === "object" && !Array.isArray(parsed.models)
+        ? (parsed.models as TimelineFrame["models"])
+        : {};
+    next.cameras =
+      parsed.cameras && typeof parsed.cameras === "object" && !Array.isArray(parsed.cameras)
+        ? (parsed.cameras as TimelineFrame["cameras"])
+        : {};
+    timelineFrames[selectedTimelineFrameIndex] = next;
+    setTimelineStatus("Frame JSON updated");
+    return true;
+  } catch {
+    setTimelineStatus("Invalid frame JSON");
+    return false;
+  }
+}
+
+function findActiveCamera(frame: TimelineFrame | null | undefined) {
+  if (!frame?.cameras) return null;
+  const entries = Object.entries(frame.cameras);
+  if (entries.length === 0) return null;
+  const active =
+    entries.find(([, camera]) => camera?.active === true)?.[1] ??
+    entries[0]?.[1] ??
+    null;
+  if (!active) return null;
+  const position = active.position ?? [0, 6, 7];
+  const lookAt = active.lookAt ?? [0, 0, 0];
+  return {
+    position: { x: position[0] ?? 0, y: position[1] ?? 0, z: position[2] ?? 0 },
+    lookAt: { x: lookAt[0] ?? 0, y: lookAt[1] ?? 0, z: lookAt[2] ?? 0 }
+  };
+}
+
+function interpolateValue(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+function buildFrameState(frameIndex: number) {
+  const placements = worldState?.placements ?? [];
+  const state = new Map<
+    string,
+    {
+      visible: boolean;
+      position: { x: number; y: number; z: number };
+      rotation: { x: number; y: number; z: number };
+      scale: { x: number; y: number; z: number };
+    }
+  >();
+  for (const placement of placements) {
+    state.set(placement.id, {
+      visible: true,
+      position: { ...placement.position },
+      rotation: { ...placement.rotation },
+      scale: { ...placement.scale }
+    });
+  }
+  for (let i = 0; i <= frameIndex; i += 1) {
+    const frame = timelineFrames[i];
+    if (!frame?.models) continue;
+    for (const [placementId, diff] of Object.entries(frame.models)) {
+      const current = state.get(placementId);
+      if (!current) continue;
+      if (typeof diff.visible === "boolean") current.visible = diff.visible;
+      if (Array.isArray(diff.position) && diff.position.length === 3) {
+        current.position = {
+          x: Number(diff.position[0] ?? current.position.x),
+          y: Number(diff.position[1] ?? current.position.y),
+          z: Number(diff.position[2] ?? current.position.z)
+        };
+      }
+      if (Array.isArray(diff.rotation) && diff.rotation.length === 3) {
+        current.rotation = {
+          x: Number(diff.rotation[0] ?? current.rotation.x),
+          y: Number(diff.rotation[1] ?? current.rotation.y),
+          z: Number(diff.rotation[2] ?? current.rotation.z)
+        };
+      }
+      if (Array.isArray(diff.scale) && diff.scale.length === 3) {
+        current.scale = {
+          x: Number(diff.scale[0] ?? current.scale.x),
+          y: Number(diff.scale[1] ?? current.scale.y),
+          z: Number(diff.scale[2] ?? current.scale.z)
+        };
+      }
+    }
+  }
+  return {
+    models: state,
+    camera: findActiveCamera(frameIndex >= 0 ? timelineFrames[frameIndex] : null)
+  };
+}
+
+function applyTimelineAtTime(seconds: number) {
+  if (!worldState || timelineFrames.length === 0) {
+    timelineAppliedPlacementState = new Map();
+    game.setTimelineCameraOverride(null);
+    return;
+  }
+  const targetTime = Math.max(0, seconds);
+  let prevIndex = -1;
+  let nextIndex = -1;
+  for (let i = 0; i < timelineFrames.length; i += 1) {
+    const frameTime = timelineFrames[i]!.time;
+    if (frameTime <= targetTime) prevIndex = i;
+    if (frameTime >= targetTime) {
+      nextIndex = i;
+      break;
+    }
+  }
+  if (nextIndex < 0) nextIndex = prevIndex;
+  if (prevIndex < 0) prevIndex = nextIndex;
+
+  const prevState = buildFrameState(prevIndex);
+  const nextState = buildFrameState(nextIndex);
+  const prevTime = timelineFrames[prevIndex]?.time ?? 0;
+  const nextTime = timelineFrames[nextIndex]?.time ?? prevTime;
+  const denominator = Math.max(0.0001, nextTime - prevTime);
+  const alpha =
+    prevIndex === nextIndex ? 0 : Math.min(1, Math.max(0, (targetTime - prevTime) / denominator));
+
+  const interpolated = new Map<
+    string,
+    {
+      visible: boolean;
+      position: { x: number; y: number; z: number };
+      rotation: { x: number; y: number; z: number };
+      scale: { x: number; y: number; z: number };
+    }
+  >();
+
+  for (const [placementId, prevModel] of prevState.models.entries()) {
+    const nextModel = nextState.models.get(placementId) ?? prevModel;
+    const blended = {
+      visible: alpha < 1 ? prevModel.visible : nextModel.visible,
+      position: {
+        x: interpolateValue(prevModel.position.x, nextModel.position.x, alpha),
+        y: interpolateValue(prevModel.position.y, nextModel.position.y, alpha),
+        z: interpolateValue(prevModel.position.z, nextModel.position.z, alpha)
+      },
+      rotation: {
+        x: interpolateValue(prevModel.rotation.x, nextModel.rotation.x, alpha),
+        y: interpolateValue(prevModel.rotation.y, nextModel.rotation.y, alpha),
+        z: interpolateValue(prevModel.rotation.z, nextModel.rotation.z, alpha)
+      },
+      scale: {
+        x: interpolateValue(prevModel.scale.x, nextModel.scale.x, alpha),
+        y: interpolateValue(prevModel.scale.y, nextModel.scale.y, alpha),
+        z: interpolateValue(prevModel.scale.z, nextModel.scale.z, alpha)
+      }
+    };
+    interpolated.set(placementId, blended);
+    game.applyPlacementTransform(placementId, {
+      position: blended.position,
+      rotation: blended.rotation,
+      scale: blended.scale
+    });
+    game.setPlacementVisibility(placementId, blended.visible);
+  }
+  timelineAppliedPlacementState = interpolated;
+
+  const prevCamera = prevState.camera;
+  const nextCamera = nextState.camera ?? prevCamera;
+  if (prevCamera && nextCamera) {
+    game.setTimelineCameraOverride({
+      position: {
+        x: interpolateValue(prevCamera.position.x, nextCamera.position.x, alpha),
+        y: interpolateValue(prevCamera.position.y, nextCamera.position.y, alpha),
+        z: interpolateValue(prevCamera.position.z, nextCamera.position.z, alpha)
+      },
+      lookAt: {
+        x: interpolateValue(prevCamera.lookAt.x, nextCamera.lookAt.x, alpha),
+        y: interpolateValue(prevCamera.lookAt.y, nextCamera.lookAt.y, alpha),
+        z: interpolateValue(prevCamera.lookAt.z, nextCamera.lookAt.z, alpha)
+      }
+    });
+  } else {
+    game.setTimelineCameraOverride(null);
+  }
+}
+
+function resetTimelinePreview() {
+  if (!worldState) {
+    game.setTimelineCameraOverride(null);
+    timelineAppliedPlacementState = new Map();
+    return;
+  }
+  for (const placement of worldState.placements) {
+    game.applyPlacementTransform(placement.id, {
+      position: placement.position,
+      rotation: placement.rotation,
+      scale: placement.scale
+    });
+    game.setPlacementVisibility(placement.id, true);
+  }
+  timelineAppliedPlacementState = new Map();
+  game.setTimelineCameraOverride(null);
+}
+
+function syncTimelinePreviewWindow() {
+  const shouldShow =
+    timelinePane?.classList.contains("active") === true &&
+    worldViewActive &&
+    Boolean(worldState) &&
+    timelineFrames.length > 0;
+  if (timelineCameraPreviewWindow) {
+    timelineCameraPreviewWindow.hidden = !shouldShow;
+  }
+  game.setTimelinePreviewElement(shouldShow ? timelineCameraPreviewViewport : null);
+  timelinePreviewActive = shouldShow;
+  game.setLocalPlayerMovementEnabled(!shouldShow);
+  if (shouldShow) {
+    applyTimelineAtTime(timelineScrubSeconds);
+  } else {
+    resetTimelinePreview();
+  }
+}
+
+function renderTimelineEditor() {
+  if (!timelineRuler) return;
+  const canEdit = worldState?.canManage === true;
+  if (timelineAddFrameButton) timelineAddFrameButton.disabled = !canEdit;
+  if (timelineUpdateFrameButton) timelineUpdateFrameButton.disabled = !canEdit;
+  if (timelineDeleteFrameButton) timelineDeleteFrameButton.disabled = !canEdit;
+  if (timelineSaveButton) timelineSaveButton.disabled = !canEdit;
+  if (timelineScrubInput) timelineScrubInput.disabled = !canEdit;
+  if (timelineTimeInput) timelineTimeInput.disabled = !canEdit;
+  timelineRuler.innerHTML = "";
+  const duration = Math.max(getTimelineDuration(), timelineScrubSeconds, 1);
+  if (timelineScrubInput) timelineScrubInput.max = String(duration);
+  if (timelineTimeInput) timelineTimeInput.max = String(duration);
+  if (timelineScrubInput) timelineScrubInput.value = String(timelineScrubSeconds);
+  if (timelineTimeInput) timelineTimeInput.value = timelineScrubSeconds.toFixed(1);
+
+  const scrubber = document.createElement("div");
+  scrubber.className = "timeline-frame-scrubber";
+  scrubber.style.left = `${(timelineScrubSeconds / duration) * 100}%`;
+  timelineRuler.appendChild(scrubber);
+
+  timelineFrames.forEach((frame, index) => {
+    const marker = document.createElement("button");
+    marker.type = "button";
+    marker.className = "timeline-frame-marker";
+    if (index === selectedTimelineFrameIndex) marker.classList.add("active");
+    marker.style.left = `${(frame.time / duration) * 100}%`;
+    marker.textContent = `Frame ${index + 1} • ${formatTimelineTime(frame.time)}`;
+    marker.addEventListener("click", () => {
+      selectedTimelineFrameIndex = index;
+      timelineScrubSeconds = frame.time;
+      if (timelineFrameJsonInput) {
+        timelineFrameJsonInput.value = JSON.stringify(
+          {
+            models: frame.models ?? {},
+            cameras: frame.cameras ?? {}
+          },
+          null,
+          2
+        );
+      }
+      applyTimelineAtTime(timelineScrubSeconds);
+      renderTimelineEditor();
+      syncTimelinePreviewWindow();
+    });
+    timelineRuler.appendChild(marker);
+  });
+
+  if (timelineFrameJsonInput) {
+    if (selectedTimelineFrameIndex >= 0) {
+      const selectedFrame = timelineFrames[selectedTimelineFrameIndex];
+      timelineFrameJsonInput.disabled = false;
+      timelineFrameJsonInput.value = JSON.stringify(
+        {
+          models: selectedFrame?.models ?? {},
+          cameras: selectedFrame?.cameras ?? {}
+        },
+        null,
+        2
+      );
+    } else {
+      timelineFrameJsonInput.disabled = true;
+      timelineFrameJsonInput.value = "";
+    }
+  }
+
+  if (!worldState) {
+    setTimelineStatus("Join a world to edit timeline");
+  } else if (timelineFrames.length === 0) {
+    setTimelineStatus("No frames yet");
+  } else {
+    setTimelineStatus(
+      `Frames: ${timelineFrames.length} • Scrub: ${formatTimelineTime(timelineScrubSeconds)}`
+    );
+  }
+}
+
 async function loadWorldState() {
   if (!worldViewActive) {
     stopWorldGenerationPolling();
+    timelineFrames = [];
+    selectedTimelineFrameIndex = -1;
+    timelineScrubSeconds = 0;
+    timelineAppliedPlacementState = new Map();
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
     game.setWorldData(null);
     game.setWorldPlacementTransformEnabled(false);
     game.setPendingWorldPostPlacement(null);
@@ -2855,6 +3377,10 @@ async function loadWorldState() {
     isSubmittingWorldPostPlacement = false;
     pendingWorldPostDraft = null;
     pendingPhotoWallDraft = null;
+    timelineFrames = [];
+    selectedTimelineFrameIndex = -1;
+    timelineScrubSeconds = 0;
+    timelineAppliedPlacementState = new Map();
     stopWorldGenerationPolling();
     game.setWorldData(null);
     game.setWorldPlacementTransformEnabled(false);
@@ -2897,6 +3423,8 @@ async function loadWorldState() {
     renderWorldPostComments();
     renderWorldPhotoWalls();
     renderWorldPhotoWallEditor();
+    renderTimelineEditor();
+    syncTimelinePreviewWindow();
     syncShareWorldLinkButton();
     syncAvatarSelectOptions();
     return;
@@ -2915,6 +3443,16 @@ async function loadWorldState() {
 
   const payload = (await response.json()) as WorldState;
   worldState = payload;
+  timelineFrames = normalizeTimelineFramesLocal(payload.timelineFrames);
+  if (timelineFrames.length === 0) {
+    selectedTimelineFrameIndex = -1;
+    timelineScrubSeconds = 0;
+  } else {
+    if (selectedTimelineFrameIndex < 0 || selectedTimelineFrameIndex >= timelineFrames.length) {
+      selectedTimelineFrameIndex = 0;
+    }
+    timelineScrubSeconds = Math.min(timelineScrubSeconds, getTimelineDuration());
+  }
   syncShareWorldLinkButton();
   syncAvatarSelectOptions();
   const requestedPlacementId = pendingSelectedWorldPlacementId ?? selectedWorldPlacementId;
@@ -3000,6 +3538,8 @@ async function loadWorldState() {
   renderWorldPlacementEditor();
   renderWorldPhotoWallEditor();
   syncWorldPostFormMode();
+  renderTimelineEditor();
+  syncTimelinePreviewWindow();
   void loadCommentsForSelectedPost(true);
 }
 
@@ -3457,6 +3997,7 @@ function setWorldViewMode(active: boolean) {
   dockPanel?.toggleAttribute("hidden", !active);
   transformToolbar?.setAttribute("style", active ? "display: flex" : "display: none");
   syncTransformToolbar();
+  syncTimelinePreviewWindow();
   if (active) {
     worldMap.activateWorldView();
     return;
@@ -4440,6 +4981,7 @@ setupPanelToggle(dockPanel, dockMinimizeButton, "panel");
 setupDockHeightToggle(dockPanel, dockHeightToggleButton);
 setupTabs();
 setupPartySubtabs();
+setupTimelineControls();
 setupCameraControlsTab();
 setupTransformToolbar();
 setupAvatarControls();
@@ -4970,6 +5512,8 @@ renderWorldPosts();
 renderWorldPostComments();
 renderWorldPlacementEditor();
 renderWorldPhotoWallEditor();
+renderTimelineEditor();
+syncTimelinePreviewWindow();
 syncShareWorldLinkButton();
 void loadWorldPortalPins();
 void auth.loadCurrentUser();

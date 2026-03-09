@@ -345,8 +345,11 @@
           <button id="tab-chat" class="dock-tab active" type="button" role="tab" aria-selected="true">
             Chat
           </button>
-          <button id="tab-world" class="dock-tab" type="button" role="tab" aria-selected="false">
+        <button id="tab-world" class="dock-tab" type="button" role="tab" aria-selected="false">
             World
+          </button>
+          <button id="tab-timeline" class="dock-tab" type="button" role="tab" aria-selected="false">
+            Timeline
           </button>
           <button id="tab-media" class="dock-tab" type="button" role="tab" aria-selected="false">
             Media
@@ -506,6 +509,39 @@
             <select id="avatar-special-select" class="media-select"></select>
           </label>
         </div>
+      </div>
+
+      <div id="pane-timeline" class="dock-pane" role="tabpanel" aria-labelledby="tab-timeline">
+        <div class="media-header">Timeline</div>
+        <div class="timeline-toolbar">
+          <button id="timeline-add-frame" class="party-secondary-button" type="button">
+            Add Frame
+          </button>
+          <button id="timeline-update-frame" class="party-secondary-button" type="button">
+            Capture to Frame
+          </button>
+          <button id="timeline-delete-frame" class="party-secondary-button" type="button">
+            Delete Frame
+          </button>
+          <button id="timeline-save" class="party-search-button" type="button">
+            Save Timeline
+          </button>
+        </div>
+        <div id="timeline-status" class="party-status">No frames yet</div>
+        <div class="timeline-scrub-row">
+          <label for="timeline-scrub" class="camera-control-label">Time (s)</label>
+          <input id="timeline-scrub" class="camera-control-range" type="range" min="0" max="30" step="0.1" value="0" />
+          <input id="timeline-time-input" class="camera-control-number" type="number" min="0" max="600" step="0.1" value="0" />
+        </div>
+        <div id="timeline-ruler" class="timeline-ruler" role="listbox" aria-label="Timeline frames"></div>
+        <label for="timeline-frame-json" class="camera-control-label">Selected Frame JSON</label>
+        <textarea
+          id="timeline-frame-json"
+          class="party-search-input timeline-json-editor"
+          spellcheck="false"
+          rows="10"
+          placeholder="{&quot;models&quot;:{},&quot;cameras&quot;:{}}"
+        ></textarea>
       </div>
 
       <div id="pane-party" class="dock-pane" role="tabpanel" aria-labelledby="tab-world">
@@ -731,6 +767,11 @@
         </div>
       </div>
     </aside>
+
+    <div id="timeline-camera-preview-window" class="timeline-camera-preview-window" hidden>
+      <div class="timeline-camera-preview-title">Active Camera</div>
+      <div id="timeline-camera-preview-viewport" class="timeline-camera-preview-viewport"></div>
+    </div>
 
     <div id="party-invite-modal" class="party-invite-modal" role="dialog" aria-modal="true">
       <div class="party-invite-card">

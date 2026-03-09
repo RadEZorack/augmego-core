@@ -86,6 +86,11 @@ type CameraControlState = {
   rotateZ: number;
 };
 
+type CameraPose = {
+  position: { x: number; y: number; z: number };
+  lookAt: { x: number; y: number; z: number };
+};
+
 type PlacementHighlightBinding = {
   source: any;
   overlay: any;
@@ -150,6 +155,8 @@ export function createGameScene(options: GameSceneOptions) {
     rotateY: 0,
     rotateZ: 0
   };
+  let timelineCameraOverride: CameraPose | null = null;
+  let timelinePreviewElement: HTMLElement | null = null;
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -168,6 +175,7 @@ export function createGameScene(options: GameSceneOptions) {
     1000
   );
   camera.position.set(0, 6, 7);
+  const timelinePreviewCamera = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 1000);
   const placementTransformControls: any = new TransformControls(
     camera,
     renderer.domElement
@@ -243,6 +251,34 @@ export function createGameScene(options: GameSceneOptions) {
 
   function getCameraControls() {
     return { ...cameraControls };
+  }
+
+  function getCameraPose(): CameraPose {
+    return {
+      position: {
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z
+      },
+      lookAt: {
+        x: cameraTarget.x,
+        y: cameraTarget.y,
+        z: cameraTarget.z
+      }
+    };
+  }
+
+  function setTimelineCameraOverride(pose: CameraPose | null) {
+    timelineCameraOverride = pose
+      ? {
+          position: { ...pose.position },
+          lookAt: { ...pose.lookAt }
+        }
+      : null;
+  }
+
+  function setTimelinePreviewElement(element: HTMLElement | null) {
+    timelinePreviewElement = element;
   }
 
   function getInitials(name: string) {
@@ -1007,6 +1043,13 @@ export function createGameScene(options: GameSceneOptions) {
       refreshPlacementHighlight();
       refreshPlacementTransformControls();
     }
+    return true;
+  }
+
+  function setPlacementVisibility(placementId: string, visible: boolean) {
+    const node = findPlacementNodeById(placementId);
+    if (!node) return false;
+    node.visible = visible;
     return true;
   }
 
@@ -1979,15 +2022,53 @@ export function createGameScene(options: GameSceneOptions) {
     }
     updatePlacementHighlight();
 
-    cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
-    cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));
-    cameraOffset.applyAxisAngle(zAxis, THREE.MathUtils.degToRad(cameraControls.rotateZ));
-    camera.position.copy(localPlayer.position).add(cameraOffset);
+    if (timelineCameraOverride) {
+      camera.position.set(
+        timelineCameraOverride.position.x,
+        timelineCameraOverride.position.y,
+        timelineCameraOverride.position.z
+      );
+      cameraTarget.set(
+        timelineCameraOverride.lookAt.x,
+        timelineCameraOverride.lookAt.y,
+        timelineCameraOverride.lookAt.z
+      );
+      camera.lookAt(cameraTarget);
+    } else {
+      cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
+      cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));
+      cameraOffset.applyAxisAngle(zAxis, THREE.MathUtils.degToRad(cameraControls.rotateZ));
+      camera.position.copy(localPlayer.position).add(cameraOffset);
 
-    cameraTarget.set(localPlayer.position.x, 0, localPlayer.position.z);
-    camera.lookAt(cameraTarget);
+      cameraTarget.set(localPlayer.position.x, 0, localPlayer.position.z);
+      camera.lookAt(cameraTarget);
+    }
 
     renderer.render(scene, camera);
+    if (timelinePreviewElement && !timelinePreviewElement.hidden) {
+      const canvasRect = renderer.domElement.getBoundingClientRect();
+      const previewRect = timelinePreviewElement.getBoundingClientRect();
+      const width = Math.round(previewRect.width);
+      const height = Math.round(previewRect.height);
+      const left = Math.round(previewRect.left - canvasRect.left);
+      const top = Math.round(previewRect.top - canvasRect.top);
+      const viewportY = Math.round(canvasRect.height - top - height);
+
+      if (width > 1 && height > 1) {
+        timelinePreviewCamera.aspect = width / height;
+        timelinePreviewCamera.updateProjectionMatrix();
+        timelinePreviewCamera.position.copy(camera.position);
+        timelinePreviewCamera.lookAt(cameraTarget);
+
+        renderer.clearDepth();
+        renderer.setScissorTest(true);
+        renderer.setScissor(left, viewportY, width, height);
+        renderer.setViewport(left, viewportY, width, height);
+        renderer.render(scene, timelinePreviewCamera);
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
+      }
+    }
     requestAnimationFrame(animate);
   }
 
@@ -2112,9 +2193,13 @@ export function createGameScene(options: GameSceneOptions) {
     setLocalAvatarSelection,
     triggerLocalSpecialAvatar,
     getCameraControls,
+    getCameraPose,
     setCameraControls,
+    setTimelineCameraOverride,
+    setTimelinePreviewElement,
     setWorldData,
     applyPlacementTransform,
+    setPlacementVisibility,
     applyPhotoWallTransform,
     setSelectedPlacementId,
     setSelectedPhotoWallId,

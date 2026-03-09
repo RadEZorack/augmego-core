@@ -83,6 +83,7 @@ model Party {
   portalCountryName String?
   portalTimezone String?
   portalFictionalAddress String?
+  timelineFrames Json @default("[]")
   portalIsPublic Boolean @default(true)
   leader    User         @relation("PartyLeader", fields: [leaderId], references: [id], onDelete: Cascade)
   members   PartyMember[]
