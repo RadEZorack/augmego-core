@@ -55,6 +55,8 @@ model User {
   createdWorldPosts WorldPost[] @relation("WorldPostCreator")
   ownedWorldPhotoWalls WorldPhotoWall[] @relation("WorldPhotoWallOwner")
   createdWorldPhotoWalls WorldPhotoWall[] @relation("WorldPhotoWallCreator")
+  ownedWorldCameras WorldCamera[] @relation("WorldCameraOwner")
+  createdWorldCameras WorldCamera[] @relation("WorldCameraCreator")
   ownedWorldPostComments WorldPostComment[]
   createdWorldPostComments WorldPostComment[] @relation("WorldPostCommentCreator")
   ownedWorldAssetGenerationTasks WorldAssetGenerationTask[] @relation("WorldAssetGenerationOwner")
@@ -220,6 +222,25 @@ model WorldPhotoWall {
   updatedAt        DateTime @updatedAt
   worldOwner       User     @relation("WorldPhotoWallOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
   createdBy        User     @relation("WorldPhotoWallCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([worldOwnerId, updatedAt])
+}
+
+model WorldCamera {
+  id           String   @id @default(uuid()) @db.Uuid
+  worldOwnerId String   @db.Uuid
+  createdById  String   @db.Uuid
+  name         String?
+  positionX    Float
+  positionY    Float
+  positionZ    Float
+  lookAtX      Float    @default(0)
+  lookAtY      Float    @default(0)
+  lookAtZ      Float    @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  worldOwner   User     @relation("WorldCameraOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
+  createdBy    User     @relation("WorldCameraCreator", fields: [createdById], references: [id], onDelete: Cascade)
 
   @@index([worldOwnerId, updatedAt])
 }

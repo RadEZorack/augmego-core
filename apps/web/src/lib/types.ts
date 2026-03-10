@@ -158,6 +158,15 @@ export type WorldPhotoWall = {
   updatedAt: string;
 };
 
+export type WorldCamera = {
+  id: string;
+  name: string | null;
+  position: { x: number; y: number; z: number };
+  lookAt: { x: number; y: number; z: number };
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type TimelineVec3 = [number, number, number];
 
 export type TimelineModelDiff = {
@@ -194,6 +203,7 @@ export type WorldState = {
   placements: WorldPlacement[];
   posts: WorldPost[];
   photoWalls: WorldPhotoWall[];
+  cameras: WorldCamera[];
   timelineFrames: TimelineFrame[];
 };
 

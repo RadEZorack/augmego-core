@@ -3300,7 +3300,7 @@ const api = new Elysia({ prefix: "/api/v1" })
       }
     });
 
-    const [assets, placements, posts, photoWalls] = await Promise.all([
+    const [assets, placements, posts, photoWalls, cameras] = await Promise.all([
       prisma.worldAsset.findMany({
         where: {
           OR: [
@@ -3367,6 +3367,10 @@ const api = new Elysia({ prefix: "/api/v1" })
         orderBy: { createdAt: "asc" }
       }),
       prisma.worldPhotoWall.findMany({
+        where: { worldOwnerId },
+        orderBy: { createdAt: "asc" }
+      }),
+      prisma.worldCamera.findMany({
         where: { worldOwnerId },
         orderBy: { createdAt: "asc" }
       })
@@ -3492,6 +3496,22 @@ const api = new Elysia({ prefix: "/api/v1" })
         },
         createdAt: photoWall.createdAt.toISOString(),
         updatedAt: photoWall.updatedAt.toISOString()
+      })),
+      cameras: cameras.map((camera) => ({
+        id: camera.id,
+        name: camera.name,
+        position: {
+          x: camera.positionX,
+          y: camera.positionY,
+          z: camera.positionZ
+        },
+        lookAt: {
+          x: camera.lookAtX,
+          y: camera.lookAtY,
+          z: camera.lookAtZ
+        },
+        createdAt: camera.createdAt.toISOString(),
+        updatedAt: camera.updatedAt.toISOString()
       }))
     });
   })
@@ -4412,6 +4432,116 @@ const api = new Elysia({ prefix: "/api/v1" })
       return jsonResponse({ error: "PHOTO_WALL_NOT_FOUND" }, { status: 404 });
     }
     await prisma.worldPhotoWall.delete({ where: { id: photoWallId } });
+    return jsonResponse({ ok: true });
+  })
+  .post("/world/cameras", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse({ error: "NOT_PARTY_MANAGER_OR_LEADER" }, { status: 403 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : {};
+    const lookAt =
+      payload?.lookAt && typeof payload.lookAt === "object"
+        ? (payload.lookAt as Record<string, unknown>)
+        : {};
+    const name = typeof payload?.name === "string" ? payload.name.trim().slice(0, 80) : null;
+
+    const camera = await prisma.worldCamera.create({
+      data: {
+        worldOwnerId,
+        createdById: user.id,
+        name: name || null,
+        positionX: toNumberOrDefault(position.x, 0),
+        positionY: toNumberOrDefault(position.y, 4),
+        positionZ: toNumberOrDefault(position.z, 6),
+        lookAtX: toNumberOrDefault(lookAt.x, 0),
+        lookAtY: toNumberOrDefault(lookAt.y, 0),
+        lookAtZ: toNumberOrDefault(lookAt.z, 0)
+      }
+    });
+
+    return jsonResponse({ ok: true, cameraId: camera.id });
+  })
+  .patch("/world/cameras/:cameraId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse({ error: "NOT_PARTY_MANAGER_OR_LEADER" }, { status: 403 });
+    }
+
+    const cameraId = String((params as Record<string, unknown>).cameraId ?? "");
+    const camera = await prisma.worldCamera.findUnique({
+      where: { id: cameraId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!camera || camera.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "CAMERA_NOT_FOUND" }, { status: 404 });
+    }
+
+    const payload = (await request.json().catch(() => null)) as Record<string, unknown> | null;
+    const position =
+      payload?.position && typeof payload.position === "object"
+        ? (payload.position as Record<string, unknown>)
+        : null;
+    const lookAt =
+      payload?.lookAt && typeof payload.lookAt === "object"
+        ? (payload.lookAt as Record<string, unknown>)
+        : null;
+    const name =
+      typeof payload?.name === "string" ? payload.name.trim().slice(0, 80) : undefined;
+
+    await prisma.worldCamera.update({
+      where: { id: cameraId },
+      data: {
+        ...(name !== undefined ? { name: name || null } : {}),
+        ...(position
+          ? {
+              positionX: toNumberOrDefault(position.x, 0),
+              positionY: toNumberOrDefault(position.y, 0),
+              positionZ: toNumberOrDefault(position.z, 0)
+            }
+          : {}),
+        ...(lookAt
+          ? {
+              lookAtX: toNumberOrDefault(lookAt.x, 0),
+              lookAtY: toNumberOrDefault(lookAt.y, 0),
+              lookAtZ: toNumberOrDefault(lookAt.z, 0)
+            }
+          : {})
+      }
+    });
+
+    return jsonResponse({ ok: true });
+  })
+  .delete("/world/cameras/:cameraId", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse({ error: "NOT_PARTY_MANAGER_OR_LEADER" }, { status: 403 });
+    }
+    const cameraId = String((params as Record<string, unknown>).cameraId ?? "");
+    const camera = await prisma.worldCamera.findUnique({
+      where: { id: cameraId },
+      select: { id: true, worldOwnerId: true }
+    });
+    if (!camera || camera.worldOwnerId !== worldOwnerId) {
+      return jsonResponse({ error: "CAMERA_NOT_FOUND" }, { status: 404 });
+    }
+    await prisma.worldCamera.delete({ where: { id: cameraId } });
     return jsonResponse({ ok: true });
   })
   .post("/world/posts", async ({ request }) => {

@@ -7,6 +7,7 @@ import type {
   PlayerAvatarSelection,
   PlayerPayload,
   PlayerState,
+  WorldCamera,
   WorldPhotoWall,
   WorldPost,
   WorldState
@@ -58,8 +59,14 @@ type GameSceneOptions = {
     transform: WorldTransform,
     options: { persistMode: "immediate" | "debounced" }
   ) => void;
+  onWorldCameraTransform?: (
+    cameraId: string,
+    transform: WorldCameraTransform,
+    options: { persistMode: "immediate" | "debounced" }
+  ) => void;
   onWorldPlacementTransformModeChange?: (mode: TransformMode) => void;
   onWorldPhotoWallSelect?: (photoWallId: string) => void;
+  onWorldCameraSelect?: (cameraId: string, handle: "position" | "lookAt") => void;
   onWorldPostSelect?: (postId: string) => void;
   onWorldPostToggleMinimize?: (postId: string) => void;
   onWorldPostOpenComments?: (postId: string) => void;
@@ -108,6 +115,11 @@ type WorldTransform = {
   scale: { x: number; y: number; z: number };
 };
 
+type WorldCameraTransform = {
+  position: { x: number; y: number; z: number };
+  lookAt: { x: number; y: number; z: number };
+};
+
 type TransformMode = "translate" | "rotate" | "scale";
 
 export function createGameScene(options: GameSceneOptions) {
@@ -144,6 +156,8 @@ export function createGameScene(options: GameSceneOptions) {
   let pendingWorldPostSpinner: any | null = null;
   let selectedWorldPlacementId: string | null = null;
   let selectedWorldPhotoWallId: string | null = null;
+  let selectedWorldCameraId: string | null = null;
+  let selectedWorldCameraHandle: "position" | "lookAt" = "position";
   let placementHighlight: PlacementHighlightState | null = null;
   let worldPlacementTransformEnabled = false;
   let worldPlacementTransformMode: TransformMode = "translate";
@@ -157,6 +171,15 @@ export function createGameScene(options: GameSceneOptions) {
   };
   let timelineCameraOverride: CameraPose | null = null;
   let timelinePreviewElement: HTMLElement | null = null;
+  const worldCameraRigs = new Map<
+    string,
+    {
+      root: any;
+      body: any;
+      target: any;
+      connector: any;
+    }
+  >();
 
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setPixelRatio(window.devicePixelRatio);
@@ -703,6 +726,7 @@ export function createGameScene(options: GameSceneOptions) {
       mixer.stopAllAction?.();
     }
     worldModelMixers.clear();
+    worldCameraRigs.clear();
     while (worldRoot.children.length > 0) {
       const child = worldRoot.children[0];
       if (!child) break;
@@ -940,6 +964,10 @@ export function createGameScene(options: GameSceneOptions) {
     );
   }
 
+  function findWorldCameraRigById(cameraId: string) {
+    return worldCameraRigs.get(cameraId) ?? null;
+  }
+
   function getSelectedTransformTarget() {
     if (selectedWorldPlacementId) {
       const node = findPlacementNodeById(selectedWorldPlacementId);
@@ -958,6 +986,16 @@ export function createGameScene(options: GameSceneOptions) {
           kind: "photoWall" as const,
           id: selectedWorldPhotoWallId,
           node
+        };
+      }
+    }
+    if (selectedWorldCameraId) {
+      const rig = findWorldCameraRigById(selectedWorldCameraId);
+      if (rig) {
+        return {
+          kind: "camera" as const,
+          id: selectedWorldCameraId,
+          node: selectedWorldCameraHandle === "lookAt" ? rig.target : rig.body
         };
       }
     }
@@ -988,7 +1026,29 @@ export function createGameScene(options: GameSceneOptions) {
       options.onWorldPlacementTransform?.(target.id, transform, { persistMode });
       return;
     }
-    options.onWorldPhotoWallTransform?.(target.id, transform, { persistMode });
+    if (target.kind === "photoWall") {
+      options.onWorldPhotoWallTransform?.(target.id, transform, { persistMode });
+      return;
+    }
+    const rig = findWorldCameraRigById(target.id);
+    if (!rig) return;
+    refreshWorldCameraConnector(target.id);
+    options.onWorldCameraTransform?.(
+      target.id,
+      {
+        position: {
+          x: rig.body.position.x,
+          y: rig.body.position.y,
+          z: rig.body.position.z
+        },
+        lookAt: {
+          x: rig.target.position.x,
+          y: rig.target.position.y,
+          z: rig.target.position.z
+        }
+      },
+      { persistMode }
+    );
   }
 
   function refreshPlacementTransformControls() {
@@ -1060,6 +1120,19 @@ export function createGameScene(options: GameSceneOptions) {
     node.rotation.set(transform.rotation.x, transform.rotation.y, transform.rotation.z);
     node.scale.set(transform.scale.x, transform.scale.y, transform.scale.z);
     if (selectedWorldPhotoWallId === photoWallId) {
+      refreshPlacementHighlight();
+      refreshPlacementTransformControls();
+    }
+    return true;
+  }
+
+  function applyWorldCameraTransform(cameraId: string, transform: WorldCameraTransform) {
+    const rig = findWorldCameraRigById(cameraId);
+    if (!rig) return false;
+    rig.body.position.set(transform.position.x, transform.position.y, transform.position.z);
+    rig.target.position.set(transform.lookAt.x, transform.lookAt.y, transform.lookAt.z);
+    refreshWorldCameraConnector(cameraId);
+    if (selectedWorldCameraId === cameraId) {
       refreshPlacementHighlight();
       refreshPlacementTransformControls();
     }
@@ -1303,6 +1376,64 @@ export function createGameScene(options: GameSceneOptions) {
     }
 
     return group;
+  }
+
+  function refreshWorldCameraConnector(cameraId: string) {
+    const rig = worldCameraRigs.get(cameraId);
+    if (!rig) return;
+    const points = [rig.body.position.clone(), rig.target.position.clone()];
+    const geometry = new THREE.BufferGeometry().setFromPoints(points);
+    rig.connector.geometry.dispose?.();
+    rig.connector.geometry = geometry;
+  }
+
+  function createWorldCameraRig(worldCamera: WorldCamera) {
+    const root = new THREE.Group();
+    root.userData = {
+      type: "world-camera-root",
+      cameraId: worldCamera.id
+    };
+
+    const body = new THREE.Mesh(
+      new THREE.BoxGeometry(0.35, 0.22, 0.22),
+      new THREE.MeshStandardMaterial({
+        color: 0xffb454,
+        roughness: 0.45,
+        metalness: 0.1
+      })
+    );
+    body.position.set(worldCamera.position.x, worldCamera.position.y, worldCamera.position.z);
+    body.userData = {
+      type: "world-camera-body",
+      cameraId: worldCamera.id
+    };
+    root.add(body);
+
+    const target = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 12, 12),
+      new THREE.MeshStandardMaterial({
+        color: 0x6ce0ff,
+        roughness: 0.5,
+        metalness: 0.05
+      })
+    );
+    target.position.set(worldCamera.lookAt.x, worldCamera.lookAt.y, worldCamera.lookAt.z);
+    target.userData = {
+      type: "world-camera-target",
+      cameraId: worldCamera.id
+    };
+    root.add(target);
+
+    const connectorMaterial = new THREE.LineBasicMaterial({ color: 0x97d9ff });
+    const connector = new THREE.Line(new THREE.BufferGeometry(), connectorMaterial);
+    connector.userData = {
+      type: "world-camera-connector",
+      cameraId: worldCamera.id
+    };
+    root.add(connector);
+    worldCameraRigs.set(worldCamera.id, { root, body, target, connector });
+    refreshWorldCameraConnector(worldCamera.id);
+    return root;
   }
 
   function createPostControlButtonSprite(options: {
@@ -1744,6 +1875,11 @@ export function createGameScene(options: GameSceneOptions) {
       })
     );
     if (renderEpoch !== worldRenderEpoch) return;
+    for (const worldCamera of worldState.cameras ?? []) {
+      const rig = createWorldCameraRig(worldCamera);
+      worldRoot.add(rig);
+    }
+    if (renderEpoch !== worldRenderEpoch) return;
     for (const post of worldState.posts ?? []) {
       const billboard = createWorldPostBillboard(post);
       worldRoot.add(billboard);
@@ -1855,6 +1991,36 @@ export function createGameScene(options: GameSceneOptions) {
         if (typeof node.userData?.photoWallId === "string") {
           options.onWorldPhotoWallSelect?.(node.userData.photoWallId);
           break;
+        }
+        node = node.parent;
+      }
+    }
+
+    const worldCameraHit = modelIntersections.find((intersection: any) => {
+      let node: any = intersection.object;
+      while (node) {
+        if (node.userData?.type === "world-camera-target") return true;
+        if (node.userData?.type === "world-camera-body") return true;
+        node = node.parent;
+      }
+      return false;
+    });
+    if (worldCameraHit) {
+      let node: any = worldCameraHit.object;
+      while (node) {
+        if (
+          node.userData?.type === "world-camera-target" &&
+          typeof node.userData.cameraId === "string"
+        ) {
+          options.onWorldCameraSelect?.(node.userData.cameraId, "lookAt");
+          return;
+        }
+        if (
+          node.userData?.type === "world-camera-body" &&
+          typeof node.userData.cameraId === "string"
+        ) {
+          options.onWorldCameraSelect?.(node.userData.cameraId, "position");
+          return;
         }
         node = node.parent;
       }
@@ -2022,27 +2188,12 @@ export function createGameScene(options: GameSceneOptions) {
     }
     updatePlacementHighlight();
 
-    if (timelineCameraOverride) {
-      camera.position.set(
-        timelineCameraOverride.position.x,
-        timelineCameraOverride.position.y,
-        timelineCameraOverride.position.z
-      );
-      cameraTarget.set(
-        timelineCameraOverride.lookAt.x,
-        timelineCameraOverride.lookAt.y,
-        timelineCameraOverride.lookAt.z
-      );
-      camera.lookAt(cameraTarget);
-    } else {
-      cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
-      cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));
-      cameraOffset.applyAxisAngle(zAxis, THREE.MathUtils.degToRad(cameraControls.rotateZ));
-      camera.position.copy(localPlayer.position).add(cameraOffset);
-
-      cameraTarget.set(localPlayer.position.x, 0, localPlayer.position.z);
-      camera.lookAt(cameraTarget);
-    }
+    cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
+    cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));
+    cameraOffset.applyAxisAngle(zAxis, THREE.MathUtils.degToRad(cameraControls.rotateZ));
+    camera.position.copy(localPlayer.position).add(cameraOffset);
+    cameraTarget.set(localPlayer.position.x, 0, localPlayer.position.z);
+    camera.lookAt(cameraTarget);
 
     renderer.render(scene, camera);
     if (timelinePreviewElement && !timelinePreviewElement.hidden) {
@@ -2057,8 +2208,21 @@ export function createGameScene(options: GameSceneOptions) {
       if (width > 1 && height > 1) {
         timelinePreviewCamera.aspect = width / height;
         timelinePreviewCamera.updateProjectionMatrix();
-        timelinePreviewCamera.position.copy(camera.position);
-        timelinePreviewCamera.lookAt(cameraTarget);
+        if (timelineCameraOverride) {
+          timelinePreviewCamera.position.set(
+            timelineCameraOverride.position.x,
+            timelineCameraOverride.position.y,
+            timelineCameraOverride.position.z
+          );
+          timelinePreviewCamera.lookAt(
+            timelineCameraOverride.lookAt.x,
+            timelineCameraOverride.lookAt.y,
+            timelineCameraOverride.lookAt.z
+          );
+        } else {
+          timelinePreviewCamera.position.copy(camera.position);
+          timelinePreviewCamera.lookAt(cameraTarget);
+        }
 
         renderer.clearDepth();
         renderer.setScissorTest(true);
@@ -2161,12 +2325,29 @@ export function createGameScene(options: GameSceneOptions) {
 
   function setSelectedPlacementId(placementId: string | null) {
     selectedWorldPlacementId = placementId;
+    if (placementId) {
+      selectedWorldCameraId = null;
+    }
     refreshPlacementHighlight();
     refreshPlacementTransformControls();
   }
 
   function setSelectedPhotoWallId(photoWallId: string | null) {
     selectedWorldPhotoWallId = photoWallId;
+    if (photoWallId) {
+      selectedWorldCameraId = null;
+    }
+    refreshPlacementHighlight();
+    refreshPlacementTransformControls();
+  }
+
+  function setSelectedWorldCamera(cameraId: string | null, handle: "position" | "lookAt" = "position") {
+    selectedWorldCameraId = cameraId;
+    selectedWorldCameraHandle = handle;
+    if (cameraId) {
+      selectedWorldPlacementId = null;
+      selectedWorldPhotoWallId = null;
+    }
     refreshPlacementHighlight();
     refreshPlacementTransformControls();
   }
@@ -2201,8 +2382,10 @@ export function createGameScene(options: GameSceneOptions) {
     applyPlacementTransform,
     setPlacementVisibility,
     applyPhotoWallTransform,
+    applyWorldCameraTransform,
     setSelectedPlacementId,
     setSelectedPhotoWallId,
+    setSelectedWorldCamera,
     setWorldPlacementTransformEnabled,
     setWorldPlacementTransformMode,
     setLocalPlayerMovementEnabled,
