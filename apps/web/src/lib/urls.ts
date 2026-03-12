@@ -22,7 +22,9 @@ export function parseWorldIdFromUrl(url: URL) {
   if (!segment) return null;
 
   // Avoid treating reserved paths or asset-like requests as world ids.
-  if (segment === "api" || segment === "world" || segment.includes(".")) return null;
+  if (segment === "api" || segment === "map" || segment === "world" || segment.includes(".")) {
+    return null;
+  }
 
   const pathWorldId = decodeURIComponent(segment).trim();
   return pathWorldId || null;

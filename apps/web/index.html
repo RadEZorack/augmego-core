@@ -8,7 +8,7 @@
   </head>
   <body>
     <header class="overlay-header">
-      <button class="brand" id="home-map-button" type="button" aria-label="Go to map home">
+      <button class="brand" id="home-map-button" type="button" aria-label="Go to home">
         <img class="brand-logo" src="./src/assets/logo.png" alt="Augmego logo" />
         <span>Augmego</span>
       </button>
@@ -136,6 +136,72 @@
         </button>
       </div>
     </header>
+    <main id="home-listing-screen" class="home-listing-screen" hidden>
+      <section class="home-listing-hero">
+        <div class="home-listing-copy">
+          <div class="home-listing-eyebrow">Discover worlds by address</div>
+          <h1>Search places, scan addresses, and enter the right world faster.</h1>
+          <p>
+            Browse Augmego like a standard listing site with fictional addresses, owner details,
+            and quick ways to jump into the map or enter a world.
+          </p>
+        </div>
+        <div class="home-listing-actions">
+          <button id="home-open-map-button" class="home-primary-button" type="button">
+            Open Map
+          </button>
+          <div class="home-listing-stat-grid">
+            <article class="home-listing-stat-card">
+              <span class="home-listing-stat-label">Worlds</span>
+              <strong id="home-listing-world-count">0</strong>
+            </article>
+            <article class="home-listing-stat-card">
+              <span class="home-listing-stat-label">Cities</span>
+              <strong id="home-listing-city-count">0</strong>
+            </article>
+            <article class="home-listing-stat-card">
+              <span class="home-listing-stat-label">Visitors Online</span>
+              <strong id="home-listing-online-count">0</strong>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section class="home-search-panel" aria-label="Search worlds">
+        <label class="home-search-field">
+          <span class="home-search-label">Search</span>
+          <input
+            id="home-search-input"
+            class="home-search-input"
+            type="search"
+            placeholder="Search by world name, owner, city, country, or address"
+            autocomplete="off"
+          />
+        </label>
+        <label class="home-search-field home-search-field-compact">
+          <span class="home-search-label">City</span>
+          <select id="home-city-filter" class="home-search-select">
+            <option value="">All cities</option>
+          </select>
+        </label>
+        <button id="home-search-clear" class="home-secondary-button" type="button">
+          Clear
+        </button>
+      </section>
+
+      <section class="home-results-section" aria-live="polite">
+        <div class="home-results-header">
+          <div>
+            <div class="home-results-title">Search Results</div>
+            <div id="home-results-summary" class="home-results-summary">
+              Loading available worlds...
+            </div>
+          </div>
+          <div class="home-results-hint">Select a listing to view it on the map or enter it.</div>
+        </div>
+        <div id="home-results-list" class="home-results-list"></div>
+      </section>
+    </main>
     <section id="world-map-screen" class="world-map-screen" aria-label="World map">
       <div id="world-map-canvas" class="world-map-canvas"></div>
       <div class="world-map-panels">

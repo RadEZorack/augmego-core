@@ -42,7 +42,27 @@ if (!app) {
   throw new Error("#app not found");
 }
 
+const appRoot = app;
+
 const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
+const homeListingScreen = document.getElementById("home-listing-screen") as HTMLElement | null;
+const homeOpenMapButton = document.getElementById("home-open-map-button") as HTMLButtonElement | null;
+const homeSearchInput = document.getElementById("home-search-input") as HTMLInputElement | null;
+const homeCityFilter = document.getElementById("home-city-filter") as HTMLSelectElement | null;
+const homeSearchClearButton = document.getElementById(
+  "home-search-clear"
+) as HTMLButtonElement | null;
+const homeResultsSummary = document.getElementById("home-results-summary") as HTMLDivElement | null;
+const homeResultsList = document.getElementById("home-results-list") as HTMLDivElement | null;
+const homeListingWorldCount = document.getElementById(
+  "home-listing-world-count"
+) as HTMLSpanElement | null;
+const homeListingCityCount = document.getElementById(
+  "home-listing-city-count"
+) as HTMLSpanElement | null;
+const homeListingOnlineCount = document.getElementById(
+  "home-listing-online-count"
+) as HTMLSpanElement | null;
 const worldMapScreen = document.getElementById("world-map-screen") as HTMLElement | null;
 const worldMapCanvas = document.getElementById("world-map-canvas") as HTMLElement | null;
 const worldMapControls = document.getElementById("world-map-controls") as HTMLDivElement | null;
@@ -210,15 +230,28 @@ const avatarSpecialSelect = document.getElementById(
 
 const apiBase = import.meta.env.VITE_API_BASE_URL;
 const wsBase = import.meta.env.VITE_WS_URL;
+const MAP_ROUTE_PATH = "/map";
 
 const apiUrl = createApiUrlResolver(apiBase);
 
+type RouteMode = "home" | "map" | "world";
+
+function getRouteMode(url: URL): RouteMode {
+  if (parseWorldIdFromUrl(url)) return "world";
+  return url.pathname === MAP_ROUTE_PATH ? "map" : "home";
+}
+
 function readInitialLinkedWorldId() {
   try {
-    const worldIdFromUrl = parseWorldIdFromUrl(new URL(window.location.href));
+    const url = new URL(window.location.href);
+    const worldIdFromUrl = parseWorldIdFromUrl(url);
     if (worldIdFromUrl) {
       window.sessionStorage.setItem(PENDING_WORLD_JOIN_STORAGE_KEY, worldIdFromUrl);
       return worldIdFromUrl;
+    }
+
+    if (url.pathname !== MAP_ROUTE_PATH) {
+      return null;
     }
 
     const storedWorldId =
@@ -949,9 +982,10 @@ const placementPersistTimers = new Map<string, number>();
 const photoWallPersistTimers = new Map<string, number>();
 const worldCameraPersistTimers = new Map<string, number>();
 const TRANSFORM_PERSIST_IDLE_MS = 2000;
+let currentRouteMode = getRouteMode(new URL(window.location.href));
 let pendingAutoJoinWorldId = readInitialLinkedWorldId();
 let autoJoinWorldIdSent: string | null = null;
-let worldViewActive = Boolean(pendingAutoJoinWorldId);
+let worldViewActive = currentRouteMode === "world";
 let knownWorldPortals: WorldPortal[] = [];
 let worldHomeCities: WorldHomeCity[] = [];
 let myOwnedWorldId: string | null = null;
@@ -959,6 +993,8 @@ let loadedWorldMapName = "";
 let loadedWorldMapDescription = "";
 let loadedWorldMapCityKey: string | null = null;
 let pendingWorldMapCityKey: string | null = null;
+let homeListingLoaded = false;
+let homeListingLoadFailed = false;
 const PLAYER_AVATAR_SELECTION_STORAGE_KEY = "augmego_player_avatar_selection_v1";
 let playerAvatarSelection: PlayerAvatarSelection = {
   stationaryModelUrl: null,
@@ -1273,13 +1309,222 @@ function setupProfileMenu() {
   });
 }
 
+function formatPortalAddress(portal: WorldPortal) {
+  const address = portal.fictionalAddress?.trim();
+  const city = portal.homeCityName?.trim();
+  const country = portal.homeCountryName?.trim();
+
+  return {
+    line1: address || "Address pending assignment",
+    line2:
+      city && country
+        ? `${city}, ${country}`
+        : city || country || "Choose a city to place this world on the map"
+  };
+}
+
+function syncHomeListingCityOptions() {
+  if (!homeCityFilter) return;
+
+  const previousValue = homeCityFilter.value;
+  const cityOptions = Array.from(
+    new Set(
+      knownWorldPortals
+        .map((portal) => portal.homeCityName?.trim() ?? "")
+        .filter((city) => city.length > 0)
+    )
+  ).sort((left, right) => left.localeCompare(right));
+
+  homeCityFilter.innerHTML = "";
+  const allOption = document.createElement("option");
+  allOption.value = "";
+  allOption.textContent = "All cities";
+  homeCityFilter.appendChild(allOption);
+
+  cityOptions.forEach((city) => {
+    const option = document.createElement("option");
+    option.value = city;
+    option.textContent = city;
+    homeCityFilter.appendChild(option);
+  });
+
+  homeCityFilter.value = cityOptions.includes(previousValue) ? previousValue : "";
+}
+
+function renderHomeListing() {
+  if (!homeResultsList || !homeResultsSummary) return;
+
+  syncHomeListingCityOptions();
+
+  const searchTerm = homeSearchInput?.value.trim().toLowerCase() ?? "";
+  const selectedCity = homeCityFilter?.value.trim() ?? "";
+  const searchablePortals = [...knownWorldPortals].sort((left, right) => {
+    const leftAddress = formatPortalAddress(left).line1;
+    const rightAddress = formatPortalAddress(right).line1;
+    return leftAddress.localeCompare(rightAddress) || left.worldName.localeCompare(right.worldName);
+  });
+
+  const filteredPortals = searchablePortals.filter((portal) => {
+    if (selectedCity && (portal.homeCityName?.trim() ?? "") !== selectedCity) {
+      return false;
+    }
+
+    if (!searchTerm) return true;
+    const haystack = [
+      portal.worldName,
+      portal.worldDescription ?? "",
+      portal.owner.name,
+      portal.fictionalAddress ?? "",
+      portal.homeCityName ?? "",
+      portal.homeCountryName ?? ""
+    ]
+      .join(" ")
+      .toLowerCase();
+
+    return haystack.includes(searchTerm);
+  });
+
+  if (homeListingWorldCount) {
+    homeListingWorldCount.textContent = String(knownWorldPortals.length);
+  }
+  if (homeListingCityCount) {
+    const cityCount = new Set(
+      knownWorldPortals
+        .map((portal) => portal.homeCityName?.trim() ?? "")
+        .filter((city) => city.length > 0)
+    ).size;
+    homeListingCityCount.textContent = String(cityCount);
+  }
+  if (homeListingOnlineCount) {
+    const onlineCount = knownWorldPortals.reduce(
+      (total, portal) => total + (portal.onlineVisitorCount ?? 0),
+      0
+    );
+    homeListingOnlineCount.textContent = String(onlineCount);
+  }
+
+  if (!homeListingLoaded && knownWorldPortals.length === 0) {
+    homeResultsSummary.textContent = "Loading available worlds...";
+    homeResultsList.innerHTML = '<div class="home-result-empty">Loading listings...</div>';
+    return;
+  }
+
+  if (homeListingLoadFailed) {
+    homeResultsSummary.textContent = "We could not load listings right now.";
+    homeResultsList.innerHTML =
+      '<div class="home-result-empty">World listings are temporarily unavailable. Try opening the map or refreshing again in a moment.</div>';
+    return;
+  }
+
+  const cityLabel = selectedCity ? ` in ${selectedCity}` : "";
+  homeResultsSummary.textContent = `${filteredPortals.length} world${filteredPortals.length === 1 ? "" : "s"} found${cityLabel}.`;
+  homeResultsList.innerHTML = "";
+
+  if (filteredPortals.length === 0) {
+    homeResultsList.innerHTML =
+      '<div class="home-result-empty">No worlds matched that search. Try a different address, owner, or city.</div>';
+    return;
+  }
+
+  filteredPortals.forEach((portal) => {
+    const address = formatPortalAddress(portal);
+    const card = document.createElement("article");
+    card.className = "home-result-card";
+
+    const summary = document.createElement("div");
+    const addressBlock = document.createElement("div");
+    addressBlock.className = "home-result-address";
+    const addressLine = document.createElement("div");
+    addressLine.className = "home-result-address-line";
+    addressLine.textContent = address.line1;
+    const addressMeta = document.createElement("div");
+    addressMeta.className = "home-result-address-meta";
+    addressMeta.textContent = address.line2;
+    addressBlock.appendChild(addressLine);
+    addressBlock.appendChild(addressMeta);
+
+    const title = document.createElement("div");
+    title.className = "home-result-title";
+    title.textContent = portal.worldName;
+
+    const description = document.createElement("div");
+    description.className = "home-result-description";
+    description.textContent = portal.worldDescription ?? "No description yet.";
+
+    summary.appendChild(addressBlock);
+    summary.appendChild(title);
+    summary.appendChild(description);
+
+    const meta = document.createElement("div");
+    meta.className = "home-result-meta";
+    const badgeRow = document.createElement("div");
+    badgeRow.className = "home-result-badge-row";
+    const portalBadge = document.createElement("span");
+    portalBadge.className = "home-result-badge";
+    portalBadge.textContent = portal.portalIsPublic ? "Public portal" : "Private portal";
+    const onlineBadge = document.createElement("span");
+    onlineBadge.className = "home-result-badge";
+    onlineBadge.textContent = `${portal.onlineVisitorCount ?? 0} online`;
+    badgeRow.appendChild(portalBadge);
+    badgeRow.appendChild(onlineBadge);
+
+    const ownerLine = document.createElement("div");
+    ownerLine.className = "home-result-meta-line";
+    ownerLine.textContent = `Owner: ${portal.owner.name}`;
+
+    const updatedLine = document.createElement("div");
+    updatedLine.className = "home-result-meta-line";
+    updatedLine.textContent = `Updated: ${new Date(portal.updatedAt).toLocaleDateString()}`;
+
+    meta.appendChild(badgeRow);
+    meta.appendChild(ownerLine);
+    meta.appendChild(updatedLine);
+
+    const actions = document.createElement("div");
+    actions.className = "home-result-actions";
+    const viewOnMapButton = document.createElement("button");
+    viewOnMapButton.className = "home-secondary-button";
+    viewOnMapButton.type = "button";
+    viewOnMapButton.textContent = "View on Map";
+    viewOnMapButton.addEventListener("click", () => {
+      setMapRoute();
+      currentRouteMode = "map";
+      setHomeViewMode(false);
+      setWorldViewMode(false);
+      worldMap.selectPortal(portal.worldId);
+    });
+
+    const enterWorldButton = document.createElement("button");
+    enterWorldButton.className = "home-primary-button";
+    enterWorldButton.type = "button";
+    const canEnter = Boolean(auth.getCurrentUser()) && portal.canJoin;
+    enterWorldButton.disabled = !canEnter;
+    enterWorldButton.textContent = !auth.getCurrentUser()
+      ? "Sign in to Enter"
+      : portal.canJoin
+        ? "Enter World"
+        : "World Not Joinable";
+    enterWorldButton.addEventListener("click", () => {
+      if (!canEnter) return;
+      activateWorldViewForWorld(portal.worldId);
+    });
+
+    actions.appendChild(viewOnMapButton);
+    actions.appendChild(enterWorldButton);
+    card.appendChild(summary);
+    card.appendChild(meta);
+    card.appendChild(actions);
+    homeResultsList.appendChild(card);
+  });
+}
+
 function buildShareWorldLink(worldId: string) {
   return buildWorldUrl(worldId);
 }
 
 function syncShareWorldLinkButton() {
   if (!shareWorldLinkButton) return;
-  const canShare = Boolean(auth.getCurrentUser() && worldState?.worldId);
+  const canShare = Boolean(auth.getCurrentUser() && worldState?.worldId && currentRouteMode === "world");
   shareWorldLinkButton.hidden = !canShare;
   shareWorldLinkButton.disabled = !canShare;
   shareWorldLinkButton.title = canShare
@@ -4381,7 +4626,7 @@ function renderWorldGenerationStatus() {
 }
 
 const game = createGameScene({
-  mount: app,
+  mount: appRoot,
   onLocalStateChange(state, _force, avatarSelection, avatarMode) {
     realtime.sendPlayerUpdate(state, avatarSelection, avatarMode);
   },
@@ -4647,11 +4892,13 @@ const game = createGameScene({
 });
 
 function setWorldViewMode(active: boolean) {
+  setHomeViewMode(false);
   worldViewActive = active;
   dockPanel?.toggleAttribute("hidden", !active);
   transformToolbar?.setAttribute("style", active ? "display: flex" : "display: none");
   syncTransformToolbar();
   syncTimelinePreviewWindow();
+  syncShareWorldLinkButton();
   if (active) {
     worldMap.activateWorldView();
     return;
@@ -4669,7 +4916,7 @@ function setWorldRoute(worldId: string, replace = false) {
   window.history.pushState(null, "", pathname);
 }
 
-function setMapRoute(replace = false) {
+function setHomeRoute(replace = false) {
   if (window.location.pathname === "/") return;
   if (replace) {
     window.history.replaceState(null, "", "/");
@@ -4678,10 +4925,34 @@ function setMapRoute(replace = false) {
   window.history.pushState(null, "", "/");
 }
 
+function setMapRoute(replace = false) {
+  if (window.location.pathname === MAP_ROUTE_PATH) return;
+  if (replace) {
+    window.history.replaceState(null, "", MAP_ROUTE_PATH);
+    return;
+  }
+  window.history.pushState(null, "", MAP_ROUTE_PATH);
+}
+
+function setHomeViewMode(active: boolean) {
+  homeListingScreen?.toggleAttribute("hidden", !active);
+  if (!active) return;
+
+  worldViewActive = false;
+  worldMapScreen?.toggleAttribute("hidden", true);
+  dockPanel?.toggleAttribute("hidden", true);
+  transformToolbar?.setAttribute("style", "display: none");
+  appRoot.classList.add("map-hidden");
+  syncTransformToolbar();
+  syncTimelinePreviewWindow();
+  syncShareWorldLinkButton();
+}
+
 function activateWorldViewForWorld(worldId: string) {
   pendingAutoJoinWorldId = worldId;
   autoJoinWorldIdSent = null;
   setWorldRoute(worldId);
+  currentRouteMode = "world";
   setWorldViewMode(true);
   try {
     window.sessionStorage.setItem(PENDING_WORLD_JOIN_STORAGE_KEY, worldId);
@@ -4703,11 +4974,16 @@ async function loadWorldPortalPins() {
     credentials: "include"
   });
   if (!response.ok) {
+    homeListingLoaded = true;
+    homeListingLoadFailed = true;
+    renderHomeListing();
     worldMap.setStatus("Failed to load world portals");
     return;
   }
 
   const payload = (await response.json()) as { portals: WorldPortal[] };
+  homeListingLoaded = true;
+  homeListingLoadFailed = false;
   knownWorldPortals = payload.portals;
   if (auth.getCurrentUser()) {
     myOwnedWorldId =
@@ -4715,6 +4991,7 @@ async function loadWorldPortalPins() {
   }
   syncWorldMapControlState();
   worldMap.setPortals(payload.portals);
+  renderHomeListing();
   if (pendingAutoJoinWorldId) {
     worldMap.selectPortal(pendingAutoJoinWorldId);
   }
@@ -5259,6 +5536,7 @@ const auth = createAuthController({
     renderMapGlobalChat();
     worldMap.setCurrentUser(user);
     syncProfileSettingsForm();
+    renderHomeListing();
     applyAvatarSelectionFromCurrentUser(user);
 
     if (!user) {
@@ -5647,8 +5925,9 @@ shareWorldLinkButton?.addEventListener("click", () => {
 homeMapButton?.addEventListener("click", () => {
   pendingAutoJoinWorldId = null;
   autoJoinWorldIdSent = null;
-  setWorldViewMode(false);
-  setMapRoute();
+  setHomeRoute();
+  currentRouteMode = "home";
+  setHomeViewMode(true);
   worldMap.focusDefault();
   worldMap.selectPortal(null);
   try {
@@ -5657,8 +5936,28 @@ homeMapButton?.addEventListener("click", () => {
     // Ignore storage failures.
   }
 });
+homeOpenMapButton?.addEventListener("click", () => {
+  setMapRoute();
+  currentRouteMode = "map";
+  setWorldViewMode(false);
+  worldMap.focusDefault();
+  worldMap.selectPortal(null);
+});
+homeSearchInput?.addEventListener("input", () => {
+  renderHomeListing();
+});
+homeCityFilter?.addEventListener("change", () => {
+  renderHomeListing();
+});
+homeSearchClearButton?.addEventListener("click", () => {
+  if (homeSearchInput) homeSearchInput.value = "";
+  if (homeCityFilter) homeCityFilter.value = "";
+  renderHomeListing();
+});
 window.addEventListener("popstate", () => {
-  const worldId = parseWorldIdFromUrl(new URL(window.location.href));
+  const url = new URL(window.location.href);
+  const worldId = parseWorldIdFromUrl(url);
+  currentRouteMode = getRouteMode(url);
   if (worldId) {
     pendingAutoJoinWorldId = worldId;
     autoJoinWorldIdSent = null;
@@ -5669,10 +5968,15 @@ window.addEventListener("popstate", () => {
     }
     return;
   }
-  setWorldViewMode(false);
   pendingAutoJoinWorldId = null;
   autoJoinWorldIdSent = null;
-  setMapRoute(true);
+  if (currentRouteMode === "map") {
+    setWorldViewMode(false);
+    worldMap.selectPortal(null);
+    return;
+  }
+  setHomeViewMode(true);
+  worldMap.selectPortal(null);
 });
 
 worldGenerateForm?.addEventListener("submit", (event) => {
@@ -6154,10 +6458,16 @@ syncWorldMapControlState();
 void loadWorldHomeCities();
 syncChatCanPost();
 renderCombinedChat();
-setWorldViewMode(worldViewActive);
-if (worldViewActive) {
-  setWorldNotice("Sign in to load world");
+renderHomeListing();
+if (currentRouteMode === "home") {
+  setHomeViewMode(true);
+  setWorldNotice("Search worlds by address or open the full map");
 } else {
+  setWorldViewMode(worldViewActive);
+}
+if (currentRouteMode === "world") {
+  setWorldNotice("Sign in to load world");
+} else if (currentRouteMode === "map") {
   setWorldNotice("Explore world portals on the map");
   worldMap.focusDefault();
 }
