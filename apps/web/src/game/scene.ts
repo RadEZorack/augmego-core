@@ -171,6 +171,8 @@ export function createGameScene(options: GameSceneOptions) {
   };
   let timelineCameraOverride: CameraPose | null = null;
   let timelinePreviewElement: HTMLElement | null = null;
+  let timelinePreviewWidth = 0;
+  let timelinePreviewHeight = 0;
   const worldCameraRigs = new Map<
     string,
     {
@@ -186,6 +188,12 @@ export function createGameScene(options: GameSceneOptions) {
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setClearColor(0x0b0f1a, 1);
   options.mount.appendChild(renderer.domElement);
+  const timelinePreviewRenderer = new THREE.WebGLRenderer({ antialias: true });
+  timelinePreviewRenderer.setPixelRatio(window.devicePixelRatio);
+  timelinePreviewRenderer.setClearColor(0x0b0f1a, 1);
+  timelinePreviewRenderer.domElement.style.display = "block";
+  timelinePreviewRenderer.domElement.style.width = "100%";
+  timelinePreviewRenderer.domElement.style.height = "100%";
 
   const scene = new THREE.Scene();
   scene.add(worldRoot);
@@ -302,6 +310,50 @@ export function createGameScene(options: GameSceneOptions) {
 
   function setTimelinePreviewElement(element: HTMLElement | null) {
     timelinePreviewElement = element;
+    syncTimelinePreviewRendererAttachment();
+    syncTimelinePreviewRendererSize();
+  }
+
+  function syncTimelinePreviewRendererAttachment() {
+    const previewCanvas = timelinePreviewRenderer.domElement;
+    if (!timelinePreviewElement) {
+      if (previewCanvas.parentElement) {
+        previewCanvas.parentElement.removeChild(previewCanvas);
+      }
+      return;
+    }
+    if (previewCanvas.parentElement !== timelinePreviewElement) {
+      if (previewCanvas.parentElement) {
+        previewCanvas.parentElement.removeChild(previewCanvas);
+      }
+      timelinePreviewElement.appendChild(previewCanvas);
+    }
+  }
+
+  function syncTimelinePreviewRendererSize() {
+    if (!timelinePreviewElement) {
+      timelinePreviewWidth = 0;
+      timelinePreviewHeight = 0;
+      return false;
+    }
+
+    const width = Math.round(timelinePreviewElement.clientWidth);
+    const height = Math.round(timelinePreviewElement.clientHeight);
+    if (width < 2 || height < 2) {
+      timelinePreviewWidth = 0;
+      timelinePreviewHeight = 0;
+      return false;
+    }
+
+    if (width !== timelinePreviewWidth || height !== timelinePreviewHeight) {
+      timelinePreviewRenderer.setSize(width, height, false);
+      timelinePreviewWidth = width;
+      timelinePreviewHeight = height;
+      timelinePreviewCamera.aspect = width / height;
+      timelinePreviewCamera.updateProjectionMatrix();
+    }
+
+    return true;
   }
 
   function getInitials(name: string) {
@@ -2162,6 +2214,7 @@ export function createGameScene(options: GameSceneOptions) {
     camera.aspect = width / height;
     camera.updateProjectionMatrix();
     renderer.setSize(width, height);
+    syncTimelinePreviewRendererSize();
   }
 
   function animate() {
@@ -2197,17 +2250,8 @@ export function createGameScene(options: GameSceneOptions) {
 
     renderer.render(scene, camera);
     if (timelinePreviewElement && !timelinePreviewElement.hidden) {
-      const canvasRect = renderer.domElement.getBoundingClientRect();
-      const previewRect = timelinePreviewElement.getBoundingClientRect();
-      const width = Math.round(previewRect.width);
-      const height = Math.round(previewRect.height);
-      const left = Math.round(previewRect.left - canvasRect.left);
-      const top = Math.round(previewRect.top - canvasRect.top);
-      const viewportY = Math.round(canvasRect.height - top - height);
-
-      if (width > 1 && height > 1) {
-        timelinePreviewCamera.aspect = width / height;
-        timelinePreviewCamera.updateProjectionMatrix();
+      syncTimelinePreviewRendererAttachment();
+      if (syncTimelinePreviewRendererSize()) {
         if (timelineCameraOverride) {
           timelinePreviewCamera.position.set(
             timelineCameraOverride.position.x,
@@ -2219,19 +2263,15 @@ export function createGameScene(options: GameSceneOptions) {
             timelineCameraOverride.lookAt.y,
             timelineCameraOverride.lookAt.z
           );
+          timelinePreviewRenderer.render(scene, timelinePreviewCamera);
         } else {
-          timelinePreviewCamera.position.copy(camera.position);
-          timelinePreviewCamera.lookAt(cameraTarget);
+          timelinePreviewRenderer.clear();
         }
-
-        renderer.clearDepth();
-        renderer.setScissorTest(true);
-        renderer.setScissor(left, viewportY, width, height);
-        renderer.setViewport(left, viewportY, width, height);
-        renderer.render(scene, timelinePreviewCamera);
-        renderer.setScissorTest(false);
-        renderer.setViewport(0, 0, renderer.domElement.clientWidth, renderer.domElement.clientHeight);
       }
+    } else if (timelinePreviewRenderer.domElement.parentElement) {
+      timelinePreviewRenderer.domElement.parentElement.removeChild(
+        timelinePreviewRenderer.domElement
+      );
     }
     requestAnimationFrame(animate);
   }
