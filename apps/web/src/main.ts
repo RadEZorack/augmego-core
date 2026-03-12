@@ -451,6 +451,16 @@ function setupPartySubtabs() {
 }
 
 function setupTimelineControls() {
+  timelinePlayToggleButton?.addEventListener("click", () => {
+    if (timelinePlaying) {
+      stopTimelinePlayback();
+      renderTimelineEditor();
+      return;
+    }
+    startTimelinePlayback();
+    renderTimelineEditor();
+  });
+
   timelineAddFrameButton?.addEventListener("click", () => {
     if (!worldState?.canManage) return;
     const frame = captureTimelineFrameAtTime(timelineScrubSeconds);
@@ -488,6 +498,10 @@ function setupTimelineControls() {
       return;
     }
     timelineFrames.splice(selectedTimelineFrameIndex, 1);
+    if (timelineFrames.length === 0) {
+      stopTimelinePlayback();
+      timelineScrubSeconds = 0;
+    }
     selectedTimelineFrameIndex = Math.min(selectedTimelineFrameIndex, timelineFrames.length - 1);
     setTimelineStatus("Deleted frame");
     renderTimelineEditor();
@@ -516,6 +530,9 @@ function setupTimelineControls() {
   });
 
   timelineScrubInput?.addEventListener("input", () => {
+    if (timelinePlaying) {
+      stopTimelinePlayback();
+    }
     const next = Number(timelineScrubInput.value);
     if (!Number.isFinite(next)) return;
     timelineScrubSeconds = Math.max(0, next);
@@ -528,6 +545,9 @@ function setupTimelineControls() {
   });
 
   timelineTimeInput?.addEventListener("change", () => {
+    if (timelinePlaying) {
+      stopTimelinePlayback();
+    }
     const next = Number(timelineTimeInput.value);
     if (!Number.isFinite(next)) return;
     timelineScrubSeconds = Math.max(0, next);
@@ -1005,6 +1025,9 @@ let timelineFrames: TimelineFrame[] = [];
 let selectedTimelineFrameIndex = -1;
 let timelineScrubSeconds = 0;
 let timelinePreviewActive = false;
+let timelinePlaying = false;
+let timelinePlaybackLastTimeMs = 0;
+let timelinePlaybackRafId: number | null = null;
 let timelineAppliedPlacementState = new Map<
   string,
   {
@@ -1146,6 +1169,9 @@ const worldSettingsSaveButton = document.getElementById(
 ) as HTMLButtonElement | null;
 const timelineAddFrameButton = document.getElementById(
   "timeline-add-frame"
+) as HTMLButtonElement | null;
+const timelinePlayToggleButton = document.getElementById(
+  "timeline-play-toggle"
 ) as HTMLButtonElement | null;
 const timelineUpdateFrameButton = document.getElementById(
   "timeline-update-frame"
@@ -3595,6 +3621,78 @@ function getTimelineDuration() {
   return Math.max(last?.time ?? 0, 10);
 }
 
+function getTimelineStartTime() {
+  return timelineFrames[0]?.time ?? 0;
+}
+
+function getTimelineEndTime() {
+  return timelineFrames[timelineFrames.length - 1]?.time ?? 0;
+}
+
+function stopTimelinePlayback() {
+  timelinePlaying = false;
+  timelinePlaybackLastTimeMs = 0;
+  if (timelinePlaybackRafId !== null) {
+    window.cancelAnimationFrame(timelinePlaybackRafId);
+    timelinePlaybackRafId = null;
+  }
+  if (timelinePlayToggleButton) {
+    timelinePlayToggleButton.textContent = "Play";
+  }
+}
+
+function stepTimelinePlayback(nowMs: number) {
+  if (!timelinePlaying) return;
+  if (!worldState || timelineFrames.length === 0) {
+    stopTimelinePlayback();
+    return;
+  }
+
+  const startTime = getTimelineStartTime();
+  const endTime = getTimelineEndTime();
+  if (endTime <= startTime) {
+    timelineScrubSeconds = startTime;
+    applyTimelineAtTime(timelineScrubSeconds);
+    stopTimelinePlayback();
+    renderTimelineEditor();
+    return;
+  }
+
+  if (!timelinePlaybackLastTimeMs) {
+    timelinePlaybackLastTimeMs = nowMs;
+  }
+  const deltaSeconds = Math.max(0, (nowMs - timelinePlaybackLastTimeMs) / 1000);
+  timelinePlaybackLastTimeMs = nowMs;
+  timelineScrubSeconds += deltaSeconds;
+
+  const span = endTime - startTime;
+  if (timelineScrubSeconds > endTime) {
+    timelineScrubSeconds = startTime + ((timelineScrubSeconds - startTime) % span);
+  }
+
+  applyTimelineAtTime(timelineScrubSeconds);
+  renderTimelineEditor();
+  timelinePlaybackRafId = window.requestAnimationFrame(stepTimelinePlayback);
+}
+
+function startTimelinePlayback() {
+  if (!worldState || timelineFrames.length === 0) return;
+  if (timelinePlaying) return;
+
+  const startTime = getTimelineStartTime();
+  const endTime = getTimelineEndTime();
+  if (timelineScrubSeconds < startTime || timelineScrubSeconds > endTime) {
+    timelineScrubSeconds = startTime;
+  }
+
+  timelinePlaying = true;
+  timelinePlaybackLastTimeMs = 0;
+  if (timelinePlayToggleButton) {
+    timelinePlayToggleButton.textContent = "Pause";
+  }
+  timelinePlaybackRafId = window.requestAnimationFrame(stepTimelinePlayback);
+}
+
 function getLastFrameIndexBefore(time: number, frames = timelineFrames) {
   let index = -1;
   for (let i = 0; i < frames.length; i += 1) {
@@ -4133,6 +4231,9 @@ function syncTimelinePreviewWindow() {
   if (shouldShow) {
     applyTimelineAtTime(timelineScrubSeconds);
   } else {
+    if (timelinePlaying) {
+      stopTimelinePlayback();
+    }
     if (timelineCameraPreviewTitle) {
       timelineCameraPreviewTitle.textContent = "Active Camera";
     }
@@ -4143,6 +4244,11 @@ function syncTimelinePreviewWindow() {
 function renderTimelineEditor() {
   if (!timelineRuler) return;
   const canEdit = worldState?.canManage === true;
+  const canPlay = Boolean(worldState) && timelineFrames.length > 0;
+  if (timelinePlayToggleButton) {
+    timelinePlayToggleButton.disabled = !canPlay;
+    timelinePlayToggleButton.textContent = timelinePlaying ? "Pause" : "Play";
+  }
   if (timelineAddFrameButton) timelineAddFrameButton.disabled = !canEdit;
   if (timelineUpdateFrameButton) timelineUpdateFrameButton.disabled = !canEdit;
   if (timelineDeleteFrameButton) timelineDeleteFrameButton.disabled = !canEdit;
@@ -4212,6 +4318,7 @@ function renderTimelineEditor() {
 async function loadWorldState() {
   if (!worldViewActive) {
     stopWorldGenerationPolling();
+    stopTimelinePlayback();
     selectedWorldCameraId = null;
     pendingSelectedWorldCameraId = null;
     timelineFrames = [];
@@ -4229,6 +4336,7 @@ async function loadWorldState() {
   }
 
   if (!auth.getCurrentUser()) {
+    stopTimelinePlayback();
     worldState = null;
     worldGenerationTasks = [];
     selectedWorldPlacementId = null;
@@ -4321,6 +4429,7 @@ async function loadWorldState() {
   worldState = payload;
   timelineFrames = compactTimelineFrames(normalizeTimelineFramesLocal(payload.timelineFrames));
   if (timelineFrames.length === 0) {
+    stopTimelinePlayback();
     selectedTimelineFrameIndex = -1;
     timelineScrubSeconds = 0;
   } else {
