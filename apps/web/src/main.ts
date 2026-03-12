@@ -3568,7 +3568,6 @@ function createReplaceInput(onSelect: (file: File) => void) {
   input.click();
 }
 
-const DEFAULT_TIMELINE_CAMERA_ID = "timeline-camera-main";
 type TimelineCameraState = {
   position: { x: number; y: number; z: number };
   lookAt: { x: number; y: number; z: number };
@@ -3709,18 +3708,12 @@ function cloneTimelineCameraState(state: TimelineCameraState): TimelineCameraSta
   };
 }
 
-function getDefaultTimelineCameraState(cameraId: string): TimelineCameraState {
-  if (cameraId === DEFAULT_TIMELINE_CAMERA_ID) {
-    return {
-      position: { x: 0, y: 6, z: 7 },
-      lookAt: { x: 0, y: 0, z: 0 },
-      active: false
-    };
-  }
-  const worldCamera = worldState?.cameras.find((item) => item.id === cameraId);
+function getCameraStateFromWorld(cameraId: string): TimelineCameraState | null {
+  const worldCamera = getWorldCameraById(cameraId);
+  if (!worldCamera) return null;
   return {
-    position: worldCamera ? { ...worldCamera.position } : { x: 0, y: 6, z: 7 },
-    lookAt: worldCamera ? { ...worldCamera.lookAt } : { x: 0, y: 0, z: 0 },
+    position: { ...worldCamera.position },
+    lookAt: { ...worldCamera.lookAt },
     active: false
   };
 }
@@ -3775,20 +3768,21 @@ function captureTimelineFrameAtTime(time: number): TimelineFrame {
     selectedWorldCameraId ??
     baseline.activeCameraId ??
     worldState?.cameras[0]?.id ??
-    DEFAULT_TIMELINE_CAMERA_ID;
-  const livePlayerCamera = game.getCameraPose();
+    null;
   const cameraIds = new Set<string>([
     ...(worldState?.cameras.map((camera) => camera.id) ?? []),
     ...(Array.from(baseline.cameras.keys()) ?? []),
-    activeCameraId
+    ...(activeCameraId ? [activeCameraId] : [])
   ]);
   for (const cameraId of cameraIds) {
-    const sourceCamera =
-      cameraId === DEFAULT_TIMELINE_CAMERA_ID
-        ? { position: livePlayerCamera.position, lookAt: livePlayerCamera.lookAt }
-        : getWorldCameraById(cameraId);
+    const sourceCamera = getWorldCameraById(cameraId);
     if (!sourceCamera) continue;
-    const priorCamera = baseline.cameras.get(cameraId) ?? getDefaultTimelineCameraState(cameraId);
+    const priorCamera =
+      baseline.cameras.get(cameraId) ?? {
+        position: sourceCamera.position,
+        lookAt: sourceCamera.lookAt,
+        active: false
+      };
     const cameraDiff: NonNullable<TimelineFrame["cameras"]>[string] = {};
     if (isFirstFrame || !vec3Equal(sourceCamera.position, priorCamera.position)) {
       cameraDiff.position = [
@@ -3933,8 +3927,10 @@ function compactTimelineFrames(frames: TimelineFrame[]) {
     }
     if (frame.cameras) {
       for (const [cameraId, diff] of Object.entries(frame.cameras)) {
+        const fallbackCamera = getCameraStateFromWorld(cameraId);
+        if (!nextCameraStates.has(cameraId) && !fallbackCamera) continue;
         const next = cloneTimelineCameraState(
-          nextCameraStates.get(cameraId) ?? getDefaultTimelineCameraState(cameraId)
+          nextCameraStates.get(cameraId) ?? (fallbackCamera as TimelineCameraState)
         );
         if (Array.isArray(diff.position) && diff.position.length === 3) {
           next.position = {
@@ -3952,19 +3948,22 @@ function compactTimelineFrames(frames: TimelineFrame[]) {
         }
         if (typeof diff.active === "boolean") {
           if (diff.active) nextActiveCameraId = cameraId;
-          else if (nextActiveCameraId === cameraId) nextActiveCameraId = DEFAULT_TIMELINE_CAMERA_ID;
+          else if (nextActiveCameraId === cameraId) nextActiveCameraId = null;
         }
         nextCameraStates.set(cameraId, next);
       }
     }
     if (!nextActiveCameraId) {
-      nextActiveCameraId = baseline.activeCameraId ?? worldState.cameras[0]?.id ?? DEFAULT_TIMELINE_CAMERA_ID;
+      nextActiveCameraId = baseline.activeCameraId ?? worldState.cameras[0]?.id ?? null;
+    }
+    if (nextActiveCameraId && !nextCameraStates.has(nextActiveCameraId)) {
+      nextActiveCameraId = worldState.cameras[0]?.id ?? null;
     }
 
     const cameraDiffs: NonNullable<TimelineFrame["cameras"]> = {};
     for (const [cameraId, nextCamera] of nextCameraStates.entries()) {
       const priorCamera =
-        baseline.cameras.get(cameraId) ?? getDefaultTimelineCameraState(cameraId);
+        baseline.cameras.get(cameraId) ?? nextCamera;
       const cameraDiff: NonNullable<TimelineFrame["cameras"]>[string] = {};
       if (isFirstFrame || !vec3Equal(nextCamera.position, priorCamera.position)) {
         cameraDiff.position = [nextCamera.position.x, nextCamera.position.y, nextCamera.position.z];
@@ -4022,9 +4021,7 @@ function buildFrameState(frameIndex: number) {
       active: false
     });
   }
-  cameraStates.set(DEFAULT_TIMELINE_CAMERA_ID, getDefaultTimelineCameraState(DEFAULT_TIMELINE_CAMERA_ID));
-  let activeCameraId: string | null =
-    (worldState?.cameras[0]?.id ?? null) || DEFAULT_TIMELINE_CAMERA_ID;
+  let activeCameraId: string | null = worldState?.cameras[0]?.id ?? null;
 
   for (let i = 0; i <= frameIndex; i += 1) {
     const frame = timelineFrames[i];
@@ -4058,9 +4055,9 @@ function buildFrameState(frameIndex: number) {
     }
     if (frame?.cameras) {
       for (const [cameraId, diff] of Object.entries(frame.cameras)) {
-        const next = cloneTimelineCameraState(
-          cameraStates.get(cameraId) ?? getDefaultTimelineCameraState(cameraId)
-        );
+        const currentCamera = cameraStates.get(cameraId);
+        if (!currentCamera) continue;
+        const next = cloneTimelineCameraState(currentCamera);
         if (Array.isArray(diff.position) && diff.position.length === 3) {
           next.position = {
             x: Number(diff.position[0] ?? next.position.x),
@@ -4086,8 +4083,11 @@ function buildFrameState(frameIndex: number) {
       }
     }
   }
+  if (activeCameraId && !cameraStates.has(activeCameraId)) {
+    activeCameraId = null;
+  }
   if (!activeCameraId) {
-    activeCameraId = (worldState?.cameras[0]?.id ?? null) || DEFAULT_TIMELINE_CAMERA_ID;
+    activeCameraId = worldState?.cameras[0]?.id ?? null;
   }
   for (const [cameraId, cameraState] of cameraStates.entries()) {
     cameraState.active = cameraId === activeCameraId;
@@ -4097,7 +4097,7 @@ function buildFrameState(frameIndex: number) {
     models: state,
     cameras: cameraStates,
     activeCameraId,
-    camera: cameraStates.get(activeCameraId) ?? null
+    camera: activeCameraId ? cameraStates.get(activeCameraId) ?? null : null
   };
 }
 
@@ -4171,12 +4171,11 @@ function applyTimelineAtTime(seconds: number) {
 
   const prevCamera = prevState.camera;
   const nextCamera = nextState.camera ?? prevCamera;
-  const activeCameraId = nextState.activeCameraId ?? prevState.activeCameraId ?? DEFAULT_TIMELINE_CAMERA_ID;
-  const activeCameraLabel =
-    activeCameraId === DEFAULT_TIMELINE_CAMERA_ID
-      ? "Player Camera"
-      : worldState?.cameras.find((camera) => camera.id === activeCameraId)?.name?.trim() ||
-        `Camera ${activeCameraId.slice(0, 8)}`;
+  const activeCameraId = nextState.activeCameraId ?? prevState.activeCameraId ?? null;
+  const activeCameraLabel = activeCameraId
+    ? worldState?.cameras.find((camera) => camera.id === activeCameraId)?.name?.trim() ||
+      `Camera ${activeCameraId.slice(0, 8)}`
+    : "No Timeline Camera";
   if (timelineCameraPreviewTitle) {
     timelineCameraPreviewTitle.textContent = `Active Camera: ${activeCameraLabel}`;
   }
@@ -4221,6 +4220,7 @@ function syncTimelinePreviewWindow() {
     timelinePane?.classList.contains("active") === true &&
     worldViewActive &&
     Boolean(worldState) &&
+    (worldState?.cameras.length ?? 0) > 0 &&
     timelineFrames.length > 0;
   if (timelineCameraPreviewWindow) {
     timelineCameraPreviewWindow.hidden = !shouldShow;
