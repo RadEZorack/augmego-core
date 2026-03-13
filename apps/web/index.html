@@ -604,7 +604,15 @@
         </div>
         <div id="timeline-ruler" class="timeline-ruler" role="listbox" aria-label="Timeline frames"></div>
         <div id="timeline-tracks" class="timeline-tracks" aria-label="Timeline tracks"></div>
-        <label for="timeline-frame-json" class="camera-control-label">Selected Frame JSON</label>
+        <div class="timeline-json-header">
+          <label for="timeline-frame-json" id="timeline-frame-json-label" class="camera-control-label">
+            Selected Frame JSON
+          </label>
+          <select id="timeline-json-scope" class="timeline-json-scope" aria-label="JSON editor scope">
+            <option value="frame">Frame</option>
+            <option value="track">Track</option>
+          </select>
+        </div>
         <textarea
           id="timeline-frame-json"
           class="party-search-input timeline-json-editor"

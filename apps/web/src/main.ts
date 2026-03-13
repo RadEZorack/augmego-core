@@ -565,6 +565,11 @@ function setupTimelineControls() {
     syncTimelinePreviewWindow();
   });
 
+  timelineJsonScopeInput?.addEventListener("change", () => {
+    timelineJsonScope = timelineJsonScopeInput.value === "track" ? "track" : "frame";
+    syncSelectedTimelineFrameJson();
+  });
+
   timelineFrameJsonInput?.addEventListener("change", () => {
     if (!parseSelectedFrameJson()) return;
     applyTimelineAtTime(timelineScrubSeconds);
@@ -1030,6 +1035,7 @@ let playerAvatarSelection: PlayerAvatarSelection = {
 let timelineFrames: TimelineFrame[] = [];
 let selectedTimelineFrameIndex = -1;
 let selectedTimelineTrackKey: string | null = null;
+let timelineJsonScope: TimelineJsonScope = "frame";
 let timelineScrubSeconds = 0;
 let timelinePreviewActive = false;
 let timelinePlaying = false;
@@ -1192,6 +1198,12 @@ const timelineRuler = document.getElementById("timeline-ruler") as HTMLDivElemen
 const timelineTracks = document.getElementById("timeline-tracks") as HTMLDivElement | null;
 const timelineScrubInput = document.getElementById("timeline-scrub") as HTMLInputElement | null;
 const timelineTimeInput = document.getElementById("timeline-time-input") as HTMLInputElement | null;
+const timelineFrameJsonLabel = document.getElementById(
+  "timeline-frame-json-label"
+) as HTMLLabelElement | null;
+const timelineJsonScopeInput = document.getElementById(
+  "timeline-json-scope"
+) as HTMLSelectElement | null;
 const timelineFrameJsonInput = document.getElementById(
   "timeline-frame-json"
 ) as HTMLTextAreaElement | null;
@@ -3590,6 +3602,8 @@ type TimelineTrack = {
   frameIndexes: number[];
 };
 
+type TimelineJsonScope = "frame" | "track";
+
 function formatTimelineTime(seconds: number) {
   if (!Number.isFinite(seconds)) return "0.0s";
   return `${seconds.toFixed(1)}s`;
@@ -3687,6 +3701,25 @@ function getTimelineTracks() {
       }
       return left.label.localeCompare(right.label) || left.objectId.localeCompare(right.objectId);
     });
+}
+
+function getSelectedTimelineTrack() {
+  if (!selectedTimelineTrackKey) return null;
+  const [kind, objectId] = selectedTimelineTrackKey.split(":");
+  if (!objectId || (kind !== "model" && kind !== "camera")) return null;
+  return {
+    key: selectedTimelineTrackKey,
+    kind,
+    objectId,
+    label:
+      kind === "model" ? getTimelinePlacementLabel(objectId) : getTimelineCameraLabel(objectId)
+  } as const;
+}
+
+function getTimelineJsonScopeValue() {
+  const selectedTrack = getSelectedTimelineTrack();
+  if (timelineJsonScope === "track" && selectedTrack) return "track";
+  return "frame";
 }
 
 function normalizeTimelineFramesLocal(frames: unknown): TimelineFrame[] {
@@ -3914,22 +3947,51 @@ function parseSelectedFrameJson() {
   if (!raw) return false;
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw new Error("Invalid JSON shape");
+    }
     const next = { ...timelineFrames[selectedTimelineFrameIndex]! };
-    next.models =
-      parsed.models && typeof parsed.models === "object" && !Array.isArray(parsed.models)
-        ? (parsed.models as TimelineFrame["models"])
-        : {};
-    next.cameras =
-      parsed.cameras && typeof parsed.cameras === "object" && !Array.isArray(parsed.cameras)
-        ? (parsed.cameras as TimelineFrame["cameras"])
-        : {};
+    const scope = getTimelineJsonScopeValue();
+    if (scope === "track") {
+      const selectedTrack = getSelectedTimelineTrack();
+      if (!selectedTrack) {
+        setTimelineStatus("Select a track to edit track JSON");
+        return false;
+      }
+      if (selectedTrack.kind === "model") {
+        const models = { ...(next.models ?? {}) };
+        if (Object.keys(parsed).length > 0) {
+          models[selectedTrack.objectId] = parsed as NonNullable<TimelineFrame["models"]>[string];
+        } else {
+          delete models[selectedTrack.objectId];
+        }
+        next.models = Object.keys(models).length > 0 ? models : undefined;
+      } else {
+        const cameras = { ...(next.cameras ?? {}) };
+        if (Object.keys(parsed).length > 0) {
+          cameras[selectedTrack.objectId] = parsed as NonNullable<TimelineFrame["cameras"]>[string];
+        } else {
+          delete cameras[selectedTrack.objectId];
+        }
+        next.cameras = Object.keys(cameras).length > 0 ? cameras : undefined;
+      }
+    } else {
+      next.models =
+        parsed.models && typeof parsed.models === "object" && !Array.isArray(parsed.models)
+          ? (parsed.models as TimelineFrame["models"])
+          : {};
+      next.cameras =
+        parsed.cameras && typeof parsed.cameras === "object" && !Array.isArray(parsed.cameras)
+          ? (parsed.cameras as TimelineFrame["cameras"])
+          : {};
+    }
     timelineFrames[selectedTimelineFrameIndex] = next;
     const selectedTime = next.time;
     timelineFrames = compactTimelineFrames(timelineFrames);
     selectedTimelineFrameIndex = timelineFrames.findIndex((frame) =>
       nearlyEqual(frame.time, selectedTime)
     );
-    setTimelineStatus("Frame JSON updated");
+    setTimelineStatus(scope === "track" ? "Track JSON updated" : "Frame JSON updated");
     return true;
   } catch {
     setTimelineStatus("Invalid frame JSON");
@@ -4338,15 +4400,43 @@ function syncTimelinePreviewWindow() {
 
 function syncSelectedTimelineFrameJson() {
   if (!timelineFrameJsonInput) return;
+  const scope = getTimelineJsonScopeValue();
+  const selectedTrack = scope === "track" ? getSelectedTimelineTrack() : null;
+  if (timelineJsonScopeInput) {
+    timelineJsonScopeInput.value = scope;
+    timelineJsonScopeInput.disabled = selectedTimelineFrameIndex < 0;
+  }
+  if (timelineFrameJsonLabel) {
+    timelineFrameJsonLabel.textContent =
+      scope === "track" && selectedTrack
+        ? `${selectedTrack.label} JSON`
+        : "Selected Frame JSON";
+  }
   if (selectedTimelineFrameIndex >= 0) {
     const selectedFrame = timelineFrames[selectedTimelineFrameIndex];
     timelineFrameJsonInput.disabled = false;
-    timelineFrameJsonInput.value = JSON.stringify({
-      models: selectedFrame?.models ?? {},
-      cameras: selectedFrame?.cameras ?? {}
-    });
+    if (scope === "track" && selectedTrack) {
+      const value =
+        selectedTrack.kind === "model"
+          ? selectedFrame?.models?.[selectedTrack.objectId] ?? {}
+          : selectedFrame?.cameras?.[selectedTrack.objectId] ?? {};
+      timelineFrameJsonInput.placeholder = "{}";
+      timelineFrameJsonInput.value = JSON.stringify(value);
+    } else {
+      timelineFrameJsonInput.placeholder = '{"models":{},"cameras":{}}';
+      timelineFrameJsonInput.value = JSON.stringify({
+        models: selectedFrame?.models ?? {},
+        cameras: selectedFrame?.cameras ?? {}
+      });
+    }
   } else {
+    if (timelineJsonScopeInput) {
+      timelineJsonScopeInput.value = timelineJsonScope;
+      timelineJsonScopeInput.disabled = true;
+    }
     timelineFrameJsonInput.disabled = true;
+    timelineFrameJsonInput.placeholder =
+      scope === "track" ? "{}" : '{"models":{},"cameras":{}}';
     timelineFrameJsonInput.value = "";
   }
 }

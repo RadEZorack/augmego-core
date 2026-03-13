@@ -1668,6 +1668,24 @@ canvas {
   resize: vertical;
 }
 
+.timeline-json-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.timeline-json-scope {
+  min-width: 92px;
+  border: 1px solid rgba(44, 225, 255, 0.35);
+  background: rgba(0, 0, 0, 0.25);
+  color: #effbff;
+  border-radius: 8px;
+  padding: 6px 8px;
+  font-size: 0.75rem;
+}
+
 .timeline-camera-preview-window {
   position: fixed;
   top: 86px;
