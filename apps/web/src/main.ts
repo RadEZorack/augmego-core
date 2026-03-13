@@ -3696,6 +3696,9 @@ function getTimelineTracks() {
   return [...tracks.values()]
     .filter((track) => track.frameIndexes.length > 0)
     .sort((left, right) => {
+      if (right.frameIndexes.length !== left.frameIndexes.length) {
+        return right.frameIndexes.length - left.frameIndexes.length;
+      }
       if (left.kind !== right.kind) {
         return left.kind === "model" ? -1 : 1;
       }
@@ -4402,6 +4405,7 @@ function syncSelectedTimelineFrameJson() {
   if (!timelineFrameJsonInput) return;
   const scope = getTimelineJsonScopeValue();
   const selectedTrack = scope === "track" ? getSelectedTimelineTrack() : null;
+  timelineFrameJsonInput.rows = scope === "track" ? 2 : 4;
   if (timelineJsonScopeInput) {
     timelineJsonScopeInput.value = scope;
     timelineJsonScopeInput.disabled = selectedTimelineFrameIndex < 0;
@@ -4447,6 +4451,7 @@ function selectTimelineFrame(index: number, trackKey: string | null = null) {
   selectedTimelineFrameIndex = index;
   if (trackKey) {
     selectedTimelineTrackKey = trackKey;
+    timelineJsonScope = "track";
   }
   timelineScrubSeconds = frame.time;
   syncSelectedTimelineFrameJson();
@@ -4512,6 +4517,8 @@ function renderTimelineEditor() {
     labelButton.title = track.label;
     labelButton.addEventListener("click", () => {
       selectedTimelineTrackKey = track.key;
+      timelineJsonScope = "track";
+      syncSelectedTimelineFrameJson();
       renderTimelineEditor();
     });
 

@@ -1663,7 +1663,7 @@ canvas {
 
 .timeline-json-editor {
   width: 100%;
-  min-height: 180px;
+  min-height: 56px;
   font-family: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
   resize: vertical;
 }
