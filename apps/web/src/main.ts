@@ -958,6 +958,10 @@ const placementPersistTimers = new Map<string, number>();
 const photoWallPersistTimers = new Map<string, number>();
 const worldCameraPersistTimers = new Map<string, number>();
 const TRANSFORM_PERSIST_IDLE_MS = 2000;
+const dirtyPlacementIds = new Set<string>();
+const dirtyPhotoWallIds = new Set<string>();
+const dirtyWorldCameraIds = new Set<string>();
+let pendingTimelineSaveCount = 0;
 let currentRouteMode = getRouteMode(new URL(window.location.href));
 let pendingAutoJoinWorldId = readInitialLinkedWorldId();
 let autoJoinWorldIdSent: string | null = null;
@@ -1227,6 +1231,28 @@ function setWorldNotice(message: string) {
   if (!worldStatus) return;
   worldStatus.textContent = message;
 }
+
+function hasUnsavedChanges() {
+  return (
+    dirtyPlacementIds.size > 0 ||
+    dirtyPhotoWallIds.size > 0 ||
+    dirtyWorldCameraIds.size > 0 ||
+    pendingTimelineSaveCount > 0
+  );
+}
+
+function updateUnsavedChangesNotice() {
+  if (!worldViewActive) return;
+  if (hasUnsavedChanges()) {
+    setWorldNotice("Unsaved changes");
+  }
+}
+
+window.addEventListener("beforeunload", (event) => {
+  if (!hasUnsavedChanges()) return;
+  event.preventDefault();
+  event.returnValue = "";
+});
 
 function syncWorldGenerateImageFileName() {
   if (!worldGenerateImageFileName) return;
@@ -2194,6 +2220,8 @@ function applyPlacementLocally(
 }
 
 async function persistPlacementTransform(placement: WorldPlacement) {
+  dirtyPlacementIds.add(placement.id);
+  updateUnsavedChangesNotice();
   const response = await fetch(
     apiUrl(`/api/v1/world/placements/${encodeURIComponent(placement.id)}`),
     {
@@ -2210,15 +2238,20 @@ async function persistPlacementTransform(placement: WorldPlacement) {
     }
   );
   if (!response.ok) {
+    dirtyPlacementIds.delete(placement.id);
     setWorldNotice("Instance transform update failed");
     await loadWorldState();
+    return;
   }
+  dirtyPlacementIds.delete(placement.id);
 }
 
 function schedulePlacementTransformPersist(
   placement: WorldPlacement,
   delayMs = TRANSFORM_PERSIST_IDLE_MS
 ) {
+  dirtyPlacementIds.add(placement.id);
+  updateUnsavedChangesNotice();
   const existing = placementPersistTimers.get(placement.id);
   if (existing !== undefined) {
     window.clearTimeout(existing);
@@ -2449,6 +2482,8 @@ function applyPhotoWallLocally(photoWallId: string, nextWall: WorldPhotoWall, re
 }
 
 async function persistPhotoWallTransform(photoWall: WorldPhotoWall) {
+  dirtyPhotoWallIds.add(photoWall.id);
+  updateUnsavedChangesNotice();
   const response = await fetch(
     apiUrl(`/api/v1/world/photo-walls/${encodeURIComponent(photoWall.id)}`),
     {
@@ -2463,15 +2498,20 @@ async function persistPhotoWallTransform(photoWall: WorldPhotoWall) {
     }
   );
   if (!response.ok) {
+    dirtyPhotoWallIds.delete(photoWall.id);
     setWorldNotice("Photo cube transform update failed");
     await loadWorldState();
+    return;
   }
+  dirtyPhotoWallIds.delete(photoWall.id);
 }
 
 function schedulePhotoWallTransformPersist(
   photoWall: WorldPhotoWall,
   delayMs = TRANSFORM_PERSIST_IDLE_MS
 ) {
+  dirtyPhotoWallIds.add(photoWall.id);
+  updateUnsavedChangesNotice();
   const existing = photoWallPersistTimers.get(photoWall.id);
   if (existing !== undefined) window.clearTimeout(existing);
   const timeoutId = window.setTimeout(() => {
@@ -2543,6 +2583,8 @@ function applyWorldCameraLocally(cameraId: string, nextCamera: WorldCamera, rend
 }
 
 async function persistWorldCamera(camera: WorldCamera) {
+  dirtyWorldCameraIds.add(camera.id);
+  updateUnsavedChangesNotice();
   const response = await fetch(apiUrl(`/api/v1/world/cameras/${encodeURIComponent(camera.id)}`), {
     method: "PATCH",
     credentials: "include",
@@ -2554,12 +2596,17 @@ async function persistWorldCamera(camera: WorldCamera) {
     })
   });
   if (!response.ok) {
+    dirtyWorldCameraIds.delete(camera.id);
     setWorldNotice("Camera update failed");
     await loadWorldState();
+    return;
   }
+  dirtyWorldCameraIds.delete(camera.id);
 }
 
 function scheduleWorldCameraPersist(camera: WorldCamera, delayMs = TRANSFORM_PERSIST_IDLE_MS) {
+  dirtyWorldCameraIds.add(camera.id);
+  updateUnsavedChangesNotice();
   const existing = worldCameraPersistTimers.get(camera.id);
   if (existing !== undefined) window.clearTimeout(existing);
   const timeoutId = window.setTimeout(() => {
@@ -3725,16 +3772,19 @@ function syncTimelineInteractionMode() {
 function revealTimelineSelection(track: { kind: "model" | "camera"; objectId: string; key: string }) {
   selectedTimelineTrackKey = track.key;
   timelineJsonScope = "track";
-  setActiveMainTab?.("objects");
-  setActivePartySubtab?.("objects");
+  transformToolbarCollapsed = false;
+  createToolbarCollapsed = true;
+  placeToolbarCollapsed = true;
   if (track.kind === "model") {
     setSelectedWorldPlacement(track.objectId);
-    if (worldPlacementEditor && !dockPanel?.classList.contains("minimized")) {
+    syncTransformToolbar();
+    if (worldPlacementEditor) {
       worldPlacementEditor.scrollIntoView({ block: "nearest" });
     }
   } else {
     setSelectedWorldCamera(track.objectId, "position");
-    if (worldCameraEditor && !dockPanel?.classList.contains("minimized")) {
+    syncTransformToolbar();
+    if (worldCameraEditor) {
       worldCameraEditor.scrollIntoView({ block: "nearest" });
     }
   }
@@ -3907,6 +3957,8 @@ function setTimelineStatus(text: string) {
 }
 
 async function persistTimelineFrames(successMessage = "Timeline saved") {
+  pendingTimelineSaveCount += 1;
+  updateUnsavedChangesNotice();
   const response = await fetch(apiUrl("/api/v1/world/timeline"), {
     method: "PATCH",
     credentials: "include",
@@ -3916,9 +3968,11 @@ async function persistTimelineFrames(successMessage = "Timeline saved") {
     body: JSON.stringify({ frames: compactTimelineFrames(timelineFrames) })
   });
   if (!response.ok) {
+    pendingTimelineSaveCount = Math.max(0, pendingTimelineSaveCount - 1);
     setTimelineStatus("Timeline save failed");
     return false;
   }
+  pendingTimelineSaveCount = Math.max(0, pendingTimelineSaveCount - 1);
   setTimelineStatus(successMessage);
   await loadWorldState();
   return true;
@@ -4856,6 +4910,10 @@ function renderTimelineEditor() {
 }
 
 async function loadWorldState() {
+  dirtyPlacementIds.clear();
+  dirtyPhotoWallIds.clear();
+  dirtyWorldCameraIds.clear();
+  pendingTimelineSaveCount = 0;
   if (!worldViewActive) {
     stopWorldGenerationPolling();
     stopTimelinePlayback();
