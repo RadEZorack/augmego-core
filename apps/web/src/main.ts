@@ -471,6 +471,11 @@ function setupTimelineControls() {
     if (selectedTimelineFrameIndex < 0) {
       selectedTimelineFrameIndex = Math.max(0, timelineFrames.length - 1);
     }
+    if (selectedWorldPlacementId) {
+      selectedTimelineTrackKey = getTimelineTrackKey("model", selectedWorldPlacementId);
+    } else if (selectedWorldCameraId) {
+      selectedTimelineTrackKey = getTimelineTrackKey("camera", selectedWorldCameraId);
+    }
     setTimelineStatus(`Added frame at ${formatTimelineTime(frame.time)}`);
     renderTimelineEditor();
     syncTimelinePreviewWindow();
@@ -501,6 +506,7 @@ function setupTimelineControls() {
     if (timelineFrames.length === 0) {
       stopTimelinePlayback();
       timelineScrubSeconds = 0;
+      selectedTimelineTrackKey = null;
     }
     selectedTimelineFrameIndex = Math.min(selectedTimelineFrameIndex, timelineFrames.length - 1);
     setTimelineStatus("Deleted frame");
@@ -1023,6 +1029,7 @@ let playerAvatarSelection: PlayerAvatarSelection = {
 };
 let timelineFrames: TimelineFrame[] = [];
 let selectedTimelineFrameIndex = -1;
+let selectedTimelineTrackKey: string | null = null;
 let timelineScrubSeconds = 0;
 let timelinePreviewActive = false;
 let timelinePlaying = false;
@@ -1182,6 +1189,7 @@ const timelineDeleteFrameButton = document.getElementById(
 const timelineSaveButton = document.getElementById("timeline-save") as HTMLButtonElement | null;
 const timelineStatus = document.getElementById("timeline-status") as HTMLDivElement | null;
 const timelineRuler = document.getElementById("timeline-ruler") as HTMLDivElement | null;
+const timelineTracks = document.getElementById("timeline-tracks") as HTMLDivElement | null;
 const timelineScrubInput = document.getElementById("timeline-scrub") as HTMLInputElement | null;
 const timelineTimeInput = document.getElementById("timeline-time-input") as HTMLInputElement | null;
 const timelineFrameJsonInput = document.getElementById(
@@ -3574,6 +3582,14 @@ type TimelineCameraState = {
   active: boolean;
 };
 
+type TimelineTrack = {
+  key: string;
+  objectId: string;
+  kind: "model" | "camera";
+  label: string;
+  frameIndexes: number[];
+};
+
 function formatTimelineTime(seconds: number) {
   if (!Number.isFinite(seconds)) return "0.0s";
   return `${seconds.toFixed(1)}s`;
@@ -3592,6 +3608,85 @@ function vec3Equal(
     nearlyEqual(left.y, right.y) &&
     nearlyEqual(left.z, right.z)
   );
+}
+
+function getTimelineTrackKey(kind: TimelineTrack["kind"], objectId: string) {
+  return `${kind}:${objectId}`;
+}
+
+function getTimelinePlacementLabel(placementId: string) {
+  const placement = worldState?.placements.find((item) => item.id === placementId) ?? null;
+  return placement?.assetName?.trim() || `Model ${placementId.slice(0, 8)}`;
+}
+
+function getTimelineCameraLabel(cameraId: string) {
+  const camera = worldState?.cameras.find((item) => item.id === cameraId) ?? null;
+  return camera?.name?.trim() || `Camera ${cameraId.slice(0, 8)}`;
+}
+
+function getTimelineTrackDiffSummary(track: TimelineTrack, frame: TimelineFrame) {
+  if (track.kind === "model") {
+    const diff = frame.models?.[track.objectId];
+    if (!diff) return "";
+    const parts: string[] = [];
+    if (typeof diff.visible === "boolean") parts.push(diff.visible ? "show" : "hide");
+    if (diff.position) parts.push("position");
+    if (diff.rotation) parts.push("rotation");
+    if (diff.scale) parts.push("scale");
+    return parts.join(" • ");
+  }
+
+  const diff = frame.cameras?.[track.objectId];
+  if (!diff) return "";
+  const parts: string[] = [];
+  if (typeof diff.active === "boolean") parts.push(diff.active ? "active" : "inactive");
+  if (diff.position) parts.push("position");
+  if (diff.lookAt) parts.push("look at");
+  return parts.join(" • ");
+}
+
+function getTimelineTracks() {
+  const tracks = new Map<string, TimelineTrack>();
+  const upsertTrack = (kind: TimelineTrack["kind"], objectId: string, frameIndex: number | null) => {
+    const key = getTimelineTrackKey(kind, objectId);
+    const existing = tracks.get(key);
+    if (existing) {
+      if (frameIndex !== null) existing.frameIndexes.push(frameIndex);
+      return;
+    }
+    tracks.set(key, {
+      key,
+      objectId,
+      kind,
+      label: kind === "model" ? getTimelinePlacementLabel(objectId) : getTimelineCameraLabel(objectId),
+      frameIndexes: frameIndex === null ? [] : [frameIndex]
+    });
+  };
+
+  for (const placement of worldState?.placements ?? []) {
+    upsertTrack("model", placement.id, null);
+  }
+  for (const worldCamera of worldState?.cameras ?? []) {
+    upsertTrack("camera", worldCamera.id, null);
+  }
+
+  timelineFrames.forEach((frame, frameIndex) => {
+    for (const placementId of Object.keys(frame.models ?? {})) {
+      upsertTrack("model", placementId, frameIndex);
+    }
+    for (const cameraId of Object.keys(frame.cameras ?? {})) {
+      upsertTrack("camera", cameraId, frameIndex);
+    }
+  });
+
+  return [...tracks.values()]
+    .filter((track) => track.frameIndexes.length > 0)
+    .sort((left, right) => {
+      if (left.kind !== right.kind) {
+        return left.kind === "model" ? -1 : 1;
+      }
+      return left.label.localeCompare(right.label) || left.objectId.localeCompare(right.objectId);
+    });
 }
 
 function normalizeTimelineFramesLocal(frames: unknown): TimelineFrame[] {
@@ -4241,10 +4336,40 @@ function syncTimelinePreviewWindow() {
   }
 }
 
+function syncSelectedTimelineFrameJson() {
+  if (!timelineFrameJsonInput) return;
+  if (selectedTimelineFrameIndex >= 0) {
+    const selectedFrame = timelineFrames[selectedTimelineFrameIndex];
+    timelineFrameJsonInput.disabled = false;
+    timelineFrameJsonInput.value = JSON.stringify({
+      models: selectedFrame?.models ?? {},
+      cameras: selectedFrame?.cameras ?? {}
+    });
+  } else {
+    timelineFrameJsonInput.disabled = true;
+    timelineFrameJsonInput.value = "";
+  }
+}
+
+function selectTimelineFrame(index: number, trackKey: string | null = null) {
+  const frame = timelineFrames[index];
+  if (!frame) return;
+  selectedTimelineFrameIndex = index;
+  if (trackKey) {
+    selectedTimelineTrackKey = trackKey;
+  }
+  timelineScrubSeconds = frame.time;
+  syncSelectedTimelineFrameJson();
+  applyTimelineAtTime(timelineScrubSeconds);
+  renderTimelineEditor();
+  syncTimelinePreviewWindow();
+}
+
 function renderTimelineEditor() {
-  if (!timelineRuler) return;
+  if (!timelineRuler || !timelineTracks) return;
   const canEdit = worldState?.canManage === true;
   const canPlay = Boolean(worldState) && timelineFrames.length > 0;
+  const timelineTrackList = getTimelineTracks();
   if (timelinePlayToggleButton) {
     timelinePlayToggleButton.disabled = !canPlay;
     timelinePlayToggleButton.textContent = timelinePlaying ? "Pause" : "Play";
@@ -4256,6 +4381,7 @@ function renderTimelineEditor() {
   if (timelineScrubInput) timelineScrubInput.disabled = !canEdit;
   if (timelineTimeInput) timelineTimeInput.disabled = !canEdit;
   timelineRuler.innerHTML = "";
+  timelineTracks.innerHTML = "";
   const duration = Math.max(getTimelineDuration(), timelineScrubSeconds, 1);
   if (timelineScrubInput) timelineScrubInput.max = String(duration);
   if (timelineTimeInput) timelineTimeInput.max = String(duration);
@@ -4270,39 +4396,83 @@ function renderTimelineEditor() {
   timelineFrames.forEach((frame, index) => {
     const marker = document.createElement("button");
     marker.type = "button";
-    marker.className = "timeline-frame-marker";
+    marker.className = "timeline-frame-marker timeline-frame-marker-overview";
     if (index === selectedTimelineFrameIndex) marker.classList.add("active");
     marker.style.left = `${(frame.time / duration) * 100}%`;
-    marker.textContent = `Frame ${index + 1} • ${formatTimelineTime(frame.time)}`;
-    marker.addEventListener("click", () => {
-      selectedTimelineFrameIndex = index;
-      timelineScrubSeconds = frame.time;
-      if (timelineFrameJsonInput) {
-        timelineFrameJsonInput.value = JSON.stringify({
-          models: frame.models ?? {},
-          cameras: frame.cameras ?? {}
-        });
-      }
-      applyTimelineAtTime(timelineScrubSeconds);
-      renderTimelineEditor();
-      syncTimelinePreviewWindow();
-    });
+    marker.textContent = `F${index + 1}`;
+    marker.title = `Frame ${index + 1} • ${formatTimelineTime(frame.time)}`;
+    marker.addEventListener("click", () => selectTimelineFrame(index));
     timelineRuler.appendChild(marker);
   });
 
-  if (timelineFrameJsonInput) {
-    if (selectedTimelineFrameIndex >= 0) {
-      const selectedFrame = timelineFrames[selectedTimelineFrameIndex];
-      timelineFrameJsonInput.disabled = false;
-      timelineFrameJsonInput.value = JSON.stringify({
-        models: selectedFrame?.models ?? {},
-        cameras: selectedFrame?.cameras ?? {}
-      });
-    } else {
-      timelineFrameJsonInput.disabled = true;
-      timelineFrameJsonInput.value = "";
+  for (const track of timelineTrackList) {
+    const row = document.createElement("div");
+    row.className = "timeline-track-row";
+    const selectedByWorld =
+      (track.kind === "model" && selectedWorldPlacementId === track.objectId) ||
+      (track.kind === "camera" && selectedWorldCameraId === track.objectId);
+    const selectedByTimeline = selectedTimelineTrackKey === track.key;
+    if (selectedByWorld || selectedByTimeline) {
+      row.classList.add("active");
     }
+
+    const labelButton = document.createElement("button");
+    labelButton.type = "button";
+    labelButton.className = "timeline-track-label";
+    labelButton.title = track.label;
+    labelButton.addEventListener("click", () => {
+      selectedTimelineTrackKey = track.key;
+      renderTimelineEditor();
+    });
+
+    const kindBadge = document.createElement("span");
+    kindBadge.className = "timeline-track-kind";
+    kindBadge.textContent = track.kind === "model" ? "Model" : "Camera";
+    labelButton.appendChild(kindBadge);
+
+    const name = document.createElement("span");
+    name.className = "timeline-track-name";
+    name.textContent = track.label;
+    labelButton.appendChild(name);
+
+    const lane = document.createElement("div");
+    lane.className = "timeline-track-lane";
+
+    const laneScrubber = document.createElement("div");
+    laneScrubber.className = "timeline-frame-scrubber timeline-frame-scrubber-track";
+    laneScrubber.style.left = `${(timelineScrubSeconds / duration) * 100}%`;
+    lane.appendChild(laneScrubber);
+
+    for (const frameIndex of track.frameIndexes) {
+      const frame = timelineFrames[frameIndex];
+      if (!frame) continue;
+      const marker = document.createElement("button");
+      marker.type = "button";
+      marker.className = "timeline-frame-marker timeline-frame-marker-track";
+      if (frameIndex === selectedTimelineFrameIndex) marker.classList.add("active");
+      marker.style.left = `${(frame.time / duration) * 100}%`;
+      marker.textContent = formatTimelineTime(frame.time);
+      const diffSummary = getTimelineTrackDiffSummary(track, frame);
+      marker.title = `${track.label} • ${formatTimelineTime(frame.time)}${
+        diffSummary ? ` • ${diffSummary}` : ""
+      }`;
+      marker.addEventListener("click", () => selectTimelineFrame(frameIndex, track.key));
+      lane.appendChild(marker);
+    }
+
+    row.appendChild(labelButton);
+    row.appendChild(lane);
+    timelineTracks.appendChild(row);
   }
+
+  if (timelineTrackList.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "timeline-track-empty";
+    empty.textContent = timelineFrames.length === 0 ? "No object tracks yet" : "No object changes yet";
+    timelineTracks.appendChild(empty);
+  }
+
+  syncSelectedTimelineFrameJson();
 
   if (!worldState) {
     setTimelineStatus("Join a world to edit timeline");
@@ -4310,7 +4480,7 @@ function renderTimelineEditor() {
     setTimelineStatus("No frames yet");
   } else {
     setTimelineStatus(
-      `Frames: ${timelineFrames.length} • Scrub: ${formatTimelineTime(timelineScrubSeconds)}`
+      `Frames: ${timelineFrames.length} • Tracks: ${timelineTrackList.length} • Scrub: ${formatTimelineTime(timelineScrubSeconds)}`
     );
   }
 }
@@ -4323,6 +4493,7 @@ async function loadWorldState() {
     pendingSelectedWorldCameraId = null;
     timelineFrames = [];
     selectedTimelineFrameIndex = -1;
+    selectedTimelineTrackKey = null;
     timelineScrubSeconds = 0;
     timelineAppliedPlacementState = new Map();
     renderTimelineEditor();
@@ -4359,6 +4530,7 @@ async function loadWorldState() {
     pendingPhotoWallDraft = null;
     timelineFrames = [];
     selectedTimelineFrameIndex = -1;
+    selectedTimelineTrackKey = null;
     timelineScrubSeconds = 0;
     timelineAppliedPlacementState = new Map();
     stopWorldGenerationPolling();
@@ -4431,6 +4603,7 @@ async function loadWorldState() {
   if (timelineFrames.length === 0) {
     stopTimelinePlayback();
     selectedTimelineFrameIndex = -1;
+    selectedTimelineTrackKey = null;
     timelineScrubSeconds = 0;
   } else {
     if (selectedTimelineFrameIndex < 0 || selectedTimelineFrameIndex >= timelineFrames.length) {

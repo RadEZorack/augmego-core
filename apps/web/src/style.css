@@ -1500,7 +1500,7 @@ canvas {
 
 .timeline-ruler {
   position: relative;
-  height: 72px;
+  height: 64px;
   border-radius: 10px;
   border: 1px solid rgba(111, 186, 255, 0.24);
   background:
@@ -1521,24 +1521,125 @@ canvas {
   position: absolute;
   left: 0;
   right: 0;
-  top: 36px;
+  top: 32px;
   height: 2px;
   background: rgba(108, 175, 244, 0.55);
 }
 
+.timeline-tracks {
+  display: grid;
+  gap: 8px;
+  max-height: 280px;
+  margin-bottom: 10px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.timeline-track-row {
+  display: grid;
+  grid-template-columns: minmax(110px, 150px) minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+
+.timeline-track-row.active .timeline-track-label,
+.timeline-track-row.active .timeline-track-lane {
+  border-color: rgba(127, 231, 255, 0.48);
+  box-shadow: 0 0 0 1px rgba(127, 231, 255, 0.16);
+}
+
+.timeline-track-label {
+  appearance: none;
+  display: grid;
+  gap: 4px;
+  justify-items: start;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(111, 186, 255, 0.24);
+  background: rgba(7, 16, 28, 0.72);
+  color: #e6f1ff;
+  cursor: pointer;
+  font: inherit;
+  text-align: left;
+}
+
+.timeline-track-kind {
+  font-size: 0.64rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #8ec7ff;
+}
+
+.timeline-track-name {
+  width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.76rem;
+}
+
+.timeline-track-lane {
+  position: relative;
+  height: 44px;
+  border-radius: 10px;
+  border: 1px solid rgba(111, 186, 255, 0.2);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(158, 206, 255, 0.09) 0px,
+      rgba(158, 206, 255, 0.09) 1px,
+      transparent 1px,
+      transparent 16px
+    ),
+    rgba(7, 16, 28, 0.54);
+  overflow: hidden;
+}
+
+.timeline-track-lane::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 21px;
+  height: 2px;
+  background: rgba(108, 175, 244, 0.32);
+}
+
+.timeline-track-empty {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(111, 186, 255, 0.26);
+  color: #97bddf;
+  font-size: 0.78rem;
+  text-align: center;
+  background: rgba(7, 16, 28, 0.38);
+}
+
 .timeline-frame-marker {
   position: absolute;
-  top: 22px;
   transform: translateX(-50%);
-  min-width: 72px;
-  padding: 4px 8px;
   border-radius: 999px;
   border: 1px solid rgba(130, 195, 255, 0.45);
   background: rgba(9, 24, 41, 0.86);
   color: #e6f1ff;
-  font-size: 0.72rem;
   text-align: center;
   cursor: pointer;
+}
+
+.timeline-frame-marker-overview {
+  top: 18px;
+  min-width: 48px;
+  padding: 4px 8px;
+  font-size: 0.72rem;
+}
+
+.timeline-frame-marker-track {
+  top: 50%;
+  min-width: 0;
+  padding: 2px 8px;
+  font-size: 0.67rem;
+  transform: translate(-50%, -50%);
 }
 
 .timeline-frame-marker.active {
@@ -1553,6 +1654,11 @@ canvas {
   width: 2px;
   background: #f8f9ff;
   box-shadow: 0 0 8px rgba(255, 255, 255, 0.65);
+}
+
+.timeline-frame-scrubber-track {
+  top: 6px;
+  bottom: 6px;
 }
 
 .timeline-json-editor {
