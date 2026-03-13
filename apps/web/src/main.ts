@@ -3872,6 +3872,16 @@ function findTimelineFrameIndexByTime(time: number) {
   return timelineFrames.findIndex((frame) => nearlyEqual(frame.time, time));
 }
 
+function getTimelineFrameIndexesByTime(time: number) {
+  const indexes: number[] = [];
+  for (let i = 0; i < timelineFrames.length; i += 1) {
+    if (nearlyEqual(timelineFrames[i]?.time ?? Infinity, time)) {
+      indexes.push(i);
+    }
+  }
+  return indexes;
+}
+
 function hasPriorTrackFrame(
   track: { kind: "model" | "camera"; objectId: string },
   beforeIndex: number,
@@ -4150,7 +4160,11 @@ function upsertSelectedTrackKeyframe() {
     return false;
   }
   const frameTime = captured.time;
-  const existingIndex = findTimelineFrameIndexByTime(frameTime);
+  const matchingIndexes = getTimelineFrameIndexesByTime(frameTime);
+  const existingIndex =
+    matchingIndexes.find((index) =>
+      Boolean(getTrackDiffFromFrame(timelineFrames[index], track))
+    ) ?? matchingIndexes[0] ?? -1;
   if (existingIndex >= 0) {
     const next = { ...timelineFrames[existingIndex]! };
     if (track.kind === "model") {
@@ -4179,6 +4193,31 @@ function upsertSelectedTrackKeyframe() {
     timelineFrames.sort((a, b) => a.time - b.time);
     selectedTimelineFrameIndex = findTimelineFrameIndexByTime(frameTime);
   }
+
+  const duplicateIndexes = getTimelineFrameIndexesByTime(frameTime)
+    .filter((index) => index !== selectedTimelineFrameIndex)
+    .sort((left, right) => right - left);
+  for (const index of duplicateIndexes) {
+    const frame = { ...timelineFrames[index]! };
+    if (track.kind === "model") {
+      const models = { ...(frame.models ?? {}) };
+      delete models[track.objectId];
+      frame.models = Object.keys(models).length > 0 ? models : undefined;
+    } else {
+      const cameras = { ...(frame.cameras ?? {}) };
+      delete cameras[track.objectId];
+      frame.cameras = Object.keys(cameras).length > 0 ? cameras : undefined;
+    }
+    if (!frame.models && !frame.cameras) {
+      timelineFrames.splice(index, 1);
+      if (selectedTimelineFrameIndex > index) {
+        selectedTimelineFrameIndex -= 1;
+      }
+    } else {
+      timelineFrames[index] = frame;
+    }
+  }
+
   selectedTimelineTrackKey = track.key;
   timelineJsonScope = "track";
   timelineFrames = compactTimelineFrames(timelineFrames);
