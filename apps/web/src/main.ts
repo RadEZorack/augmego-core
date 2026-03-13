@@ -2120,6 +2120,7 @@ function setSelectedWorldPlacement(placementId: string | null) {
   }
   syncSceneTransformSelection();
   syncTimelineInteractionMode();
+  focusTimelineSelectionSnapshot();
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPhotoWallEditor();
@@ -2185,6 +2186,7 @@ function setSelectedWorldCamera(
   }
   syncSceneTransformSelection();
   syncTimelineInteractionMode();
+  focusTimelineSelectionSnapshot();
   renderWorldPlacements();
   renderWorldPhotoWalls();
   renderWorldPosts();
@@ -3773,10 +3775,26 @@ function scrubTimelineTo(seconds: number) {
   syncTimelinePreviewWindow();
 }
 
+function focusTimelineSelectionSnapshot() {
+  const timelineActive =
+    timelinePane?.classList.contains("active") === true && worldViewActive && Boolean(worldState);
+  if (!timelineActive) return;
+  const target = getSelectedSceneFocusTarget();
+  if (target) {
+    game.setEditorFocusTarget(target);
+  }
+}
+
 function getSelectedSceneFocusTarget() {
-  const placement = getPlacementById(selectedWorldPlacementId);
-  if (placement) {
-    return { position: { ...placement.position } };
+  if (selectedWorldPlacementId) {
+    const timelinePlacement = timelineAppliedPlacementState.get(selectedWorldPlacementId);
+    if (timelinePlacement) {
+      return { position: { ...timelinePlacement.position } };
+    }
+    const placement = getPlacementById(selectedWorldPlacementId);
+    if (placement) {
+      return { position: { ...placement.position } };
+    }
   }
   const camera = getWorldCameraById(selectedWorldCameraId);
   if (camera) {
@@ -3792,7 +3810,9 @@ function syncTimelineInteractionMode() {
   const timelineActive =
     timelinePane?.classList.contains("active") === true && worldViewActive && Boolean(worldState);
   game.setLocalPlayerMovementEnabled(!timelineActive);
-  game.setEditorFocusTarget(timelineActive ? getSelectedSceneFocusTarget() : null);
+  if (!timelineActive) {
+    game.setEditorFocusTarget(null);
+  }
 }
 
 function revealTimelineSelection(track: { kind: "model" | "camera"; objectId: string; key: string }) {
@@ -3804,12 +3824,14 @@ function revealTimelineSelection(track: { kind: "model" | "camera"; objectId: st
   if (track.kind === "model") {
     setSelectedWorldPlacement(track.objectId);
     syncTransformToolbar();
+    focusTimelineSelectionSnapshot();
     if (worldPlacementEditor) {
       worldPlacementEditor.scrollIntoView({ block: "nearest" });
     }
   } else {
     setSelectedWorldCamera(track.objectId, "position");
     syncTransformToolbar();
+    focusTimelineSelectionSnapshot();
     if (worldCameraEditor) {
       worldCameraEditor.scrollIntoView({ block: "nearest" });
     }
@@ -4809,6 +4831,7 @@ function selectTimelineFrame(index: number, trackKey: string | null = null) {
   timelineScrubSeconds = frame.time;
   syncSelectedTimelineFrameJson();
   applyTimelineAtTime(timelineScrubSeconds);
+  focusTimelineSelectionSnapshot();
   renderTimelineEditor();
   syncTimelinePreviewWindow();
 }

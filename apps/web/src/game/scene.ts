@@ -2207,6 +2207,15 @@ export function createGameScene(options: GameSceneOptions) {
     }
 
     if (!localPlayerMovementEnabled) {
+      if (editorFocusTarget) {
+        editorFocusTarget = {
+          position: {
+            x: hitPoint.x,
+            y: hitPoint.y,
+            z: hitPoint.z
+          }
+        };
+      }
       return;
     }
 
