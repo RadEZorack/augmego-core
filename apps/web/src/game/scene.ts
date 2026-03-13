@@ -98,6 +98,10 @@ type CameraPose = {
   lookAt: { x: number; y: number; z: number };
 };
 
+type EditorFocusTarget = {
+  position: { x: number; y: number; z: number };
+};
+
 type PlacementHighlightBinding = {
   source: any;
   overlay: any;
@@ -169,6 +173,7 @@ export function createGameScene(options: GameSceneOptions) {
     rotateY: 0,
     rotateZ: 0
   };
+  let editorFocusTarget: EditorFocusTarget | null = null;
   let timelineCameraOverride: CameraPose | null = null;
   let timelinePreviewElement: HTMLElement | null = null;
   let timelinePreviewWidth = 0;
@@ -2244,8 +2249,16 @@ export function createGameScene(options: GameSceneOptions) {
     cameraOffset.copy(cameraOffsetBase).multiplyScalar(cameraControls.zoom);
     cameraOffset.applyAxisAngle(yAxis, THREE.MathUtils.degToRad(cameraControls.rotateY));
     cameraOffset.applyAxisAngle(zAxis, THREE.MathUtils.degToRad(cameraControls.rotateZ));
-    camera.position.copy(localPlayer.position).add(cameraOffset);
-    cameraTarget.set(localPlayer.position.x, 0, localPlayer.position.z);
+    const focusSource =
+      !localPlayerMovementEnabled && editorFocusTarget
+        ? editorFocusTarget.position
+        : localPlayer.position;
+    camera.position.set(
+      focusSource.x + cameraOffset.x,
+      focusSource.y + cameraOffset.y,
+      focusSource.z + cameraOffset.z
+    );
+    cameraTarget.set(focusSource.x, focusSource.y, focusSource.z);
     camera.lookAt(cameraTarget);
 
     renderer.render(scene, camera);
@@ -2402,6 +2415,14 @@ export function createGameScene(options: GameSceneOptions) {
     localPlayerMovementEnabled = enabled;
   }
 
+  function setEditorFocusTarget(target: EditorFocusTarget | null) {
+    editorFocusTarget = target
+      ? {
+          position: { ...target.position }
+        }
+      : null;
+  }
+
   return {
     start,
     setSelfClientId,
@@ -2429,6 +2450,7 @@ export function createGameScene(options: GameSceneOptions) {
     setWorldPlacementTransformEnabled,
     setWorldPlacementTransformMode,
     setLocalPlayerMovementEnabled,
+    setEditorFocusTarget,
     setPendingWorldPostPlacement,
     applyRemoteSnapshot,
     applyRemoteUpdate: applyRemotePlayerState,

@@ -461,78 +461,20 @@ function setupTimelineControls() {
     renderTimelineEditor();
   });
 
-  timelineAddFrameButton?.addEventListener("click", () => {
+  timelineKeyframeButton?.addEventListener("click", () => {
     if (!worldState?.canManage) return;
-    const frame = captureTimelineFrameAtTime(timelineScrubSeconds);
-    timelineFrames.push(frame);
-    timelineFrames.sort((a, b) => a.time - b.time);
-    timelineFrames = compactTimelineFrames(timelineFrames);
-    selectedTimelineFrameIndex = timelineFrames.indexOf(frame);
-    if (selectedTimelineFrameIndex < 0) {
-      selectedTimelineFrameIndex = Math.max(0, timelineFrames.length - 1);
-    }
-    if (selectedWorldPlacementId) {
-      selectedTimelineTrackKey = getTimelineTrackKey("model", selectedWorldPlacementId);
-    } else if (selectedWorldCameraId) {
-      selectedTimelineTrackKey = getTimelineTrackKey("camera", selectedWorldCameraId);
-    }
-    setTimelineStatus(`Added frame at ${formatTimelineTime(frame.time)}`);
+    if (!upsertSelectedTrackKeyframe()) return;
     renderTimelineEditor();
     syncTimelinePreviewWindow();
-  });
-
-  timelineUpdateFrameButton?.addEventListener("click", () => {
-    if (!worldState?.canManage) return;
-    if (selectedTimelineFrameIndex < 0 || selectedTimelineFrameIndex >= timelineFrames.length) {
-      setTimelineStatus("Select a frame to update");
-      return;
-    }
-    parseSelectedFrameJson();
-    const current = timelineFrames[selectedTimelineFrameIndex]!;
-    const updated = captureTimelineFrameAtTime(current.time);
-    timelineFrames[selectedTimelineFrameIndex] = updated;
-    timelineFrames = compactTimelineFrames(timelineFrames);
-    setTimelineStatus(`Updated frame at ${formatTimelineTime(updated.time)}`);
-    renderTimelineEditor();
-    syncTimelinePreviewWindow();
+    void persistTimelineFrames(`Saved keyframe at ${formatTimelineTime(timelineScrubSeconds)}`);
   });
 
   timelineDeleteFrameButton?.addEventListener("click", () => {
     if (!worldState?.canManage) return;
-    if (selectedTimelineFrameIndex < 0 || selectedTimelineFrameIndex >= timelineFrames.length) {
-      return;
-    }
-    timelineFrames.splice(selectedTimelineFrameIndex, 1);
-    if (timelineFrames.length === 0) {
-      stopTimelinePlayback();
-      timelineScrubSeconds = 0;
-      selectedTimelineTrackKey = null;
-    }
-    selectedTimelineFrameIndex = Math.min(selectedTimelineFrameIndex, timelineFrames.length - 1);
-    setTimelineStatus("Deleted frame");
+    if (!deleteSelectedTrackKeyframe()) return;
     renderTimelineEditor();
     syncTimelinePreviewWindow();
-  });
-
-  timelineSaveButton?.addEventListener("click", () => {
-    if (!worldState?.canManage) return;
-    parseSelectedFrameJson();
-    void (async () => {
-      const response = await fetch(apiUrl("/api/v1/world/timeline"), {
-        method: "PATCH",
-        credentials: "include",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({ frames: compactTimelineFrames(timelineFrames) })
-      });
-      if (!response.ok) {
-        setTimelineStatus("Timeline save failed");
-        return;
-      }
-      setTimelineStatus("Timeline saved");
-      await loadWorldState();
-    })();
+    void persistTimelineFrames("Deleted keyframe");
   });
 
   timelineScrubInput?.addEventListener("input", () => {
@@ -575,6 +517,9 @@ function setupTimelineControls() {
     applyTimelineAtTime(timelineScrubSeconds);
     renderTimelineEditor();
     syncTimelinePreviewWindow();
+    void persistTimelineFrames(
+      getTimelineJsonScopeValue() === "track" ? "Saved track JSON" : "Saved frame JSON"
+    );
   });
 }
 
@@ -1180,19 +1125,15 @@ const worldDescriptionInput = document.getElementById(
 const worldSettingsSaveButton = document.getElementById(
   "world-settings-save"
 ) as HTMLButtonElement | null;
-const timelineAddFrameButton = document.getElementById(
-  "timeline-add-frame"
+const timelineKeyframeButton = document.getElementById(
+  "timeline-keyframe"
 ) as HTMLButtonElement | null;
 const timelinePlayToggleButton = document.getElementById(
   "timeline-play-toggle"
 ) as HTMLButtonElement | null;
-const timelineUpdateFrameButton = document.getElementById(
-  "timeline-update-frame"
-) as HTMLButtonElement | null;
 const timelineDeleteFrameButton = document.getElementById(
   "timeline-delete-frame"
 ) as HTMLButtonElement | null;
-const timelineSaveButton = document.getElementById("timeline-save") as HTMLButtonElement | null;
 const timelineStatus = document.getElementById("timeline-status") as HTMLDivElement | null;
 const timelineRuler = document.getElementById("timeline-ruler") as HTMLDivElement | null;
 const timelineTracks = document.getElementById("timeline-tracks") as HTMLDivElement | null;
@@ -2145,8 +2086,12 @@ function setSelectedWorldPlacement(placementId: string | null) {
     selectedWorldPostId = null;
     selectedWorldPhotoWallId = null;
     selectedWorldCameraId = null;
+    selectedTimelineTrackKey = getTimelineTrackKey("model", selectedWorldPlacementId);
+  } else if (!selectedWorldCameraId) {
+    selectedTimelineTrackKey = null;
   }
   syncSceneTransformSelection();
+  syncTimelineInteractionMode();
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPhotoWallEditor();
@@ -2173,7 +2118,9 @@ function setSelectedWorldPhotoWall(photoWallId: string | null) {
     selectedWorldPostId = null;
     selectedWorldCameraId = null;
   }
+  selectedTimelineTrackKey = null;
   syncSceneTransformSelection();
+  syncTimelineInteractionMode();
   renderWorldPlacements();
   renderWorldPlacementEditor();
   renderWorldPosts();
@@ -2204,8 +2151,12 @@ function setSelectedWorldCamera(
     selectedWorldPlacementId = null;
     selectedWorldPhotoWallId = null;
     selectedWorldPostId = null;
+    selectedTimelineTrackKey = getTimelineTrackKey("camera", selectedWorldCameraId);
+  } else if (!selectedWorldPlacementId) {
+    selectedTimelineTrackKey = null;
   }
   syncSceneTransformSelection();
+  syncTimelineInteractionMode();
   renderWorldPlacements();
   renderWorldPhotoWalls();
   renderWorldPosts();
@@ -3725,6 +3676,108 @@ function getTimelineJsonScopeValue() {
   return "frame";
 }
 
+function getTimelineScrubTimeFromClientX(element: HTMLElement, clientX: number) {
+  const rect = element.getBoundingClientRect();
+  if (rect.width <= 0) return timelineScrubSeconds;
+  const ratio = Math.min(1, Math.max(0, (clientX - rect.left) / rect.width));
+  const duration = Math.max(getTimelineDuration(), timelineScrubSeconds, 1);
+  return Number((duration * ratio).toFixed(3));
+}
+
+function scrubTimelineTo(seconds: number) {
+  if (timelinePlaying) {
+    stopTimelinePlayback();
+  }
+  timelineScrubSeconds = Math.max(0, seconds);
+  if (timelineScrubInput) {
+    timelineScrubInput.value = String(timelineScrubSeconds);
+  }
+  if (timelineTimeInput) {
+    timelineTimeInput.value = timelineScrubSeconds.toFixed(1);
+  }
+  applyTimelineAtTime(timelineScrubSeconds);
+  renderTimelineEditor();
+  syncTimelinePreviewWindow();
+}
+
+function getSelectedSceneFocusTarget() {
+  const placement = getPlacementById(selectedWorldPlacementId);
+  if (placement) {
+    return { position: { ...placement.position } };
+  }
+  const camera = getWorldCameraById(selectedWorldCameraId);
+  if (camera) {
+    return {
+      position:
+        selectedWorldCameraHandle === "lookAt" ? { ...camera.lookAt } : { ...camera.position }
+    };
+  }
+  return null;
+}
+
+function syncTimelineInteractionMode() {
+  const timelineActive =
+    timelinePane?.classList.contains("active") === true && worldViewActive && Boolean(worldState);
+  game.setLocalPlayerMovementEnabled(!timelineActive);
+  game.setEditorFocusTarget(timelineActive ? getSelectedSceneFocusTarget() : null);
+}
+
+function revealTimelineSelection(track: { kind: "model" | "camera"; objectId: string; key: string }) {
+  selectedTimelineTrackKey = track.key;
+  timelineJsonScope = "track";
+  setActiveMainTab?.("objects");
+  setActivePartySubtab?.("objects");
+  if (track.kind === "model") {
+    setSelectedWorldPlacement(track.objectId);
+    if (worldPlacementEditor && !dockPanel?.classList.contains("minimized")) {
+      worldPlacementEditor.scrollIntoView({ block: "nearest" });
+    }
+  } else {
+    setSelectedWorldCamera(track.objectId, "position");
+    if (worldCameraEditor && !dockPanel?.classList.contains("minimized")) {
+      worldCameraEditor.scrollIntoView({ block: "nearest" });
+    }
+  }
+}
+
+function getTrackDiffFromFrame(
+  frame: TimelineFrame | null | undefined,
+  track: { kind: "model" | "camera"; objectId: string } | null
+) {
+  if (!frame || !track) return null;
+  return track.kind === "model"
+    ? frame.models?.[track.objectId] ?? null
+    : frame.cameras?.[track.objectId] ?? null;
+}
+
+function findTimelineFrameIndexByTime(time: number) {
+  return timelineFrames.findIndex((frame) => nearlyEqual(frame.time, time));
+}
+
+function hasPriorTrackFrame(
+  track: { kind: "model" | "camera"; objectId: string },
+  beforeIndex: number,
+  frames = timelineFrames
+) {
+  for (let i = 0; i < beforeIndex; i += 1) {
+    const frame = frames[i];
+    if (!frame) continue;
+    if (track.kind === "model" && frame.models?.[track.objectId]) return true;
+    if (track.kind === "camera" && frame.cameras?.[track.objectId]) return true;
+  }
+  return false;
+}
+
+function findTrackKeyframeIndexAtTime(
+  track: { kind: "model" | "camera"; objectId: string } | null,
+  time: number
+) {
+  if (!track) return -1;
+  const frameIndex = findTimelineFrameIndexByTime(time);
+  if (frameIndex < 0) return -1;
+  return getTrackDiffFromFrame(timelineFrames[frameIndex], track) ? frameIndex : -1;
+}
+
 function normalizeTimelineFramesLocal(frames: unknown): TimelineFrame[] {
   if (!Array.isArray(frames)) return [];
   const normalized: TimelineFrame[] = [];
@@ -3851,6 +3904,194 @@ function getCameraStateFromWorld(cameraId: string): TimelineCameraState | null {
 
 function setTimelineStatus(text: string) {
   if (timelineStatus) timelineStatus.textContent = text;
+}
+
+async function persistTimelineFrames(successMessage = "Timeline saved") {
+  const response = await fetch(apiUrl("/api/v1/world/timeline"), {
+    method: "PATCH",
+    credentials: "include",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify({ frames: compactTimelineFrames(timelineFrames) })
+  });
+  if (!response.ok) {
+    setTimelineStatus("Timeline save failed");
+    return false;
+  }
+  setTimelineStatus(successMessage);
+  await loadWorldState();
+  return true;
+}
+
+function buildSelectedTrackFrameDiff(
+  time: number,
+  track: { kind: "model" | "camera"; objectId: string }
+): TimelineFrame | null {
+  const frameIndexAtTime = findTimelineFrameIndexByTime(time);
+  const prevIndex = getLastFrameIndexBefore(time);
+  const baseline = buildFrameState(prevIndex);
+  const isFirstTrackFrame =
+    frameIndexAtTime >= 0
+      ? !hasPriorTrackFrame(track, frameIndexAtTime)
+      : !timelineFrames.some(
+          (frame) =>
+            frame.time < time &&
+            ((track.kind === "model" && Boolean(frame.models?.[track.objectId])) ||
+              (track.kind === "camera" && Boolean(frame.cameras?.[track.objectId])))
+        );
+
+  if (track.kind === "model") {
+    const placement = worldState?.placements.find((item) => item.id === track.objectId);
+    if (!placement) return null;
+    const applied = timelineAppliedPlacementState.get(placement.id);
+    const prior = baseline.models.get(placement.id) ?? {
+      visible: true,
+      position: placement.position,
+      rotation: placement.rotation,
+      scale: placement.scale
+    };
+    const diff: NonNullable<TimelineFrame["models"]>[string] = {};
+    const visible = applied?.visible ?? true;
+    if (isFirstTrackFrame || visible !== prior.visible) {
+      diff.visible = visible;
+    }
+    if (isFirstTrackFrame || !vec3Equal(placement.position, prior.position)) {
+      diff.position = [placement.position.x, placement.position.y, placement.position.z];
+    }
+    if (isFirstTrackFrame || !vec3Equal(placement.rotation, prior.rotation)) {
+      diff.rotation = [placement.rotation.x, placement.rotation.y, placement.rotation.z];
+    }
+    if (isFirstTrackFrame || !vec3Equal(placement.scale, prior.scale)) {
+      diff.scale = [placement.scale.x, placement.scale.y, placement.scale.z];
+    }
+    return Object.keys(diff).length > 0
+      ? {
+          time: Math.max(0, Number(time.toFixed(3))),
+          models: { [placement.id]: diff }
+        }
+      : {
+          time: Math.max(0, Number(time.toFixed(3))),
+          models: {}
+        };
+  }
+
+  const sourceCamera = getWorldCameraById(track.objectId);
+  if (!sourceCamera) return null;
+  const priorCamera =
+    baseline.cameras.get(track.objectId) ?? {
+      position: sourceCamera.position,
+      lookAt: sourceCamera.lookAt,
+      active: false
+    };
+  const activeCameraId =
+    selectedWorldCameraId ??
+    baseline.activeCameraId ??
+    worldState?.cameras[0]?.id ??
+    null;
+  const cameraDiff: NonNullable<TimelineFrame["cameras"]>[string] = {};
+  if (isFirstTrackFrame || !vec3Equal(sourceCamera.position, priorCamera.position)) {
+    cameraDiff.position = [
+      sourceCamera.position.x,
+      sourceCamera.position.y,
+      sourceCamera.position.z
+    ];
+  }
+  if (isFirstTrackFrame || !vec3Equal(sourceCamera.lookAt, priorCamera.lookAt)) {
+    cameraDiff.lookAt = [sourceCamera.lookAt.x, sourceCamera.lookAt.y, sourceCamera.lookAt.z];
+  }
+  const priorIsActive = baseline.activeCameraId === track.objectId;
+  const nextIsActive = activeCameraId === track.objectId;
+  if (isFirstTrackFrame || priorIsActive !== nextIsActive) {
+    cameraDiff.active = nextIsActive;
+  }
+  return Object.keys(cameraDiff).length > 0
+    ? {
+        time: Math.max(0, Number(time.toFixed(3))),
+        cameras: { [track.objectId]: cameraDiff }
+      }
+    : {
+        time: Math.max(0, Number(time.toFixed(3))),
+        cameras: {}
+      };
+}
+
+function upsertSelectedTrackKeyframe() {
+  const track = getSelectedTimelineTrack();
+  if (!track) {
+    setTimelineStatus("Select a model or camera track first");
+    return false;
+  }
+  const captured = buildSelectedTrackFrameDiff(timelineScrubSeconds, track);
+  if (!captured) {
+    setTimelineStatus("Unable to capture selected track");
+    return false;
+  }
+  const frameTime = captured.time;
+  const existingIndex = findTimelineFrameIndexByTime(frameTime);
+  if (existingIndex >= 0) {
+    const next = { ...timelineFrames[existingIndex]! };
+    if (track.kind === "model") {
+      const models = { ...(next.models ?? {}) };
+      const capturedDiff = captured.models?.[track.objectId];
+      if (capturedDiff && Object.keys(capturedDiff).length > 0) {
+        models[track.objectId] = capturedDiff;
+      } else {
+        delete models[track.objectId];
+      }
+      next.models = Object.keys(models).length > 0 ? models : undefined;
+    } else {
+      const cameras = { ...(next.cameras ?? {}) };
+      const capturedDiff = captured.cameras?.[track.objectId];
+      if (capturedDiff && Object.keys(capturedDiff).length > 0) {
+        cameras[track.objectId] = capturedDiff;
+      } else {
+        delete cameras[track.objectId];
+      }
+      next.cameras = Object.keys(cameras).length > 0 ? cameras : undefined;
+    }
+    timelineFrames[existingIndex] = next;
+    selectedTimelineFrameIndex = existingIndex;
+  } else {
+    timelineFrames.push(captured);
+    timelineFrames.sort((a, b) => a.time - b.time);
+    selectedTimelineFrameIndex = findTimelineFrameIndexByTime(frameTime);
+  }
+  selectedTimelineTrackKey = track.key;
+  timelineJsonScope = "track";
+  timelineFrames = compactTimelineFrames(timelineFrames);
+  selectedTimelineFrameIndex = findTimelineFrameIndexByTime(frameTime);
+  return true;
+}
+
+function deleteSelectedTrackKeyframe() {
+  const track = getSelectedTimelineTrack();
+  const frameIndex = findTrackKeyframeIndexAtTime(track, timelineScrubSeconds);
+  if (!track || frameIndex < 0 || frameIndex >= timelineFrames.length) {
+    return false;
+  }
+  const frame = { ...timelineFrames[frameIndex]! };
+  if (track.kind === "model") {
+    const models = { ...(frame.models ?? {}) };
+    delete models[track.objectId];
+    frame.models = Object.keys(models).length > 0 ? models : undefined;
+  } else {
+    const cameras = { ...(frame.cameras ?? {}) };
+    delete cameras[track.objectId];
+    frame.cameras = Object.keys(cameras).length > 0 ? cameras : undefined;
+  }
+  if (!frame.models && !frame.cameras) {
+    timelineFrames.splice(frameIndex, 1);
+    selectedTimelineFrameIndex = Math.min(frameIndex, timelineFrames.length - 1);
+  } else {
+    timelineFrames[frameIndex] = frame;
+    selectedTimelineFrameIndex = frameIndex;
+  }
+  if (timelineFrames.length === 0) {
+    stopTimelinePlayback();
+    timelineScrubSeconds = 0;
+  }
+  return true;
 }
 
 function captureTimelineFrameAtTime(time: number): TimelineFrame {
@@ -4034,6 +4275,11 @@ function compactTimelineFrames(frames: TimelineFrame[]) {
     if (frame.models) {
       const models: NonNullable<TimelineFrame["models"]> = {};
       for (const [placementId, diff] of Object.entries(frame.models)) {
+        const isFirstTrackFrame = !hasPriorTrackFrame(
+          { kind: "model", objectId: placementId },
+          compacted.length,
+          compacted
+        );
         const placement = worldState.placements.find((item) => item.id === placementId);
         const prior = baseline.models.get(placementId) ?? {
           visible: true,
@@ -4054,14 +4300,16 @@ function compactTimelineFrames(frames: TimelineFrame[]) {
             : prior.scale
         };
         const entry: NonNullable<TimelineFrame["models"]>[string] = {};
-        if (isFirstFrame || current.visible !== prior.visible) entry.visible = current.visible;
-        if (isFirstFrame || !vec3Equal(current.position, prior.position)) {
+        if (isFirstFrame || isFirstTrackFrame || current.visible !== prior.visible) {
+          entry.visible = current.visible;
+        }
+        if (isFirstFrame || isFirstTrackFrame || !vec3Equal(current.position, prior.position)) {
           entry.position = [current.position.x, current.position.y, current.position.z];
         }
-        if (isFirstFrame || !vec3Equal(current.rotation, prior.rotation)) {
+        if (isFirstFrame || isFirstTrackFrame || !vec3Equal(current.rotation, prior.rotation)) {
           entry.rotation = [current.rotation.x, current.rotation.y, current.rotation.z];
         }
-        if (isFirstFrame || !vec3Equal(current.scale, prior.scale)) {
+        if (isFirstFrame || isFirstTrackFrame || !vec3Equal(current.scale, prior.scale)) {
           entry.scale = [current.scale.x, current.scale.y, current.scale.z];
         }
         if (Object.keys(entry).length > 0) {
@@ -4122,18 +4370,23 @@ function compactTimelineFrames(frames: TimelineFrame[]) {
 
     const cameraDiffs: NonNullable<TimelineFrame["cameras"]> = {};
     for (const [cameraId, nextCamera] of nextCameraStates.entries()) {
+      const isFirstTrackFrame = !hasPriorTrackFrame(
+        { kind: "camera", objectId: cameraId },
+        compacted.length,
+        compacted
+      );
       const priorCamera =
         baseline.cameras.get(cameraId) ?? nextCamera;
       const cameraDiff: NonNullable<TimelineFrame["cameras"]>[string] = {};
-      if (isFirstFrame || !vec3Equal(nextCamera.position, priorCamera.position)) {
+      if (isFirstFrame || isFirstTrackFrame || !vec3Equal(nextCamera.position, priorCamera.position)) {
         cameraDiff.position = [nextCamera.position.x, nextCamera.position.y, nextCamera.position.z];
       }
-      if (isFirstFrame || !vec3Equal(nextCamera.lookAt, priorCamera.lookAt)) {
+      if (isFirstFrame || isFirstTrackFrame || !vec3Equal(nextCamera.lookAt, priorCamera.lookAt)) {
         cameraDiff.lookAt = [nextCamera.lookAt.x, nextCamera.lookAt.y, nextCamera.lookAt.z];
       }
       const priorActive = baseline.activeCameraId === cameraId;
       const nextActive = nextActiveCameraId === cameraId;
-      if (isFirstFrame || priorActive !== nextActive) {
+      if (isFirstFrame || isFirstTrackFrame || priorActive !== nextActive) {
         cameraDiff.active = nextActive;
       }
       if (Object.keys(cameraDiff).length > 0) {
@@ -4387,7 +4640,7 @@ function syncTimelinePreviewWindow() {
   }
   game.setTimelinePreviewElement(shouldShow ? timelineCameraPreviewViewport : null);
   timelinePreviewActive = shouldShow;
-  game.setLocalPlayerMovementEnabled(true);
+  syncTimelineInteractionMode();
   if (shouldShow) {
     applyTimelineAtTime(timelineScrubSeconds);
   } else {
@@ -4465,14 +4718,24 @@ function renderTimelineEditor() {
   const canEdit = worldState?.canManage === true;
   const canPlay = Boolean(worldState) && timelineFrames.length > 0;
   const timelineTrackList = getTimelineTracks();
+  const selectedTrack = getSelectedTimelineTrack();
+  const selectedTrackFrameIndex = findTrackKeyframeIndexAtTime(selectedTrack, timelineScrubSeconds);
+  const selectedTrackDiff =
+    selectedTrackFrameIndex >= 0 && selectedTrack
+      ? getTrackDiffFromFrame(timelineFrames[selectedTrackFrameIndex], selectedTrack)
+      : null;
   if (timelinePlayToggleButton) {
     timelinePlayToggleButton.disabled = !canPlay;
     timelinePlayToggleButton.textContent = timelinePlaying ? "Pause" : "Play";
   }
-  if (timelineAddFrameButton) timelineAddFrameButton.disabled = !canEdit;
-  if (timelineUpdateFrameButton) timelineUpdateFrameButton.disabled = !canEdit;
-  if (timelineDeleteFrameButton) timelineDeleteFrameButton.disabled = !canEdit;
-  if (timelineSaveButton) timelineSaveButton.disabled = !canEdit;
+  if (timelineKeyframeButton) {
+    timelineKeyframeButton.disabled = !canEdit || !selectedTrack;
+    timelineKeyframeButton.textContent = selectedTrackDiff ? "Update Selected Keyframe" : "Keyframe Selected";
+  }
+  if (timelineDeleteFrameButton) {
+    timelineDeleteFrameButton.disabled = !canEdit || !selectedTrackDiff;
+    timelineDeleteFrameButton.hidden = !selectedTrackDiff;
+  }
   if (timelineScrubInput) timelineScrubInput.disabled = !canEdit;
   if (timelineTimeInput) timelineTimeInput.disabled = !canEdit;
   timelineRuler.innerHTML = "";
@@ -4487,6 +4750,11 @@ function renderTimelineEditor() {
   scrubber.className = "timeline-frame-scrubber";
   scrubber.style.left = `${(timelineScrubSeconds / duration) * 100}%`;
   timelineRuler.appendChild(scrubber);
+  timelineRuler.addEventListener("click", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && target.closest(".timeline-frame-marker")) return;
+    scrubTimelineTo(getTimelineScrubTimeFromClientX(timelineRuler, event.clientX));
+  });
 
   timelineFrames.forEach((frame, index) => {
     const marker = document.createElement("button");
@@ -4516,9 +4784,7 @@ function renderTimelineEditor() {
     labelButton.className = "timeline-track-label";
     labelButton.title = track.label;
     labelButton.addEventListener("click", () => {
-      selectedTimelineTrackKey = track.key;
-      timelineJsonScope = "track";
-      syncSelectedTimelineFrameJson();
+      revealTimelineSelection(track);
       renderTimelineEditor();
     });
 
@@ -4534,6 +4800,13 @@ function renderTimelineEditor() {
 
     const lane = document.createElement("div");
     lane.className = "timeline-track-lane";
+    lane.addEventListener("click", (event) => {
+      const target = event.target;
+      if (target instanceof HTMLElement && target.closest(".timeline-frame-marker")) return;
+      selectedTimelineTrackKey = track.key;
+      timelineJsonScope = "track";
+      scrubTimelineTo(getTimelineScrubTimeFromClientX(lane, event.clientX));
+    });
 
     const laneScrubber = document.createElement("div");
     laneScrubber.className = "timeline-frame-scrubber timeline-frame-scrubber-track";

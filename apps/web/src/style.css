@@ -1701,14 +1701,28 @@ canvas {
   pointer-events: none;
 }
 
-.timeline-camera-preview-title {
+.timeline-camera-preview-titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 7px 10px;
+  border-bottom: 1px solid rgba(111, 186, 255, 0.2);
+  pointer-events: auto;
+}
+
+.timeline-camera-preview-title {
+  padding: 0;
   font-size: 0.72rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #cbe2ff;
-  border-bottom: 1px solid rgba(111, 186, 255, 0.2);
+}
+
+.timeline-preview-play-button {
+  padding: 4px 10px;
+  font-size: 0.72rem;
 }
 
 .timeline-camera-preview-viewport {

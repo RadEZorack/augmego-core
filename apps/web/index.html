@@ -580,20 +580,11 @@
       <div id="pane-timeline" class="dock-pane" role="tabpanel" aria-labelledby="tab-timeline">
         <div class="media-header">Timeline</div>
         <div class="timeline-toolbar">
-          <button id="timeline-play-toggle" class="party-secondary-button" type="button">
-            Play
-          </button>
-          <button id="timeline-add-frame" class="party-secondary-button" type="button">
-            Add Frame
-          </button>
-          <button id="timeline-update-frame" class="party-secondary-button" type="button">
-            Capture to Frame
+          <button id="timeline-keyframe" class="party-search-button" type="button">
+            Keyframe Selected
           </button>
           <button id="timeline-delete-frame" class="party-secondary-button" type="button">
             Delete Frame
-          </button>
-          <button id="timeline-save" class="party-search-button" type="button">
-            Save Timeline
           </button>
         </div>
         <div id="timeline-status" class="party-status">No frames yet</div>
@@ -855,7 +846,12 @@
     </aside>
 
     <div id="timeline-camera-preview-window" class="timeline-camera-preview-window" hidden>
-      <div id="timeline-camera-preview-title" class="timeline-camera-preview-title">Active Camera</div>
+      <div class="timeline-camera-preview-titlebar">
+        <div id="timeline-camera-preview-title" class="timeline-camera-preview-title">Active Camera</div>
+        <button id="timeline-play-toggle" class="party-secondary-button timeline-preview-play-button" type="button">
+          Play
+        </button>
+      </div>
       <div id="timeline-camera-preview-viewport" class="timeline-camera-preview-viewport"></div>
     </div>
 
