@@ -962,6 +962,7 @@ const dirtyPlacementIds = new Set<string>();
 const dirtyPhotoWallIds = new Set<string>();
 const dirtyWorldCameraIds = new Set<string>();
 let pendingTimelineSaveCount = 0;
+let timelineAutoSaveTimerId: number | null = null;
 let currentRouteMode = getRouteMode(new URL(window.location.href));
 let pendingAutoJoinWorldId = readInitialLinkedWorldId();
 let autoJoinWorldIdSent: string | null = null;
@@ -1237,7 +1238,8 @@ function hasUnsavedChanges() {
     dirtyPlacementIds.size > 0 ||
     dirtyPhotoWallIds.size > 0 ||
     dirtyWorldCameraIds.size > 0 ||
-    pendingTimelineSaveCount > 0
+    pendingTimelineSaveCount > 0 ||
+    timelineAutoSaveTimerId !== null
   );
 }
 
@@ -2377,7 +2379,7 @@ function commitPlacementTransform(
     scale: { x: number; y: number; z: number };
   },
   options: {
-    persistMode?: "immediate" | "debounced";
+    persistMode?: "immediate" | "debounced" | "none";
     renderUi?: boolean;
   } = {}
 ) {
@@ -2391,6 +2393,18 @@ function commitPlacementTransform(
     scale: transform.scale
   };
   applyPlacementLocally(placementId, nextPlacement, options.renderUi ?? true);
+  if (isTimelineAutoKeyTarget("model", placementId)) {
+    const didUpdateTimeline = upsertSelectedTrackKeyframe();
+    if (didUpdateTimeline) {
+      renderTimelineEditor();
+      syncTimelinePreviewWindow();
+      scheduleTimelineAutoSave(`Auto-saved keyframe at ${formatTimelineTime(timelineScrubSeconds)}`);
+    }
+    return nextPlacement;
+  }
+  if (options.persistMode === "none") {
+    return nextPlacement;
+  }
   if (options.persistMode === "debounced") {
     schedulePlacementTransformPersist(nextPlacement);
   } else {
@@ -2622,7 +2636,7 @@ function commitWorldCameraTransform(
     position: { x: number; y: number; z: number };
     lookAt: { x: number; y: number; z: number };
   },
-  options: { persistMode?: "immediate" | "debounced"; renderUi?: boolean } = {}
+  options: { persistMode?: "immediate" | "debounced" | "none"; renderUi?: boolean } = {}
 ) {
   const current = getWorldCameraById(cameraId);
   if (!current) return null;
@@ -2632,6 +2646,18 @@ function commitWorldCameraTransform(
     lookAt: transform.lookAt
   };
   applyWorldCameraLocally(cameraId, nextCamera, options.renderUi ?? true);
+  if (isTimelineAutoKeyTarget("camera", cameraId)) {
+    const didUpdateTimeline = upsertSelectedTrackKeyframe();
+    if (didUpdateTimeline) {
+      renderTimelineEditor();
+      syncTimelinePreviewWindow();
+      scheduleTimelineAutoSave(`Auto-saved keyframe at ${formatTimelineTime(timelineScrubSeconds)}`);
+    }
+    return nextCamera;
+  }
+  if (options.persistMode === "none") {
+    return nextCamera;
+  }
   if (options.persistMode === "debounced") {
     scheduleWorldCameraPersist(nextCamera);
   } else {
@@ -3790,6 +3816,26 @@ function revealTimelineSelection(track: { kind: "model" | "camera"; objectId: st
   }
 }
 
+function isTimelineAutoKeyTarget(kind: "model" | "camera", objectId: string) {
+  return (
+    timelinePane?.classList.contains("active") === true &&
+    worldViewActive &&
+    Boolean(worldState) &&
+    selectedTimelineTrackKey === getTimelineTrackKey(kind, objectId)
+  );
+}
+
+function scheduleTimelineAutoSave(successMessage = "Keyframe saved") {
+  if (timelineAutoSaveTimerId !== null) {
+    window.clearTimeout(timelineAutoSaveTimerId);
+  }
+  updateUnsavedChangesNotice();
+  timelineAutoSaveTimerId = window.setTimeout(() => {
+    timelineAutoSaveTimerId = null;
+    void persistTimelineFrames(successMessage);
+  }, 400);
+}
+
 function getTrackDiffFromFrame(
   frame: TimelineFrame | null | undefined,
   track: { kind: "model" | "camera"; objectId: string } | null
@@ -4914,6 +4960,10 @@ async function loadWorldState() {
   dirtyPhotoWallIds.clear();
   dirtyWorldCameraIds.clear();
   pendingTimelineSaveCount = 0;
+  if (timelineAutoSaveTimerId !== null) {
+    window.clearTimeout(timelineAutoSaveTimerId);
+    timelineAutoSaveTimerId = null;
+  }
   if (!worldViewActive) {
     stopWorldGenerationPolling();
     stopTimelinePlayback();
