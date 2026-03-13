@@ -578,22 +578,15 @@
       </div>
 
       <div id="pane-timeline" class="dock-pane" role="tabpanel" aria-labelledby="tab-timeline">
-        <div class="media-header">Timeline</div>
-        <div class="timeline-toolbar">
-          <button id="timeline-keyframe" class="party-search-button" type="button">
-            Keyframe Selected
-          </button>
-          <button id="timeline-delete-frame" class="party-secondary-button" type="button">
-            Delete Frame
-          </button>
-        </div>
         <div id="timeline-status" class="party-status">No frames yet</div>
         <div class="timeline-scrub-row">
           <label for="timeline-scrub" class="camera-control-label">Time (s)</label>
           <input id="timeline-scrub" class="camera-control-range" type="range" min="0" max="30" step="0.1" value="0" />
           <input id="timeline-time-input" class="camera-control-number" type="number" min="0" max="600" step="0.1" value="0" />
+          <button id="timeline-delete-frame" class="party-secondary-button timeline-delete-button" type="button">
+            Delete
+          </button>
         </div>
-        <div id="timeline-ruler" class="timeline-ruler" role="listbox" aria-label="Timeline frames"></div>
         <div id="timeline-tracks" class="timeline-tracks" aria-label="Timeline tracks"></div>
         <div class="timeline-json-header">
           <label for="timeline-frame-json" id="timeline-frame-json-label" class="camera-control-label">

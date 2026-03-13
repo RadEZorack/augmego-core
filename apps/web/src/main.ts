@@ -461,14 +461,6 @@ function setupTimelineControls() {
     renderTimelineEditor();
   });
 
-  timelineKeyframeButton?.addEventListener("click", () => {
-    if (!worldState?.canManage) return;
-    if (!upsertSelectedTrackKeyframe()) return;
-    renderTimelineEditor();
-    syncTimelinePreviewWindow();
-    void persistTimelineFrames(`Saved keyframe at ${formatTimelineTime(timelineScrubSeconds)}`);
-  });
-
   timelineDeleteFrameButton?.addEventListener("click", () => {
     if (!worldState?.canManage) return;
     if (!deleteSelectedTrackKeyframe()) return;
@@ -1130,9 +1122,6 @@ const worldDescriptionInput = document.getElementById(
 const worldSettingsSaveButton = document.getElementById(
   "world-settings-save"
 ) as HTMLButtonElement | null;
-const timelineKeyframeButton = document.getElementById(
-  "timeline-keyframe"
-) as HTMLButtonElement | null;
 const timelinePlayToggleButton = document.getElementById(
   "timeline-play-toggle"
 ) as HTMLButtonElement | null;
@@ -1140,7 +1129,6 @@ const timelineDeleteFrameButton = document.getElementById(
   "timeline-delete-frame"
 ) as HTMLButtonElement | null;
 const timelineStatus = document.getElementById("timeline-status") as HTMLDivElement | null;
-const timelineRuler = document.getElementById("timeline-ruler") as HTMLDivElement | null;
 const timelineTracks = document.getElementById("timeline-tracks") as HTMLDivElement | null;
 const timelineScrubInput = document.getElementById("timeline-scrub") as HTMLInputElement | null;
 const timelineTimeInput = document.getElementById("timeline-time-input") as HTMLInputElement | null;
@@ -4675,6 +4663,127 @@ function buildFrameState(frameIndex: number) {
   };
 }
 
+function findTrackFrameBounds(
+  kind: "model" | "camera",
+  objectId: string,
+  time: number
+) {
+  let prevIndex = -1;
+  let nextIndex = -1;
+  for (let i = 0; i < timelineFrames.length; i += 1) {
+    const frame = timelineFrames[i];
+    if (!frame) continue;
+    const hasDiff =
+      kind === "model" ? Boolean(frame.models?.[objectId]) : Boolean(frame.cameras?.[objectId]);
+    if (!hasDiff) continue;
+    if (frame.time <= time) {
+      prevIndex = i;
+    }
+    if (frame.time >= time) {
+      nextIndex = i;
+      break;
+    }
+  }
+  if (nextIndex < 0) nextIndex = prevIndex;
+  if (prevIndex < 0) prevIndex = nextIndex;
+  return { prevIndex, nextIndex };
+}
+
+function buildModelTrackStateAtFrame(
+  placementId: string,
+  frameIndex: number
+): {
+  visible: boolean;
+  position: { x: number; y: number; z: number };
+  rotation: { x: number; y: number; z: number };
+  scale: { x: number; y: number; z: number };
+} | null {
+  const placement = worldState?.placements.find((item) => item.id === placementId);
+  if (!placement) return null;
+  const state = {
+    visible: true,
+    position: { ...placement.position },
+    rotation: { ...placement.rotation },
+    scale: { ...placement.scale }
+  };
+  for (let i = 0; i <= frameIndex; i += 1) {
+    const diff = timelineFrames[i]?.models?.[placementId];
+    if (!diff) continue;
+    if (typeof diff.visible === "boolean") state.visible = diff.visible;
+    if (Array.isArray(diff.position) && diff.position.length === 3) {
+      state.position = {
+        x: Number(diff.position[0] ?? state.position.x),
+        y: Number(diff.position[1] ?? state.position.y),
+        z: Number(diff.position[2] ?? state.position.z)
+      };
+    }
+    if (Array.isArray(diff.rotation) && diff.rotation.length === 3) {
+      state.rotation = {
+        x: Number(diff.rotation[0] ?? state.rotation.x),
+        y: Number(diff.rotation[1] ?? state.rotation.y),
+        z: Number(diff.rotation[2] ?? state.rotation.z)
+      };
+    }
+    if (Array.isArray(diff.scale) && diff.scale.length === 3) {
+      state.scale = {
+        x: Number(diff.scale[0] ?? state.scale.x),
+        y: Number(diff.scale[1] ?? state.scale.y),
+        z: Number(diff.scale[2] ?? state.scale.z)
+      };
+    }
+  }
+  return state;
+}
+
+function buildCameraTrackStateAtFrame(cameraId: string, frameIndex: number): TimelineCameraState | null {
+  const worldCamera = getWorldCameraById(cameraId);
+  if (!worldCamera) return null;
+  const state: TimelineCameraState = {
+    position: { ...worldCamera.position },
+    lookAt: { ...worldCamera.lookAt },
+    active: false
+  };
+  for (let i = 0; i <= frameIndex; i += 1) {
+    const diff = timelineFrames[i]?.cameras?.[cameraId];
+    if (!diff) continue;
+    if (Array.isArray(diff.position) && diff.position.length === 3) {
+      state.position = {
+        x: Number(diff.position[0] ?? state.position.x),
+        y: Number(diff.position[1] ?? state.position.y),
+        z: Number(diff.position[2] ?? state.position.z)
+      };
+    }
+    if (Array.isArray(diff.lookAt) && diff.lookAt.length === 3) {
+      state.lookAt = {
+        x: Number(diff.lookAt[0] ?? state.lookAt.x),
+        y: Number(diff.lookAt[1] ?? state.lookAt.y),
+        z: Number(diff.lookAt[2] ?? state.lookAt.z)
+      };
+    }
+    if (typeof diff.active === "boolean") {
+      state.active = diff.active;
+    }
+  }
+  return state;
+}
+
+function getTimelineActiveCameraIdAtTime(time: number) {
+  let activeCameraId: string | null = worldState?.cameras[0]?.id ?? null;
+  for (let i = 0; i < timelineFrames.length; i += 1) {
+    const frame = timelineFrames[i];
+    if (!frame || frame.time > time || !frame.cameras) continue;
+    for (const [cameraId, diff] of Object.entries(frame.cameras)) {
+      if (typeof diff.active !== "boolean") continue;
+      if (diff.active) activeCameraId = cameraId;
+      else if (activeCameraId === cameraId) activeCameraId = null;
+    }
+  }
+  if (activeCameraId && !worldState?.cameras.some((camera) => camera.id === activeCameraId)) {
+    activeCameraId = null;
+  }
+  return activeCameraId ?? worldState?.cameras[0]?.id ?? null;
+}
+
 function applyTimelineAtTime(seconds: number) {
   if (!worldState || timelineFrames.length === 0) {
     timelineAppliedPlacementState = new Map();
@@ -4682,26 +4791,6 @@ function applyTimelineAtTime(seconds: number) {
     return;
   }
   const targetTime = Math.max(0, seconds);
-  let prevIndex = -1;
-  let nextIndex = -1;
-  for (let i = 0; i < timelineFrames.length; i += 1) {
-    const frameTime = timelineFrames[i]!.time;
-    if (frameTime <= targetTime) prevIndex = i;
-    if (frameTime >= targetTime) {
-      nextIndex = i;
-      break;
-    }
-  }
-  if (nextIndex < 0) nextIndex = prevIndex;
-  if (prevIndex < 0) prevIndex = nextIndex;
-
-  const prevState = buildFrameState(prevIndex);
-  const nextState = buildFrameState(nextIndex);
-  const prevTime = timelineFrames[prevIndex]?.time ?? 0;
-  const nextTime = timelineFrames[nextIndex]?.time ?? prevTime;
-  const denominator = Math.max(0.0001, nextTime - prevTime);
-  const alpha =
-    prevIndex === nextIndex ? 0 : Math.min(1, Math.max(0, (targetTime - prevTime) / denominator));
 
   const interpolated = new Map<
     string,
@@ -4713,8 +4802,16 @@ function applyTimelineAtTime(seconds: number) {
     }
   >();
 
-  for (const [placementId, prevModel] of prevState.models.entries()) {
-    const nextModel = nextState.models.get(placementId) ?? prevModel;
+  for (const placement of worldState.placements) {
+    const { prevIndex, nextIndex } = findTrackFrameBounds("model", placement.id, targetTime);
+    const prevModel = buildModelTrackStateAtFrame(placement.id, prevIndex);
+    if (!prevModel) continue;
+    const nextModel = buildModelTrackStateAtFrame(placement.id, nextIndex) ?? prevModel;
+    const prevTime = timelineFrames[prevIndex]?.time ?? targetTime;
+    const nextTime = timelineFrames[nextIndex]?.time ?? prevTime;
+    const denominator = Math.max(0.0001, nextTime - prevTime);
+    const alpha =
+      prevIndex === nextIndex ? 0 : Math.min(1, Math.max(0, (targetTime - prevTime) / denominator));
     const blended = {
       visible: alpha < 1 ? prevModel.visible : nextModel.visible,
       position: {
@@ -4733,19 +4830,17 @@ function applyTimelineAtTime(seconds: number) {
         z: interpolateValue(prevModel.scale.z, nextModel.scale.z, alpha)
       }
     };
-    interpolated.set(placementId, blended);
-    game.applyPlacementTransform(placementId, {
+    interpolated.set(placement.id, blended);
+    game.applyPlacementTransform(placement.id, {
       position: blended.position,
       rotation: blended.rotation,
       scale: blended.scale
     });
-    game.setPlacementVisibility(placementId, blended.visible);
+    game.setPlacementVisibility(placement.id, blended.visible);
   }
   timelineAppliedPlacementState = interpolated;
 
-  const prevCamera = prevState.camera;
-  const nextCamera = nextState.camera ?? prevCamera;
-  const activeCameraId = nextState.activeCameraId ?? prevState.activeCameraId ?? null;
+  const activeCameraId = getTimelineActiveCameraIdAtTime(targetTime);
   const activeCameraLabel = activeCameraId
     ? worldState?.cameras.find((camera) => camera.id === activeCameraId)?.name?.trim() ||
       `Camera ${activeCameraId.slice(0, 8)}`
@@ -4753,7 +4848,19 @@ function applyTimelineAtTime(seconds: number) {
   if (timelineCameraPreviewTitle) {
     timelineCameraPreviewTitle.textContent = `Active Camera: ${activeCameraLabel}`;
   }
-  if (prevCamera && nextCamera) {
+  if (activeCameraId) {
+    const { prevIndex, nextIndex } = findTrackFrameBounds("camera", activeCameraId, targetTime);
+    const prevCamera = buildCameraTrackStateAtFrame(activeCameraId, prevIndex);
+    const nextCamera = buildCameraTrackStateAtFrame(activeCameraId, nextIndex) ?? prevCamera;
+    const prevTime = timelineFrames[prevIndex]?.time ?? targetTime;
+    const nextTime = timelineFrames[nextIndex]?.time ?? prevTime;
+    const denominator = Math.max(0.0001, nextTime - prevTime);
+    const alpha =
+      prevIndex === nextIndex ? 0 : Math.min(1, Math.max(0, (targetTime - prevTime) / denominator));
+    if (!prevCamera || !nextCamera) {
+      game.setTimelineCameraOverride(null);
+      return;
+    }
     game.setTimelineCameraOverride({
       position: {
         x: interpolateValue(prevCamera.position.x, nextCamera.position.x, alpha),
@@ -4876,7 +4983,7 @@ function selectTimelineFrame(index: number, trackKey: string | null = null) {
 }
 
 function renderTimelineEditor() {
-  if (!timelineRuler || !timelineTracks) return;
+  if (!timelineTracks) return;
   const canEdit = worldState?.canManage === true;
   const canPlay = Boolean(worldState) && timelineFrames.length > 0;
   const timelineTrackList = getTimelineTracks();
@@ -4890,45 +4997,18 @@ function renderTimelineEditor() {
     timelinePlayToggleButton.disabled = !canPlay;
     timelinePlayToggleButton.textContent = timelinePlaying ? "Pause" : "Play";
   }
-  if (timelineKeyframeButton) {
-    timelineKeyframeButton.disabled = !canEdit || !selectedTrack;
-    timelineKeyframeButton.textContent = selectedTrackDiff ? "Update Selected Keyframe" : "Keyframe Selected";
-  }
   if (timelineDeleteFrameButton) {
     timelineDeleteFrameButton.disabled = !canEdit || !selectedTrackDiff;
     timelineDeleteFrameButton.hidden = !selectedTrackDiff;
   }
   if (timelineScrubInput) timelineScrubInput.disabled = !canEdit;
   if (timelineTimeInput) timelineTimeInput.disabled = !canEdit;
-  timelineRuler.innerHTML = "";
   timelineTracks.innerHTML = "";
   const duration = Math.max(getTimelineDuration(), timelineScrubSeconds, 1);
   if (timelineScrubInput) timelineScrubInput.max = String(duration);
   if (timelineTimeInput) timelineTimeInput.max = String(duration);
   if (timelineScrubInput) timelineScrubInput.value = String(timelineScrubSeconds);
   if (timelineTimeInput) timelineTimeInput.value = timelineScrubSeconds.toFixed(1);
-
-  const scrubber = document.createElement("div");
-  scrubber.className = "timeline-frame-scrubber";
-  scrubber.style.left = `${(timelineScrubSeconds / duration) * 100}%`;
-  timelineRuler.appendChild(scrubber);
-  timelineRuler.addEventListener("click", (event) => {
-    const target = event.target;
-    if (target instanceof HTMLElement && target.closest(".timeline-frame-marker")) return;
-    scrubTimelineTo(getTimelineScrubTimeFromClientX(timelineRuler, event.clientX));
-  });
-
-  timelineFrames.forEach((frame, index) => {
-    const marker = document.createElement("button");
-    marker.type = "button";
-    marker.className = "timeline-frame-marker timeline-frame-marker-overview";
-    if (index === selectedTimelineFrameIndex) marker.classList.add("active");
-    marker.style.left = `${(frame.time / duration) * 100}%`;
-    marker.textContent = `F${index + 1}`;
-    marker.title = `Frame ${index + 1} • ${formatTimelineTime(frame.time)}`;
-    marker.addEventListener("click", () => selectTimelineFrame(index));
-    timelineRuler.appendChild(marker);
-  });
 
   for (const track of timelineTrackList) {
     const row = document.createElement("div");
@@ -5007,13 +5087,11 @@ function renderTimelineEditor() {
   syncSelectedTimelineFrameJson();
 
   if (!worldState) {
-    setTimelineStatus("Join a world to edit timeline");
+    setTimelineStatus("");
   } else if (timelineFrames.length === 0) {
-    setTimelineStatus("No frames yet");
+    setTimelineStatus("");
   } else {
-    setTimelineStatus(
-      `Frames: ${timelineFrames.length} • Tracks: ${timelineTrackList.length} • Scrub: ${formatTimelineTime(timelineScrubSeconds)}`
-    );
+    setTimelineStatus("");
   }
 }
 

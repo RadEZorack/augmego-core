@@ -1483,56 +1483,28 @@ canvas {
   width: 100%;
 }
 
-.timeline-toolbar {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
 .timeline-scrub-row {
   display: grid;
-  grid-template-columns: auto 1fr 84px;
+  grid-template-columns: auto 1fr 84px auto;
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-}
-
-.timeline-ruler {
-  position: relative;
-  height: 64px;
-  border-radius: 10px;
-  border: 1px solid rgba(111, 186, 255, 0.24);
-  background:
-    repeating-linear-gradient(
-      90deg,
-      rgba(158, 206, 255, 0.12) 0px,
-      rgba(158, 206, 255, 0.12) 1px,
-      transparent 1px,
-      transparent 16px
-    ),
-    rgba(7, 16, 28, 0.66);
-  margin-bottom: 10px;
-  overflow: hidden;
-}
-
-.timeline-ruler::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  top: 32px;
-  height: 2px;
-  background: rgba(108, 175, 244, 0.55);
 }
 
 .timeline-tracks {
   display: grid;
   gap: 8px;
   max-height: 280px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   overflow-y: auto;
   padding-right: 4px;
+}
+
+.timeline-delete-button {
+  min-width: 0;
+  padding: 6px 10px;
+  font-size: 0.72rem;
+  white-space: nowrap;
 }
 
 .timeline-track-row {
