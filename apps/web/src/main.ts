@@ -4025,22 +4025,29 @@ function setTimelineStatus(text: string) {
 async function persistTimelineFrames(successMessage = "Timeline saved") {
   pendingTimelineSaveCount += 1;
   updateUnsavedChangesNotice();
+  const compactedFrames = compactTimelineFrames(timelineFrames);
   const response = await fetch(apiUrl("/api/v1/world/timeline"), {
     method: "PATCH",
     credentials: "include",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify({ frames: compactTimelineFrames(timelineFrames) })
+    body: JSON.stringify({ frames: compactedFrames })
   });
   if (!response.ok) {
     pendingTimelineSaveCount = Math.max(0, pendingTimelineSaveCount - 1);
+    updateUnsavedChangesNotice();
     setTimelineStatus("Timeline save failed");
     return false;
   }
   pendingTimelineSaveCount = Math.max(0, pendingTimelineSaveCount - 1);
+  timelineFrames = compactedFrames;
+  if (worldState) {
+    worldState.timelineFrames = compactedFrames;
+  }
+  updateUnsavedChangesNotice();
   setTimelineStatus(successMessage);
-  await loadWorldState();
+  renderTimelineEditor();
   return true;
 }
 
