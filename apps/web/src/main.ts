@@ -509,6 +509,14 @@ function setupTimelineControls() {
     renderTimelineEditor();
   });
 
+  timelineRecordToggleButton?.addEventListener("click", () => {
+    void toggleTimelineRecording();
+  });
+
+  timelineDownloadButton?.addEventListener("click", () => {
+    downloadTimelineRecording();
+  });
+
   timelineDeleteFrameButton?.addEventListener("click", () => {
     if (!worldState?.canManage) return;
     if (!deleteSelectedTrackKeyframe()) return;
@@ -1031,6 +1039,12 @@ let timelinePreviewActive = false;
 let timelinePlaying = false;
 let timelinePlaybackLastTimeMs = 0;
 let timelinePlaybackRafId: number | null = null;
+let timelinePlaybackLoop = true;
+let timelinePlaybackCompleteHandler: (() => void) | null = null;
+let timelineRecordingRecorder: MediaRecorder | null = null;
+let timelineRecordingChunks: BlobPart[] = [];
+let timelineRecordingBlobUrl: string | null = null;
+let timelineRecordingMimeType = "";
 let timelineAppliedPlacementState = new Map<
   string,
   {
@@ -1172,6 +1186,12 @@ const worldSettingsSaveButton = document.getElementById(
 ) as HTMLButtonElement | null;
 const timelinePlayToggleButton = document.getElementById(
   "timeline-play-toggle"
+) as HTMLButtonElement | null;
+const timelineRecordToggleButton = document.getElementById(
+  "timeline-record-toggle"
+) as HTMLButtonElement | null;
+const timelineDownloadButton = document.getElementById(
+  "timeline-download-button"
 ) as HTMLButtonElement | null;
 const timelineDeleteFrameButton = document.getElementById(
   "timeline-delete-frame"
@@ -3979,13 +3999,17 @@ function getTimelineEndTime() {
 function stopTimelinePlayback() {
   timelinePlaying = false;
   timelinePlaybackLastTimeMs = 0;
+  timelinePlaybackLoop = true;
   if (timelinePlaybackRafId !== null) {
     window.cancelAnimationFrame(timelinePlaybackRafId);
     timelinePlaybackRafId = null;
   }
+  const completionHandler = timelinePlaybackCompleteHandler;
+  timelinePlaybackCompleteHandler = null;
   if (timelinePlayToggleButton) {
     timelinePlayToggleButton.textContent = "Play";
   }
+  completionHandler?.();
 }
 
 function stepTimelinePlayback(nowMs: number) {
@@ -4014,6 +4038,13 @@ function stepTimelinePlayback(nowMs: number) {
 
   const span = endTime - startTime;
   if (timelineScrubSeconds > endTime) {
+    if (!timelinePlaybackLoop) {
+      timelineScrubSeconds = endTime;
+      applyTimelineAtTime(timelineScrubSeconds);
+      stopTimelinePlayback();
+      renderTimelineEditor();
+      return;
+    }
     timelineScrubSeconds = startTime + ((timelineScrubSeconds - startTime) % span);
   }
 
@@ -4022,7 +4053,7 @@ function stepTimelinePlayback(nowMs: number) {
   timelinePlaybackRafId = window.requestAnimationFrame(stepTimelinePlayback);
 }
 
-function startTimelinePlayback() {
+function startTimelinePlayback(options: { loop?: boolean; onComplete?: (() => void) | null } = {}) {
   if (!worldState || timelineFrames.length === 0) return;
   if (timelinePlaying) return;
 
@@ -4034,10 +4065,136 @@ function startTimelinePlayback() {
 
   timelinePlaying = true;
   timelinePlaybackLastTimeMs = 0;
+  timelinePlaybackLoop = options.loop !== false;
+  timelinePlaybackCompleteHandler = options.onComplete ?? null;
   if (timelinePlayToggleButton) {
     timelinePlayToggleButton.textContent = "Pause";
   }
   timelinePlaybackRafId = window.requestAnimationFrame(stepTimelinePlayback);
+}
+
+function getTimelineRecordingMimeType() {
+  if (typeof MediaRecorder === "undefined") return "";
+  const preferredTypes = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm"
+  ];
+  for (const mimeType of preferredTypes) {
+    if (typeof MediaRecorder.isTypeSupported === "function" && MediaRecorder.isTypeSupported(mimeType)) {
+      return mimeType;
+    }
+  }
+  return "";
+}
+
+function revokeTimelineRecordingBlobUrl() {
+  if (!timelineRecordingBlobUrl) return;
+  URL.revokeObjectURL(timelineRecordingBlobUrl);
+  timelineRecordingBlobUrl = null;
+}
+
+function getTimelineRecordingFileName() {
+  const worldName = loadedWorldMapName.trim() || "world";
+  const activeCameraId = getTimelineActiveCameraIdAtTime(timelineScrubSeconds);
+  const activeCameraName =
+    activeCameraId && worldState?.cameras.find((camera) => camera.id === activeCameraId)?.name?.trim();
+  const slug =
+    `${worldName}-${activeCameraName || "active-camera"}`
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "active-camera";
+  return `${slug}.webm`;
+}
+
+function syncTimelineRecordingUi() {
+  const canRecord =
+    typeof MediaRecorder !== "undefined" &&
+    timelinePreviewActive &&
+    Boolean(worldState) &&
+    timelineFrames.length > 0;
+  if (timelineRecordToggleButton) {
+    timelineRecordToggleButton.disabled = !canRecord;
+    timelineRecordToggleButton.textContent = timelineRecordingRecorder ? "Stop Recording" : "Record WebM";
+  }
+  if (timelineDownloadButton) {
+    timelineDownloadButton.hidden = !timelineRecordingBlobUrl;
+    timelineDownloadButton.disabled = !timelineRecordingBlobUrl;
+  }
+}
+
+function downloadTimelineRecording() {
+  if (!timelineRecordingBlobUrl) return;
+  const downloadLink = document.createElement("a");
+  downloadLink.href = timelineRecordingBlobUrl;
+  downloadLink.download = getTimelineRecordingFileName();
+  downloadLink.style.display = "none";
+  document.body.appendChild(downloadLink);
+  downloadLink.click();
+  document.body.removeChild(downloadLink);
+}
+
+function stopTimelineRecording() {
+  if (!timelineRecordingRecorder) return;
+  const recorder = timelineRecordingRecorder;
+  timelineRecordingRecorder = null;
+  if (recorder.state !== "inactive") {
+    recorder.stop();
+  }
+  syncTimelineRecordingUi();
+}
+
+async function toggleTimelineRecording() {
+  if (timelineRecordingRecorder) {
+    stopTimelineRecording();
+    return;
+  }
+  if (!timelinePreviewActive || !worldState || timelineFrames.length === 0) return;
+  const mimeType = getTimelineRecordingMimeType();
+  if (!mimeType) return;
+  revokeTimelineRecordingBlobUrl();
+  timelineRecordingChunks = [];
+  timelineRecordingMimeType = mimeType;
+  const stream = game.createTimelinePreviewStream(30);
+  if (!stream) return;
+
+  try {
+    timelineRecordingRecorder = new MediaRecorder(stream, { mimeType });
+  } catch {
+    timelineRecordingRecorder = null;
+    syncTimelineRecordingUi();
+    return;
+  }
+
+  const recorder = timelineRecordingRecorder;
+  recorder.addEventListener("dataavailable", (event) => {
+    if (event.data && event.data.size > 0) {
+      timelineRecordingChunks.push(event.data);
+    }
+  });
+  recorder.addEventListener("stop", () => {
+    stream.getTracks().forEach((track) => track.stop());
+    const blob = new Blob(timelineRecordingChunks, { type: timelineRecordingMimeType });
+    timelineRecordingChunks = [];
+    revokeTimelineRecordingBlobUrl();
+    timelineRecordingBlobUrl = blob.size > 0 ? URL.createObjectURL(blob) : null;
+    syncTimelineRecordingUi();
+    if (timelineRecordingBlobUrl) {
+      downloadTimelineRecording();
+    }
+  });
+  recorder.start(1000);
+
+  timelineScrubSeconds = getTimelineStartTime();
+  applyTimelineAtTime(timelineScrubSeconds);
+  startTimelinePlayback({
+    loop: false,
+    onComplete: () => {
+      stopTimelineRecording();
+    }
+  });
+  renderTimelineEditor();
+  syncTimelineRecordingUi();
 }
 
 function getLastFrameIndexBefore(time: number, frames = timelineFrames) {
@@ -4963,6 +5120,10 @@ function syncTimelinePreviewWindow() {
   }
   game.setTimelinePreviewElement(shouldShow ? timelineCameraPreviewViewport : null);
   timelinePreviewActive = shouldShow;
+  if (!shouldShow && timelineRecordingRecorder) {
+    stopTimelineRecording();
+  }
+  syncTimelineRecordingUi();
   syncTimelineInteractionMode();
   if (shouldShow) {
     applyTimelineAtTime(timelineScrubSeconds);
@@ -5052,6 +5213,7 @@ function renderTimelineEditor() {
     timelinePlayToggleButton.disabled = !canPlay;
     timelinePlayToggleButton.textContent = timelinePlaying ? "Pause" : "Play";
   }
+  syncTimelineRecordingUi();
   if (timelineDeleteFrameButton) {
     timelineDeleteFrameButton.disabled = !canEdit || !selectedTrackDiff;
     timelineDeleteFrameButton.hidden = !selectedTrackDiff;

@@ -319,6 +319,20 @@ export function createGameScene(options: GameSceneOptions) {
     syncTimelinePreviewRendererSize();
   }
 
+  function createTimelinePreviewStream(frameRate = 30): MediaStream | null {
+    syncTimelinePreviewRendererAttachment();
+    if (!syncTimelinePreviewRendererSize()) {
+      return null;
+    }
+    const previewCanvas = timelinePreviewRenderer.domElement as HTMLCanvasElement & {
+      captureStream?: (frameRate?: number) => MediaStream;
+    };
+    if (typeof previewCanvas.captureStream !== "function") {
+      return null;
+    }
+    return previewCanvas.captureStream(frameRate);
+  }
+
   function syncTimelinePreviewRendererAttachment() {
     const previewCanvas = timelinePreviewRenderer.domElement;
     if (!timelinePreviewElement) {
@@ -2448,6 +2462,7 @@ export function createGameScene(options: GameSceneOptions) {
     setCameraControls,
     setTimelineCameraOverride,
     setTimelinePreviewElement,
+    createTimelinePreviewStream,
     setWorldData,
     applyPlacementTransform,
     setPlacementVisibility,
