@@ -176,6 +176,8 @@ export function createGameScene(options: GameSceneOptions) {
   let editorFocusTarget: EditorFocusTarget | null = null;
   let timelineCameraOverride: CameraPose | null = null;
   let timelinePreviewElement: HTMLElement | null = null;
+  let timelinePreviewRenderWidthOverride: number | null = null;
+  let timelinePreviewRenderHeightOverride: number | null = null;
   let timelinePreviewWidth = 0;
   let timelinePreviewHeight = 0;
   const worldCameraRigs = new Map<
@@ -319,6 +321,12 @@ export function createGameScene(options: GameSceneOptions) {
     syncTimelinePreviewRendererSize();
   }
 
+  function setTimelinePreviewRenderSizeOverride(width: number | null, height: number | null) {
+    timelinePreviewRenderWidthOverride = width && width > 1 ? Math.round(width) : null;
+    timelinePreviewRenderHeightOverride = height && height > 1 ? Math.round(height) : null;
+    syncTimelinePreviewRendererSize();
+  }
+
   function createTimelinePreviewStream(frameRate = 30): MediaStream | null {
     syncTimelinePreviewRendererAttachment();
     if (!syncTimelinePreviewRendererSize()) {
@@ -356,8 +364,8 @@ export function createGameScene(options: GameSceneOptions) {
       return false;
     }
 
-    const width = Math.round(timelinePreviewElement.clientWidth);
-    const height = Math.round(timelinePreviewElement.clientHeight);
+    const width = timelinePreviewRenderWidthOverride ?? Math.round(timelinePreviewElement.clientWidth);
+    const height = timelinePreviewRenderHeightOverride ?? Math.round(timelinePreviewElement.clientHeight);
     if (width < 2 || height < 2) {
       timelinePreviewWidth = 0;
       timelinePreviewHeight = 0;
@@ -2462,6 +2470,7 @@ export function createGameScene(options: GameSceneOptions) {
     setCameraControls,
     setTimelineCameraOverride,
     setTimelinePreviewElement,
+    setTimelinePreviewRenderSizeOverride,
     createTimelinePreviewStream,
     setWorldData,
     applyPlacementTransform,

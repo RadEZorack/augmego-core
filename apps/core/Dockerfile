@@ -1,7 +1,11 @@
-# Use official Bun image
 FROM oven/bun:1.3
 
 WORKDIR /app
+
+# Install ffmpeg for timeline video transcoding.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg \
+  && rm -rf /var/lib/apt/lists/*
 
 # Copy package files
 COPY package.json bun.lock ./

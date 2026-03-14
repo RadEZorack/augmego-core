@@ -3,8 +3,9 @@ import { cors } from "@elysiajs/cors";
 import { PrismaClient, WorldAssetVisibility } from "@prisma/client";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import jwt from "jsonwebtoken";
+import { tmpdir } from "node:os";
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { parseCookies, serializeCookie } from "./lib/cookies.js";
 import { resolveSessionUser } from "./lib/session.js";
 import { countOnlineUsersByIds, registerRealtimeWs } from "./realtime/ws.js";
@@ -61,6 +62,9 @@ const SESSION_TTL_HOURS = Number(process.env.SESSION_TTL_HOURS ?? "168");
 const MAX_CHAT_HISTORY = Number(process.env.MAX_CHAT_HISTORY ?? "100");
 const MAX_CHAT_MESSAGE_LENGTH = Number(
   process.env.MAX_CHAT_MESSAGE_LENGTH ?? "500"
+);
+const MAX_TIMELINE_EXPORT_BYTES = Number(
+  process.env.MAX_TIMELINE_EXPORT_BYTES ?? `${250 * 1024 * 1024}`
 );
 const WORLD_STORAGE_ROOT = process.env.WORLD_STORAGE_ROOT
   ? path.resolve(process.env.WORLD_STORAGE_ROOT)
@@ -1047,6 +1051,60 @@ async function saveWorldPhotoWallImageFile(
   await mkdir(path.dirname(absolutePath), { recursive: true });
   await Bun.write(absolutePath, file);
   return { storageKey };
+}
+
+async function transcodeTimelineVideoToMp4(file: File) {
+  const tempDir = await mkdtemp(path.join(tmpdir(), "augmego-timeline-export-"));
+  const inputName = sanitizeFilename(file.name || "timeline-export.webm");
+  const outputName = inputName.replace(/\.[^.]+$/i, "") || "timeline-export";
+  const inputPath = path.join(tempDir, inputName);
+  const outputPath = path.join(tempDir, `${outputName}.mp4`);
+
+  try {
+    await Bun.write(inputPath, file);
+    const ffmpeg = Bun.spawn(
+      [
+        "ffmpeg",
+        "-y",
+        "-i",
+        inputPath,
+        "-c:v",
+        "libx264",
+        "-preset",
+        "medium",
+        "-crf",
+        "18",
+        "-pix_fmt",
+        "yuv420p",
+        "-movflags",
+        "+faststart",
+        "-an",
+        outputPath
+      ],
+      {
+        stdout: "pipe",
+        stderr: "pipe"
+      }
+    );
+    const exitCode = await ffmpeg.exited;
+    if (exitCode !== 0) {
+      const stderr = await new Response(ffmpeg.stderr).text();
+      throw new Error(`ffmpeg exited with code ${exitCode}: ${stderr}`);
+    }
+
+    const outputFile = Bun.file(outputPath);
+    const exists = await outputFile.exists();
+    if (!exists) {
+      throw new Error("ffmpeg did not produce an output file");
+    }
+
+    return {
+      bytes: new Uint8Array(await outputFile.arrayBuffer()),
+      fileName: `${outputName}.mp4`
+    };
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
 }
 
 async function createWorldAssetWithInitialVersion(options: {
@@ -3616,6 +3674,38 @@ const api = new Elysia({ prefix: "/api/v1" })
       worldId: updated.id,
       timelineFrames: normalizeTimelineFrames(updated.timelineFrames) ?? []
     });
+  })
+  .post("/world/timeline/export-video", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const formData = await request.formData();
+    const fileValue = formData.get("file");
+    if (!(fileValue instanceof File)) {
+      return jsonResponse({ error: "FILE_REQUIRED" }, { status: 400 });
+    }
+    if (!fileValue.type.toLowerCase().includes("video/webm")) {
+      return jsonResponse({ error: "INVALID_VIDEO_FILE" }, { status: 400 });
+    }
+    if (fileValue.size <= 0 || fileValue.size > MAX_TIMELINE_EXPORT_BYTES) {
+      return jsonResponse({ error: "VIDEO_TOO_LARGE" }, { status: 413 });
+    }
+
+    try {
+      const converted = await transcodeTimelineVideoToMp4(fileValue);
+      return new Response(converted.bytes, {
+        headers: {
+          "Content-Type": "video/mp4",
+          "Content-Disposition": `attachment; filename="${converted.fileName}"`,
+          "Cache-Control": "no-store"
+        }
+      });
+    } catch (error) {
+      console.error("[timeline-export] ffmpeg conversion failed", error);
+      return jsonResponse({ error: "TIMELINE_EXPORT_FAILED" }, { status: 500 });
+    }
   })
   .patch("/world/visibility", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);

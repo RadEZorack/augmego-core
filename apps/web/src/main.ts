@@ -1045,6 +1045,9 @@ let timelineRecordingRecorder: MediaRecorder | null = null;
 let timelineRecordingChunks: BlobPart[] = [];
 let timelineRecordingBlobUrl: string | null = null;
 let timelineRecordingMimeType = "";
+let timelineExportPending = false;
+const TIMELINE_EXPORT_WIDTH = 1920;
+const TIMELINE_EXPORT_HEIGHT = 1080;
 let timelineAppliedPlacementState = new Map<
   string,
   {
@@ -4104,7 +4107,27 @@ function getTimelineRecordingFileName() {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "active-camera";
-  return `${slug}.webm`;
+  return `${slug}.mp4`;
+}
+
+async function convertTimelineRecordingToMp4(blob: Blob) {
+  const formData = new FormData();
+  formData.set(
+    "file",
+    new File([blob], getTimelineRecordingFileName().replace(/\.mp4$/i, ".webm"), {
+      type: timelineRecordingMimeType || "video/webm"
+    })
+  );
+
+  const response = await fetch(apiUrl("/api/v1/world/timeline/export-video"), {
+    method: "POST",
+    credentials: "include",
+    body: formData
+  });
+  if (!response.ok) {
+    throw new Error("TIMELINE_EXPORT_FAILED");
+  }
+  return await response.blob();
 }
 
 function syncTimelineRecordingUi() {
@@ -4114,8 +4137,12 @@ function syncTimelineRecordingUi() {
     Boolean(worldState) &&
     timelineFrames.length > 0;
   if (timelineRecordToggleButton) {
-    timelineRecordToggleButton.disabled = !canRecord;
-    timelineRecordToggleButton.textContent = timelineRecordingRecorder ? "Stop Recording" : "Record WebM";
+    timelineRecordToggleButton.disabled = !canRecord || timelineExportPending;
+    timelineRecordToggleButton.textContent = timelineRecordingRecorder
+      ? "Stop Recording"
+      : timelineExportPending
+        ? "Converting..."
+        : "Record MP4";
   }
   if (timelineDownloadButton) {
     timelineDownloadButton.hidden = !timelineRecordingBlobUrl;
@@ -4138,6 +4165,7 @@ function stopTimelineRecording() {
   if (!timelineRecordingRecorder) return;
   const recorder = timelineRecordingRecorder;
   timelineRecordingRecorder = null;
+  game.setTimelinePreviewRenderSizeOverride(null, null);
   if (recorder.state !== "inactive") {
     recorder.stop();
   }
@@ -4149,18 +4177,25 @@ async function toggleTimelineRecording() {
     stopTimelineRecording();
     return;
   }
+  if (timelineExportPending) return;
   if (!timelinePreviewActive || !worldState || timelineFrames.length === 0) return;
   const mimeType = getTimelineRecordingMimeType();
   if (!mimeType) return;
   revokeTimelineRecordingBlobUrl();
   timelineRecordingChunks = [];
   timelineRecordingMimeType = mimeType;
+  game.setTimelinePreviewRenderSizeOverride(TIMELINE_EXPORT_WIDTH, TIMELINE_EXPORT_HEIGHT);
   const stream = game.createTimelinePreviewStream(30);
-  if (!stream) return;
+  if (!stream) {
+    game.setTimelinePreviewRenderSizeOverride(null, null);
+    return;
+  }
 
   try {
     timelineRecordingRecorder = new MediaRecorder(stream, { mimeType });
   } catch {
+    stream.getTracks().forEach((track) => track.stop());
+    game.setTimelinePreviewRenderSizeOverride(null, null);
     timelineRecordingRecorder = null;
     syncTimelineRecordingUi();
     return;
@@ -4172,19 +4207,35 @@ async function toggleTimelineRecording() {
       timelineRecordingChunks.push(event.data);
     }
   });
-  recorder.addEventListener("stop", () => {
+  recorder.addEventListener("stop", async () => {
     stream.getTracks().forEach((track) => track.stop());
-    const blob = new Blob(timelineRecordingChunks, { type: timelineRecordingMimeType });
+    const webmBlob = new Blob(timelineRecordingChunks, { type: timelineRecordingMimeType });
     timelineRecordingChunks = [];
-    revokeTimelineRecordingBlobUrl();
-    timelineRecordingBlobUrl = blob.size > 0 ? URL.createObjectURL(blob) : null;
+    if (webmBlob.size === 0) {
+      syncTimelineRecordingUi();
+      return;
+    }
+    timelineExportPending = true;
     syncTimelineRecordingUi();
-    if (timelineRecordingBlobUrl) {
-      downloadTimelineRecording();
+    setWorldNotice("Converting timeline export to MP4...");
+    try {
+      const mp4Blob = await convertTimelineRecordingToMp4(webmBlob);
+      revokeTimelineRecordingBlobUrl();
+      timelineRecordingBlobUrl = mp4Blob.size > 0 ? URL.createObjectURL(mp4Blob) : null;
+      if (timelineRecordingBlobUrl) {
+        downloadTimelineRecording();
+        setWorldNotice("Timeline MP4 ready");
+      }
+    } catch {
+      setWorldNotice("Timeline export conversion failed");
+    } finally {
+      timelineExportPending = false;
+      syncTimelineRecordingUi();
     }
   });
   recorder.start(1000);
 
+  setWorldNotice("Recording timeline at 1080p...");
   timelineScrubSeconds = getTimelineStartTime();
   applyTimelineAtTime(timelineScrubSeconds);
   startTimelinePlayback({
