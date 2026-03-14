@@ -231,7 +231,7 @@ export function createGameScene(options: GameSceneOptions) {
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(50, 50),
     new THREE.MeshStandardMaterial({
-      color: 0x172033,
+      color: 0x24324a,
       roughness: 0.95,
       metalness: 0
     })
