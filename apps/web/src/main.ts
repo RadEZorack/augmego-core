@@ -43,6 +43,54 @@ if (!app) {
 }
 
 const appRoot = app;
+const themeToggleButton = document.getElementById("theme-toggle-button") as HTMLButtonElement | null;
+
+const APP_THEME_STORAGE_KEY = "augmego-app-theme";
+type AppTheme = "light" | "dark";
+
+function applyTheme(theme: AppTheme) {
+  document.documentElement.dataset.theme = theme;
+  if (!themeToggleButton) return;
+  const light = theme === "light";
+  themeToggleButton.setAttribute("aria-pressed", light ? "true" : "false");
+  themeToggleButton.setAttribute(
+    "aria-label",
+    light ? "Switch to dark mode" : "Switch to light mode"
+  );
+  themeToggleButton.setAttribute(
+    "title",
+    light ? "Switch to dark mode" : "Switch to light mode"
+  );
+}
+
+function readStoredTheme(): AppTheme {
+  try {
+    const stored = window.localStorage.getItem(APP_THEME_STORAGE_KEY);
+    if (stored === "dark" || stored === "default") return "dark";
+    if (stored === "light" || stored === "cheerful") return "light";
+    return "light";
+  } catch {
+    return "light";
+  }
+}
+
+function persistTheme(theme: AppTheme) {
+  try {
+    window.localStorage.setItem(APP_THEME_STORAGE_KEY, theme);
+  } catch {
+    // Ignore storage failures.
+  }
+}
+
+function setupThemeToggle() {
+  let theme = readStoredTheme();
+  applyTheme(theme);
+  themeToggleButton?.addEventListener("click", () => {
+    theme = theme === "light" ? "dark" : "light";
+    applyTheme(theme);
+    persistTheme(theme);
+  });
+}
 
 const dockPanel = document.getElementById("dock-panel") as HTMLElement | null;
 const homeListingScreen = document.getElementById("home-listing-screen") as HTMLElement | null;
@@ -7352,6 +7400,7 @@ if (shouldMinimizeByDefault) {
   setPanelMinimized(dockPanel, dockMinimizeButton, "panel", true);
 }
 
+setupThemeToggle();
 auth.setup();
 party.setup();
 media.setup();
