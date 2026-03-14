@@ -1,7 +1,7 @@
 import { Elysia } from "elysia";
 import { cors } from "@elysiajs/cors";
 import { PrismaClient, WorldAssetVisibility } from "@prisma/client";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import jwt from "jsonwebtoken";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -133,6 +133,18 @@ const WORLD_ASSET_GENERATION_RECENT_LIMIT = toPositiveInteger(
 const WORLD_ASSET_GENERATION_MAX_ATTEMPTS = toPositiveInteger(
   process.env.WORLD_ASSET_GENERATION_MAX_ATTEMPTS,
   5
+);
+const WORLD_TIMELINE_EXPORT_WORKER_INTERVAL_MS = toPositiveInteger(
+  process.env.WORLD_TIMELINE_EXPORT_WORKER_INTERVAL_MS,
+  5000
+);
+const WORLD_TIMELINE_EXPORT_RECENT_LIMIT = toPositiveInteger(
+  process.env.WORLD_TIMELINE_EXPORT_RECENT_LIMIT,
+  20
+);
+const WORLD_TIMELINE_EXPORT_MAX_ATTEMPTS = toPositiveInteger(
+  process.env.WORLD_TIMELINE_EXPORT_MAX_ATTEMPTS,
+  3
 );
 const DEFAULT_WORLD_PORTAL_LAT = 43.090003;
 const DEFAULT_WORLD_PORTAL_LNG = -79.068051;
@@ -436,6 +448,11 @@ function resolveWorldPhotoWallImageFileUrl(photoWallId: string, storageKey: stri
     resolveWorldAssetPublicUrl(storageKey) ??
     `/api/v1/world/photo-walls/${photoWallId}/image`
   );
+}
+
+function resolveWorldTimelineExportFileUrl(taskId: string, storageKey: string) {
+  void storageKey;
+  return `/api/v1/world/timeline/exports/${taskId}/file`;
 }
 
 function toNumberOrDefault(value: unknown, fallback: number) {
@@ -1053,6 +1070,116 @@ async function saveWorldPhotoWallImageFile(
   return { storageKey };
 }
 
+async function saveWorldTimelineExportSourceFile(
+  file: File,
+  worldOwnerId: string,
+  taskId: string
+) {
+  const extensionFromType = file.type.split("/")[1]?.trim().toLowerCase() || "webm";
+  const baseName = sanitizeFilename(file.name || `timeline_export_source.${extensionFromType}`);
+  const storageKey = path
+    .join(
+      WORLD_STORAGE_NAMESPACE,
+      worldOwnerId,
+      "timeline-exports",
+      taskId,
+      "source",
+      `${crypto.randomUUID()}_${baseName}`
+    )
+    .replace(/\\/g, "/");
+
+  if (effectiveWorldStorageProvider === "spaces") {
+    if (!spacesClient) {
+      throw new Error("DigitalOcean Spaces client not configured");
+    }
+
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    await spacesClient.send(
+      new PutObjectCommand({
+        Bucket: DO_SPACES_BUCKET,
+        Key: storageKey,
+        Body: bytes,
+        ACL: "public-read",
+        ContentType: file.type || "video/webm"
+      })
+    );
+    return { storageKey };
+  }
+
+  const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, file);
+  return { storageKey };
+}
+
+async function saveWorldTimelineExportOutputBytes(
+  bytes: Uint8Array,
+  contentType: string,
+  fileName: string,
+  worldOwnerId: string,
+  taskId: string
+) {
+  const storageKey = path
+    .join(
+      WORLD_STORAGE_NAMESPACE,
+      worldOwnerId,
+      "timeline-exports",
+      taskId,
+      "output",
+      sanitizeFilename(fileName || "timeline-export.mp4")
+    )
+    .replace(/\\/g, "/");
+
+  if (effectiveWorldStorageProvider === "spaces") {
+    if (!spacesClient) {
+      throw new Error("DigitalOcean Spaces client not configured");
+    }
+
+    await spacesClient.send(
+      new PutObjectCommand({
+        Bucket: DO_SPACES_BUCKET,
+        Key: storageKey,
+        Body: bytes,
+        ACL: "public-read",
+        ContentType: contentType || "video/mp4"
+      })
+    );
+    return { storageKey };
+  }
+
+  const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
+  await mkdir(path.dirname(absolutePath), { recursive: true });
+  await Bun.write(absolutePath, bytes);
+  return { storageKey };
+}
+
+async function readWorldStorageBytes(storageKey: string) {
+  if (effectiveWorldStorageProvider === "spaces") {
+    if (!spacesClient) {
+      throw new Error("DigitalOcean Spaces client not configured");
+    }
+    const response = await spacesClient.send(
+      new GetObjectCommand({
+        Bucket: DO_SPACES_BUCKET,
+        Key: storageKey
+      })
+    );
+    const bytes = await response.Body?.transformToByteArray();
+    if (!bytes) {
+      throw new Error(`Missing storage object: ${storageKey}`);
+    }
+    return new Uint8Array(bytes);
+  }
+
+  const absolutePath = path.join(WORLD_STORAGE_ROOT, storageKey);
+  const file = Bun.file(absolutePath);
+  const exists = await file.exists();
+  if (!exists) {
+    throw new Error(`Missing storage file: ${storageKey}`);
+  }
+  return new Uint8Array(await file.arrayBuffer());
+}
+
 async function transcodeTimelineVideoToMp4(file: File) {
   const tempDir = await mkdtemp(path.join(tmpdir(), "augmego-timeline-export-"));
   const inputName = sanitizeFilename(file.name || "timeline-export.webm");
@@ -1105,6 +1232,74 @@ async function transcodeTimelineVideoToMp4(file: File) {
   } finally {
     await rm(tempDir, { recursive: true, force: true });
   }
+}
+
+async function claimNextWorldTimelineExportTask() {
+  const inProgress = await prisma.worldTimelineExportTask.findFirst({
+    where: { status: "IN_PROGRESS" },
+    orderBy: { updatedAt: "asc" }
+  });
+  if (inProgress) return inProgress;
+
+  const pending = await prisma.worldTimelineExportTask.findFirst({
+    where: { status: "PENDING" },
+    orderBy: { createdAt: "asc" }
+  });
+  if (!pending) return null;
+
+  const update = await prisma.worldTimelineExportTask.updateMany({
+    where: {
+      id: pending.id,
+      status: "PENDING"
+    },
+    data: {
+      status: "IN_PROGRESS",
+      processingStatus: "TRANSCODING",
+      startedAt: pending.startedAt ?? new Date(),
+      attempts: pending.attempts + 1
+    }
+  });
+  if (update.count === 0) return null;
+
+  return prisma.worldTimelineExportTask.findUnique({
+    where: { id: pending.id }
+  });
+}
+
+async function processWorldTimelineExportTask(taskId: string) {
+  const task = await prisma.worldTimelineExportTask.findUnique({
+    where: { id: taskId }
+  });
+  if (!task || task.status !== "IN_PROGRESS") return;
+
+  const sourceBytes = await readWorldStorageBytes(task.sourceStorageKey);
+  const sourceFile = new File(
+    [sourceBytes],
+    path.basename(task.sourceStorageKey) || "timeline-export.webm",
+    {
+      type: task.sourceContentType || "video/webm"
+    }
+  );
+  const converted = await transcodeTimelineVideoToMp4(sourceFile);
+  const saved = await saveWorldTimelineExportOutputBytes(
+    converted.bytes,
+    "video/mp4",
+    converted.fileName,
+    task.worldOwnerId,
+    task.id
+  );
+
+  await prisma.worldTimelineExportTask.update({
+    where: { id: task.id },
+    data: {
+      status: "COMPLETED",
+      processingStatus: "TRANSCODED",
+      outputStorageKey: saved.storageKey,
+      outputContentType: "video/mp4",
+      outputFileName: converted.fileName,
+      completedAt: new Date()
+    }
+  });
 }
 
 async function createWorldAssetWithInitialVersion(options: {
@@ -1705,6 +1900,7 @@ function resolveMeshyTaskStage(
 }
 
 let worldAssetGenerationWorkerBusy = false;
+let worldTimelineExportWorkerBusy = false;
 
 async function claimNextWorldAssetGenerationTask() {
   const inProgress = await prisma.worldAssetGenerationTask.findFirst({
@@ -2252,6 +2448,53 @@ async function startWorldAssetGenerationWorker() {
     void runWorldAssetGenerationWorkerTick();
   }, WORLD_ASSET_GENERATION_WORKER_INTERVAL_MS);
   void runWorldAssetGenerationWorkerTick();
+}
+
+async function runWorldTimelineExportWorkerTick() {
+  if (worldTimelineExportWorkerBusy) return;
+
+  worldTimelineExportWorkerBusy = true;
+  let processingTaskId: string | null = null;
+  try {
+    const task = await claimNextWorldTimelineExportTask();
+    if (!task) return;
+    processingTaskId = task.id;
+    await processWorldTimelineExportTask(task.id);
+  } catch (error) {
+    console.error("[timeline-export] task processing failed", error);
+    const message = error instanceof Error ? error.message : String(error);
+    if (processingTaskId) {
+      const task = await prisma.worldTimelineExportTask.findUnique({
+        where: { id: processingTaskId },
+        select: { attempts: true }
+      });
+      if (!task) return;
+      const shouldRetry = task.attempts < WORLD_TIMELINE_EXPORT_MAX_ATTEMPTS;
+      await prisma.worldTimelineExportTask.update({
+        where: { id: processingTaskId },
+        data: {
+          status: shouldRetry ? "PENDING" : "FAILED",
+          processingStatus: shouldRetry ? "QUEUED" : "FAILED",
+          failureReason: message.slice(0, 500),
+          completedAt: shouldRetry ? null : new Date()
+        }
+      });
+    }
+  } finally {
+    worldTimelineExportWorkerBusy = false;
+  }
+}
+
+async function startWorldTimelineExportWorker() {
+  await prisma.worldTimelineExportTask.updateMany({
+    where: { status: "IN_PROGRESS" },
+    data: { status: "PENDING", processingStatus: "QUEUED" }
+  });
+
+  setInterval(() => {
+    void runWorldTimelineExportWorkerTick();
+  }, WORLD_TIMELINE_EXPORT_WORKER_INTERVAL_MS);
+  void runWorldTimelineExportWorkerTick();
 }
 
 const api = new Elysia({ prefix: "/api/v1" })
@@ -3675,10 +3918,19 @@ const api = new Elysia({ prefix: "/api/v1" })
       timelineFrames: normalizeTimelineFrames(updated.timelineFrames) ?? []
     });
   })
-  .post("/world/timeline/export-video", async ({ request }) => {
+  .post("/world/timeline/exports", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
     if (!user) {
       return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
+    }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
     }
 
     const formData = await request.formData();
@@ -3693,19 +3945,126 @@ const api = new Elysia({ prefix: "/api/v1" })
       return jsonResponse({ error: "VIDEO_TOO_LARGE" }, { status: 413 });
     }
 
-    try {
-      const converted = await transcodeTimelineVideoToMp4(fileValue);
-      return new Response(converted.bytes, {
-        headers: {
-          "Content-Type": "video/mp4",
-          "Content-Disposition": `attachment; filename="${converted.fileName}"`,
-          "Cache-Control": "no-store"
-        }
-      });
-    } catch (error) {
-      console.error("[timeline-export] ffmpeg conversion failed", error);
-      return jsonResponse({ error: "TIMELINE_EXPORT_FAILED" }, { status: 500 });
+    const taskId = crypto.randomUUID();
+    const saved = await saveWorldTimelineExportSourceFile(fileValue, worldOwnerId, taskId);
+    const task = await prisma.worldTimelineExportTask.create({
+      data: {
+        id: taskId,
+        worldOwnerId,
+        createdById: user.id,
+        status: "PENDING",
+        sourceStorageKey: saved.storageKey,
+        sourceContentType: fileValue.type || "video/webm",
+        processingStatus: "QUEUED"
+      },
+      select: {
+        id: true,
+        status: true,
+        processingStatus: true,
+        createdAt: true
+      }
+    });
+
+    void runWorldTimelineExportWorkerTick();
+
+    return jsonResponse({
+      ok: true,
+      task: {
+        id: task.id,
+        status: task.status,
+        processingStatus: task.processingStatus,
+        createdAt: task.createdAt.toISOString()
+      }
+    });
+  })
+  .get("/world/timeline/exports", async ({ request }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return jsonResponse({ error: "AUTH_REQUIRED" }, { status: 401 });
     }
+
+    const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    const canManage = await canManageWorldOwner(user.id, worldOwnerId);
+    if (!canManage) {
+      return jsonResponse(
+        { error: "NOT_PARTY_MANAGER_OR_LEADER" },
+        { status: 403 }
+      );
+    }
+
+    const tasks = await prisma.worldTimelineExportTask.findMany({
+      where: { worldOwnerId },
+      orderBy: { createdAt: "desc" },
+      take: WORLD_TIMELINE_EXPORT_RECENT_LIMIT,
+      select: {
+        id: true,
+        status: true,
+        processingStatus: true,
+        outputStorageKey: true,
+        outputFileName: true,
+        failureReason: true,
+        createdAt: true,
+        updatedAt: true,
+        startedAt: true,
+        completedAt: true
+      }
+    });
+
+    return jsonResponse({
+      tasks: tasks.map((task) => ({
+        id: task.id,
+        status: task.status,
+        processingStatus: task.processingStatus,
+        outputFileName: task.outputFileName,
+        outputFileUrl: task.outputStorageKey
+          ? resolveWorldTimelineExportFileUrl(task.id, task.outputStorageKey)
+          : null,
+        failureReason: task.failureReason,
+        createdAt: task.createdAt.toISOString(),
+        updatedAt: task.updatedAt.toISOString(),
+        startedAt: task.startedAt?.toISOString() ?? null,
+        completedAt: task.completedAt?.toISOString() ?? null
+      }))
+    });
+  })
+  .get("/world/timeline/exports/:taskId/file", async ({ request, params }) => {
+    const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
+    if (!user) {
+      return new Response("Auth required", { status: 401 });
+    }
+
+    const taskId = String((params as Record<string, unknown>).taskId ?? "");
+    const task = await prisma.worldTimelineExportTask.findUnique({
+      where: { id: taskId },
+      select: {
+        id: true,
+        worldOwnerId: true,
+        outputStorageKey: true,
+        outputContentType: true,
+        outputFileName: true
+      }
+    });
+    if (!task || !task.outputStorageKey) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
+    if (activeWorldOwnerId !== task.worldOwnerId) {
+      return new Response("Forbidden", { status: 403 });
+    }
+
+    const bytes = await readWorldStorageBytes(task.outputStorageKey).catch(() => null);
+    if (!bytes) {
+      return new Response("Not found", { status: 404 });
+    }
+
+    return new Response(bytes, {
+      headers: {
+        "Content-Type": task.outputContentType || "video/mp4",
+        "Content-Disposition": `attachment; filename="${task.outputFileName || "timeline-export.mp4"}"`,
+        "Cache-Control": "private, max-age=120"
+      }
+    });
   })
   .patch("/world/visibility", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
@@ -5141,6 +5500,7 @@ const api = new Elysia({ prefix: "/api/v1" })
 const port = Number(process.env.PORT) || 3000;
 
 void startWorldAssetGenerationWorker();
+void startWorldTimelineExportWorker();
 
 const app = registerRealtimeWs(
   new Elysia()

@@ -26,6 +26,7 @@ import type {
   WorldPost,
   WorldPostComment,
   WorldPlacement,
+  WorldTimelineExportTask,
   WorldState
 } from "./lib/types";
 import { createRealtimeClient } from "./network/realtime";
@@ -977,6 +978,7 @@ let chatGlobalEnabled = true;
 let chatWorldEnabled = true;
 let worldState: WorldState | null = null;
 let worldGenerationTasks: WorldAssetGenerationTask[] = [];
+let worldTimelineExportTasks: WorldTimelineExportTask[] = [];
 let worldGenerationPollTimer: number | null = null;
 let selectedPlacementAssetId: string | null = null;
 let selectedWorldPlacementId: string | null = null;
@@ -1046,6 +1048,7 @@ let timelineRecordingChunks: BlobPart[] = [];
 let timelineRecordingBlobUrl: string | null = null;
 let timelineRecordingMimeType = "";
 let timelineExportPending = false;
+let timelineDownloadFileName = "timeline-export.mp4";
 const TIMELINE_EXPORT_WIDTH = 1920;
 const TIMELINE_EXPORT_HEIGHT = 1080;
 let timelineAppliedPlacementState = new Map<
@@ -1649,6 +1652,15 @@ function getGenerationStatusLabel(task: WorldAssetGenerationTask) {
     : `${modeLabel} • ${sourceLabel} • Queued`;
 }
 
+function getTimelineExportStatusLabel(task: WorldTimelineExportTask) {
+  if (task.status === "COMPLETED") return "Timeline Export • Completed";
+  if (task.status === "FAILED") return "Timeline Export • Failed";
+  if (task.processingStatus) {
+    return `Timeline Export • ${task.processingStatus.replace(/_/g, " ")}`;
+  }
+  return task.status === "IN_PROGRESS" ? "Timeline Export • In progress" : "Timeline Export • Queued";
+}
+
 function renderCombinedChat() {
   const entries = [
     ...(chatGlobalEnabled
@@ -1766,7 +1778,11 @@ function startWorldGenerationPolling() {
 async function loadWorldGenerationTasks() {
   if (!auth.getCurrentUser() || !worldState?.canManage) {
     worldGenerationTasks = [];
+    worldTimelineExportTasks = [];
+    revokeTimelineRecordingBlobUrl();
+    timelineDownloadFileName = getTimelineRecordingFileName();
     renderWorldGenerationStatus();
+    syncTimelineRecordingUi();
     renderWorldAssets();
     renderWorldPlacements();
     renderWorldPosts();
@@ -1778,19 +1794,39 @@ async function loadWorldGenerationTasks() {
   const response = await fetch(apiUrl("/api/v1/world/assets/generations"), {
     credentials: "include"
   });
-  if (!response.ok) {
+  const exportResponse = await fetch(apiUrl("/api/v1/world/timeline/exports"), {
+    credentials: "include"
+  });
+  if (!response.ok || !exportResponse.ok) {
     return;
   }
 
   const payload = (await response.json()) as {
     tasks: WorldAssetGenerationTask[];
   };
+  const exportPayload = (await exportResponse.json()) as {
+    tasks: WorldTimelineExportTask[];
+  };
   const previousTaskStatusById = new Map(
     worldGenerationTasks.map((task) => [task.id, task.status])
   );
+  const previousExportStatusById = new Map(
+    worldTimelineExportTasks.map((task) => [task.id, task.status])
+  );
   worldGenerationTasks = payload.tasks;
+  worldTimelineExportTasks = exportPayload.tasks;
+  const latestAvailableExportTask = worldTimelineExportTasks.find(
+    (task) => task.status === "COMPLETED" && Boolean(task.outputFileUrl)
+  );
+  if (!timelineExportPending) {
+    revokeTimelineRecordingBlobUrl();
+    timelineRecordingBlobUrl = latestAvailableExportTask?.outputFileUrl ?? null;
+    timelineDownloadFileName =
+      latestAvailableExportTask?.outputFileName || getTimelineRecordingFileName();
+  }
   renderWorldGenerationStatus();
   renderWorldAssets();
+  syncTimelineRecordingUi();
 
   const hasNewlyCompletedTask = worldGenerationTasks.some((task) => {
     if (task.status !== "COMPLETED") return false;
@@ -1811,6 +1847,28 @@ async function loadWorldGenerationTasks() {
       latestFailedTask.failureReason
         ? `Generation failed: ${latestFailedTask.failureReason}`
         : "Generation failed"
+    );
+  }
+
+  const latestCompletedExportTask = worldTimelineExportTasks.find(
+    (task) =>
+      task.status === "COMPLETED" &&
+      Boolean(task.outputFileUrl) &&
+      previousExportStatusById.get(task.id) !== "COMPLETED"
+  );
+  if (latestCompletedExportTask?.outputFileUrl) {
+    setWorldNotice("Timeline MP4 ready");
+  }
+
+  const latestFailedExportTask = worldTimelineExportTasks.find(
+    (task) =>
+      task.status === "FAILED" && previousExportStatusById.get(task.id) !== "FAILED"
+  );
+  if (latestFailedExportTask) {
+    setWorldNotice(
+      latestFailedExportTask.failureReason
+        ? `Timeline export failed: ${latestFailedExportTask.failureReason}`
+        : "Timeline export failed"
     );
   }
 }
@@ -4093,7 +4151,9 @@ function getTimelineRecordingMimeType() {
 
 function revokeTimelineRecordingBlobUrl() {
   if (!timelineRecordingBlobUrl) return;
-  URL.revokeObjectURL(timelineRecordingBlobUrl);
+  if (timelineRecordingBlobUrl.startsWith("blob:")) {
+    URL.revokeObjectURL(timelineRecordingBlobUrl);
+  }
   timelineRecordingBlobUrl = null;
 }
 
@@ -4110,7 +4170,7 @@ function getTimelineRecordingFileName() {
   return `${slug}.mp4`;
 }
 
-async function convertTimelineRecordingToMp4(blob: Blob) {
+async function queueTimelineRecordingExport(blob: Blob) {
   const formData = new FormData();
   formData.set(
     "file",
@@ -4119,7 +4179,7 @@ async function convertTimelineRecordingToMp4(blob: Blob) {
     })
   );
 
-  const response = await fetch(apiUrl("/api/v1/world/timeline/export-video"), {
+  const response = await fetch(apiUrl("/api/v1/world/timeline/exports"), {
     method: "POST",
     credentials: "include",
     body: formData
@@ -4127,7 +4187,9 @@ async function convertTimelineRecordingToMp4(blob: Blob) {
   if (!response.ok) {
     throw new Error("TIMELINE_EXPORT_FAILED");
   }
-  return await response.blob();
+  return (await response.json()) as {
+    task?: { id?: string; status?: string; processingStatus?: string | null; createdAt?: string };
+  };
 }
 
 function syncTimelineRecordingUi() {
@@ -4154,7 +4216,7 @@ function downloadTimelineRecording() {
   if (!timelineRecordingBlobUrl) return;
   const downloadLink = document.createElement("a");
   downloadLink.href = timelineRecordingBlobUrl;
-  downloadLink.download = getTimelineRecordingFileName();
+  downloadLink.download = timelineDownloadFileName;
   downloadLink.style.display = "none";
   document.body.appendChild(downloadLink);
   downloadLink.click();
@@ -4217,17 +4279,15 @@ async function toggleTimelineRecording() {
     }
     timelineExportPending = true;
     syncTimelineRecordingUi();
-    setWorldNotice("Converting timeline export to MP4...");
+    setWorldNotice("Uploading timeline export job...");
     try {
-      const mp4Blob = await convertTimelineRecordingToMp4(webmBlob);
       revokeTimelineRecordingBlobUrl();
-      timelineRecordingBlobUrl = mp4Blob.size > 0 ? URL.createObjectURL(mp4Blob) : null;
-      if (timelineRecordingBlobUrl) {
-        downloadTimelineRecording();
-        setWorldNotice("Timeline MP4 ready");
-      }
+      timelineDownloadFileName = getTimelineRecordingFileName();
+      await queueTimelineRecordingExport(webmBlob);
+      await loadWorldGenerationTasks();
+      setWorldNotice("Timeline export queued");
     } catch {
-      setWorldNotice("Timeline export conversion failed");
+      setWorldNotice("Timeline export queue failed");
     } finally {
       timelineExportPending = false;
       syncTimelineRecordingUi();
@@ -5396,6 +5456,8 @@ async function loadWorldState() {
     stopTimelinePlayback();
     worldState = null;
     worldGenerationTasks = [];
+    worldTimelineExportTasks = [];
+    revokeTimelineRecordingBlobUrl();
     selectedWorldPlacementId = null;
     selectedWorldPhotoWallId = null;
     selectedWorldCameraId = null;
@@ -5774,10 +5836,23 @@ function renderWorldGenerationStatus() {
     return;
   }
   const tasks = worldGenerationTasks.filter((task) => task.status !== "COMPLETED");
+  const exportTasks = worldTimelineExportTasks.filter((task) => task.status !== "COMPLETED");
   if (tasks.length === 0) {
+    if (exportTasks.length > 0) {
+      for (const task of exportTasks) {
+        const row = document.createElement("div");
+        row.className = "world-asset-row";
+        const label = document.createElement("div");
+        label.className = "party-result-label";
+        label.textContent = getTimelineExportStatusLabel(task);
+        row.appendChild(label);
+        worldGenerationStatusList.appendChild(row);
+      }
+      return;
+    }
     const empty = document.createElement("div");
     empty.className = "party-empty";
-    empty.textContent = "No active generation jobs";
+    empty.textContent = "No active generation or export jobs";
     worldGenerationStatusList.appendChild(empty);
     return;
   }
@@ -5788,6 +5863,15 @@ function renderWorldGenerationStatus() {
     label.className = "party-result-label";
     label.textContent = `${task.modelName} • ${getGenerationStatusLabel(task)}`;
     label.title = task.prompt;
+    row.appendChild(label);
+    worldGenerationStatusList.appendChild(row);
+  }
+  for (const task of exportTasks) {
+    const row = document.createElement("div");
+    row.className = "world-asset-row";
+    const label = document.createElement("div");
+    label.className = "party-result-label";
+    label.textContent = getTimelineExportStatusLabel(task);
     row.appendChild(label);
     worldGenerationStatusList.appendChild(row);
   }
@@ -6710,6 +6794,8 @@ const auth = createAuthController({
     if (!user) {
       worldState = null;
       worldGenerationTasks = [];
+      worldTimelineExportTasks = [];
+      revokeTimelineRecordingBlobUrl();
       stopWorldGenerationPolling();
       isPlacingModel = false;
       isPlacingPhotoWall = false;

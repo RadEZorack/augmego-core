@@ -270,3 +270,16 @@ export type WorldAssetGenerationTask = {
   startedAt: string | null;
   completedAt: string | null;
 };
+
+export type WorldTimelineExportTask = {
+  id: string;
+  status: "PENDING" | "IN_PROGRESS" | "COMPLETED" | "FAILED";
+  processingStatus: string | null;
+  outputFileName: string | null;
+  outputFileUrl: string | null;
+  failureReason: string | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+};

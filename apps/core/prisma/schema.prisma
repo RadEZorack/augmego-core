@@ -61,6 +61,8 @@ model User {
   createdWorldPostComments WorldPostComment[] @relation("WorldPostCommentCreator")
   ownedWorldAssetGenerationTasks WorldAssetGenerationTask[] @relation("WorldAssetGenerationOwner")
   createdWorldAssetGenerationTasks WorldAssetGenerationTask[] @relation("WorldAssetGenerationCreator")
+  ownedWorldTimelineExportTasks WorldTimelineExportTask[] @relation("WorldTimelineExportOwner")
+  createdWorldTimelineExportTasks WorldTimelineExportTask[] @relation("WorldTimelineExportCreator")
 }
 
 model Session {
@@ -274,6 +276,31 @@ model WorldAssetGenerationTask {
   updatedAt          DateTime                   @updatedAt
   worldOwner         User                       @relation("WorldAssetGenerationOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
   createdBy          User                       @relation("WorldAssetGenerationCreator", fields: [createdById], references: [id], onDelete: Cascade)
+
+  @@index([status, updatedAt])
+  @@index([worldOwnerId, createdAt])
+  @@index([createdById, createdAt])
+}
+
+model WorldTimelineExportTask {
+  id                 String                     @id @default(uuid()) @db.Uuid
+  worldOwnerId       String                     @db.Uuid
+  createdById        String                     @db.Uuid
+  status             WorldAssetGenerationStatus @default(PENDING)
+  sourceStorageKey   String
+  sourceContentType  String?
+  outputStorageKey   String?
+  outputContentType  String?
+  outputFileName     String?
+  processingStatus   String?
+  failureReason      String?
+  attempts           Int                        @default(0)
+  startedAt          DateTime?
+  completedAt        DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+  worldOwner         User                       @relation("WorldTimelineExportOwner", fields: [worldOwnerId], references: [id], onDelete: Cascade)
+  createdBy          User                       @relation("WorldTimelineExportCreator", fields: [createdById], references: [id], onDelete: Cascade)
 
   @@index([status, updatedAt])
   @@index([worldOwnerId, createdAt])
