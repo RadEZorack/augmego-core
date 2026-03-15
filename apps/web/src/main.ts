@@ -1820,7 +1820,9 @@ async function loadWorldGenerationTasks() {
   );
   if (!timelineExportPending) {
     revokeTimelineRecordingBlobUrl();
-    timelineRecordingBlobUrl = latestAvailableExportTask?.outputFileUrl ?? null;
+    timelineRecordingBlobUrl = resolveTimelineExportDownloadUrl(
+      latestAvailableExportTask?.outputFileUrl
+    );
     timelineDownloadFileName =
       latestAvailableExportTask?.outputFileName || getTimelineRecordingFileName();
   }
@@ -4168,6 +4170,11 @@ function getTimelineRecordingFileName() {
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/^-+|-+$/g, "") || "active-camera";
   return `${slug}.mp4`;
+}
+
+function resolveTimelineExportDownloadUrl(fileUrl: string | null | undefined) {
+  if (!fileUrl) return null;
+  return apiUrl(fileUrl);
 }
 
 async function queueTimelineRecordingExport(blob: Blob) {
