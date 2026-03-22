@@ -239,6 +239,31 @@ body {
   margin: 0 auto;
 }
 
+.home-listing-credit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  max-width: 1240px;
+  margin: 28px auto 0;
+  padding: 0 8px;
+  font-size: 0.85rem;
+  line-height: 1.5;
+  color: #6f4aa8;
+}
+
+.home-listing-credit a {
+  color: #5d3592;
+  font-weight: 600;
+  text-decoration: underline;
+  text-decoration-color: rgba(93, 53, 146, 0.45);
+  text-underline-offset: 0.18em;
+}
+
+.home-listing-credit a:hover {
+  text-decoration-color: currentColor;
+}
+
 .home-results-header {
   display: flex;
   align-items: end;
