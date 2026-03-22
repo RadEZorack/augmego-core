@@ -908,6 +908,265 @@ async function resolveActiveWorldPartyId(userId: string) {
   return ownedWorld.id;
 }
 
+async function isPublicWorldOwnerContentAccessible(worldOwnerId: string) {
+  const ownedWorld = await prisma.party.findFirst({
+    where: { leaderId: worldOwnerId },
+    orderBy: { createdAt: "asc" },
+    select: { isPublic: true }
+  });
+  return ownedWorld?.isPublic === true;
+}
+
+async function buildWorldStatePayload(options: {
+  worldOwnerId: string;
+  worldPartyId: string;
+  viewerUserId: string | null;
+  canManage: boolean;
+  canManageVisibility: boolean;
+}) {
+  const { worldOwnerId, worldPartyId, viewerUserId, canManage, canManageVisibility } = options;
+  const activeWorld = await prisma.party.findUnique({
+    where: { id: worldPartyId },
+    select: {
+      id: true,
+      isPublic: true,
+      leaderId: true,
+      name: true,
+      description: true,
+      timelineFrames: true,
+      portalIsPublic: true,
+      portalLat: true,
+      portalLng: true
+    }
+  });
+
+  const [assets, placements, posts, photoWalls, cameras] = await Promise.all([
+    prisma.worldAsset.findMany({
+      where: canManage
+        ? {
+            OR: [
+              { visibility: WorldAssetVisibility.PUBLIC },
+              { worldOwnerId }
+            ]
+          }
+        : {
+            worldOwnerId,
+            visibility: WorldAssetVisibility.PUBLIC
+          },
+      include: {
+        currentVersion: true,
+        versions: {
+          orderBy: { version: "desc" }
+        },
+        _count: {
+          select: {
+            placements: true
+          }
+        }
+      },
+      orderBy: { updatedAt: "desc" }
+    }),
+    prisma.worldPlacement.findMany({
+      where: canManage
+        ? { worldOwnerId }
+        : {
+            worldOwnerId,
+            asset: {
+              is: {
+                visibility: WorldAssetVisibility.PUBLIC
+              }
+            }
+          },
+      include: {
+        asset: {
+          select: {
+            id: true,
+            name: true
+          }
+        }
+      },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.worldPost.findMany({
+      where: { worldOwnerId },
+      include: {
+        createdBy: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            avatarUrl: true
+          }
+        },
+        _count: {
+          select: {
+            comments: true
+          }
+        },
+        comments: {
+          include: {
+            createdBy: {
+              select: {
+                id: true,
+                name: true,
+                email: true,
+                avatarUrl: true
+              }
+            }
+          },
+          orderBy: { createdAt: "desc" },
+          take: 5
+        }
+      },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.worldPhotoWall.findMany({
+      where: { worldOwnerId },
+      orderBy: { createdAt: "asc" }
+    }),
+    prisma.worldCamera.findMany({
+      where: { worldOwnerId },
+      orderBy: { createdAt: "asc" }
+    })
+  ]);
+
+  return {
+    worldOwnerId,
+    worldId: activeWorld?.id ?? worldPartyId,
+    worldName: activeWorld?.name ?? "Untitled World",
+    worldDescription: activeWorld?.description ?? null,
+    portalIsPublic: activeWorld?.portalIsPublic ?? true,
+    portalLat: activeWorld?.portalLat ?? DEFAULT_WORLD_PORTAL_LAT,
+    portalLng: activeWorld?.portalLng ?? DEFAULT_WORLD_PORTAL_LNG,
+    canManage,
+    isPublic: activeWorld?.isPublic ?? false,
+    canManageVisibility,
+    assets: assets.map((asset) => ({
+      id: asset.id,
+      ownerId: asset.worldOwnerId,
+      name: asset.name,
+      visibility: asset.visibility === WorldAssetVisibility.PRIVATE ? "private" : "public",
+      canManageVisibility:
+        Boolean(viewerUserId) &&
+        (asset.worldOwnerId === viewerUserId || (asset.worldOwnerId === worldOwnerId && canManage)),
+      canChangeVisibility: asset._count.placements === 0,
+      createdAt: asset.createdAt.toISOString(),
+      updatedAt: asset.updatedAt.toISOString(),
+      currentVersion: asset.currentVersion
+        ? {
+            id: asset.currentVersion.id,
+            version: asset.currentVersion.version,
+            originalName: asset.currentVersion.originalName,
+            contentType: asset.currentVersion.contentType,
+            sizeBytes: asset.currentVersion.sizeBytes,
+            createdAt: asset.currentVersion.createdAt.toISOString(),
+            fileUrl: resolveWorldAssetFileUrl(asset.currentVersion.id, asset.currentVersion.storageKey)
+          }
+        : null,
+      versions: asset.versions.map((version) => ({
+        id: version.id,
+        version: version.version,
+        originalName: version.originalName,
+        contentType: version.contentType,
+        sizeBytes: version.sizeBytes,
+        createdAt: version.createdAt.toISOString(),
+        fileUrl: resolveWorldAssetFileUrl(version.id, version.storageKey)
+      }))
+    })),
+    placements: placements.map((placement) => ({
+      id: placement.id,
+      assetId: placement.assetId,
+      assetName: placement.asset.name,
+      position: {
+        x: placement.positionX,
+        y: placement.positionY,
+        z: placement.positionZ
+      },
+      rotation: {
+        x: placement.rotationX,
+        y: placement.rotationY,
+        z: placement.rotationZ
+      },
+      scale: {
+        x: placement.scaleX,
+        y: placement.scaleY,
+        z: placement.scaleZ
+      },
+      createdAt: placement.createdAt.toISOString(),
+      updatedAt: placement.updatedAt.toISOString()
+    })),
+    posts: posts.map((post) => ({
+      id: post.id,
+      imageUrl: post.imageUrl,
+      message: post.message,
+      position: {
+        x: post.positionX,
+        y: post.positionY,
+        z: post.positionZ
+      },
+      isMinimized: post.isMinimized,
+      commentCount: post._count.comments,
+      commentPreview: [...post.comments].reverse().map((comment) => ({
+        id: comment.id,
+        postId: comment.postId,
+        message: comment.message,
+        author: {
+          id: comment.createdBy.id,
+          name: comment.createdBy.name ?? "User",
+          avatarUrl: comment.createdBy.avatarUrl
+        },
+        createdAt: comment.createdAt.toISOString(),
+        updatedAt: comment.updatedAt.toISOString()
+      })),
+      author: {
+        id: post.createdBy.id,
+        name: post.createdBy.name ?? "User",
+        avatarUrl: post.createdBy.avatarUrl
+      },
+      createdAt: post.createdAt.toISOString(),
+      updatedAt: post.updatedAt.toISOString()
+    })),
+    photoWalls: photoWalls.map((photoWall) => ({
+      id: photoWall.id,
+      imageUrl: photoWall.imageUrl,
+      position: {
+        x: photoWall.positionX,
+        y: photoWall.positionY,
+        z: photoWall.positionZ
+      },
+      rotation: {
+        x: photoWall.rotationX,
+        y: photoWall.rotationY,
+        z: photoWall.rotationZ
+      },
+      scale: {
+        x: photoWall.scaleX,
+        y: photoWall.scaleY,
+        z: photoWall.scaleZ
+      },
+      createdAt: photoWall.createdAt.toISOString(),
+      updatedAt: photoWall.updatedAt.toISOString()
+    })),
+    cameras: cameras.map((camera) => ({
+      id: camera.id,
+      name: camera.name,
+      position: {
+        x: camera.positionX,
+        y: camera.positionY,
+        z: camera.positionZ
+      },
+      lookAt: {
+        x: camera.lookAtX,
+        y: camera.lookAtY,
+        z: camera.lookAtZ
+      },
+      createdAt: camera.createdAt.toISOString(),
+      updatedAt: camera.updatedAt.toISOString()
+    })),
+    timelineFrames: normalizeTimelineFrames(activeWorld?.timelineFrames ?? []) ?? []
+  };
+}
+
 async function saveWorldAssetFile(
   file: File,
   worldOwnerId: string,
@@ -3586,235 +3845,43 @@ const api = new Elysia({ prefix: "/api/v1" })
     const worldOwnerId = await resolveActiveWorldOwnerId(user.id);
     const activeWorldPartyId = await resolveActiveWorldPartyId(user.id);
     const canManage = await canManageWorldOwner(user.id, worldOwnerId);
-    const activeWorld = await prisma.party.findUnique({
-      where: { id: activeWorldPartyId },
+    return jsonResponse(
+      await buildWorldStatePayload({
+        worldOwnerId,
+        worldPartyId: activeWorldPartyId,
+        viewerUserId: user.id,
+        canManage,
+        canManageVisibility: user.id === worldOwnerId
+      })
+    );
+  })
+  .get("/world/public/:worldId", async ({ params }) => {
+    const worldId = String((params as Record<string, unknown>).worldId ?? "").trim();
+    if (!worldId) {
+      return jsonResponse({ error: "WORLD_NOT_FOUND" }, { status: 404 });
+    }
+
+    const world = await prisma.party.findUnique({
+      where: { id: worldId },
       select: {
         id: true,
-        isPublic: true,
         leaderId: true,
-        name: true,
-        description: true,
-        timelineFrames: true,
-        portalIsPublic: true,
-        portalLat: true,
-        portalLng: true
+        isPublic: true
       }
     });
+    if (!world || !world.isPublic) {
+      return jsonResponse({ error: "WORLD_NOT_FOUND" }, { status: 404 });
+    }
 
-    const [assets, placements, posts, photoWalls, cameras] = await Promise.all([
-      prisma.worldAsset.findMany({
-        where: {
-          OR: [
-            { visibility: WorldAssetVisibility.PUBLIC },
-            { worldOwnerId }
-          ]
-        },
-        include: {
-          currentVersion: true,
-          versions: {
-            orderBy: { version: "desc" }
-          },
-          _count: {
-            select: {
-              placements: true
-            }
-          }
-        },
-        orderBy: { updatedAt: "desc" }
-      }),
-      prisma.worldPlacement.findMany({
-        where: { worldOwnerId },
-        include: {
-          asset: {
-            select: {
-              id: true,
-              name: true
-            }
-          }
-        },
-        orderBy: { createdAt: "asc" }
-      }),
-      prisma.worldPost.findMany({
-        where: { worldOwnerId },
-        include: {
-          createdBy: {
-            select: {
-              id: true,
-              name: true,
-              email: true,
-              avatarUrl: true
-            }
-          },
-          _count: {
-            select: {
-              comments: true
-            }
-          },
-          comments: {
-            include: {
-              createdBy: {
-                select: {
-                  id: true,
-                  name: true,
-                  email: true,
-                  avatarUrl: true
-                }
-              }
-            },
-            orderBy: { createdAt: "desc" },
-            take: 5
-          }
-        },
-        orderBy: { createdAt: "asc" }
-      }),
-      prisma.worldPhotoWall.findMany({
-        where: { worldOwnerId },
-        orderBy: { createdAt: "asc" }
-      }),
-      prisma.worldCamera.findMany({
-        where: { worldOwnerId },
-        orderBy: { createdAt: "asc" }
+    return jsonResponse(
+      await buildWorldStatePayload({
+        worldOwnerId: world.leaderId,
+        worldPartyId: world.id,
+        viewerUserId: null,
+        canManage: false,
+        canManageVisibility: false
       })
-    ]);
-
-    return jsonResponse({
-      worldOwnerId,
-      worldId: activeWorld?.id ?? activeWorldPartyId,
-      worldName: activeWorld?.name ?? "Untitled World",
-      worldDescription: activeWorld?.description ?? null,
-      portalIsPublic: activeWorld?.portalIsPublic ?? true,
-      portalLat: activeWorld?.portalLat ?? DEFAULT_WORLD_PORTAL_LAT,
-      portalLng: activeWorld?.portalLng ?? DEFAULT_WORLD_PORTAL_LNG,
-      canManage,
-      isPublic: activeWorld?.isPublic ?? false,
-      canManageVisibility: (activeWorld?.leaderId ?? "") === user.id,
-      timelineFrames: normalizeTimelineFrames(activeWorld?.timelineFrames ?? []) ?? [],
-      assets: assets.map((asset) => ({
-        id: asset.id,
-        ownerId: asset.worldOwnerId,
-        name: asset.name,
-        visibility: asset.visibility === WorldAssetVisibility.PRIVATE ? "private" : "public",
-        canManageVisibility:
-          asset.worldOwnerId === user.id ||
-          (asset.worldOwnerId === worldOwnerId && canManage),
-        canChangeVisibility: asset._count.placements === 0,
-        createdAt: asset.createdAt.toISOString(),
-        updatedAt: asset.updatedAt.toISOString(),
-        currentVersion: asset.currentVersion
-          ? {
-              id: asset.currentVersion.id,
-              version: asset.currentVersion.version,
-              originalName: asset.currentVersion.originalName,
-              contentType: asset.currentVersion.contentType,
-              sizeBytes: asset.currentVersion.sizeBytes,
-              createdAt: asset.currentVersion.createdAt.toISOString(),
-              fileUrl: resolveWorldAssetFileUrl(
-                asset.currentVersion.id,
-                asset.currentVersion.storageKey
-              )
-            }
-          : null,
-        versions: asset.versions.map((version) => ({
-          id: version.id,
-          version: version.version,
-          originalName: version.originalName,
-          contentType: version.contentType,
-          sizeBytes: version.sizeBytes,
-          createdAt: version.createdAt.toISOString(),
-          fileUrl: resolveWorldAssetFileUrl(version.id, version.storageKey)
-        }))
-      })),
-      placements: placements.map((placement) => ({
-        id: placement.id,
-        assetId: placement.assetId,
-        assetName: placement.asset.name,
-        position: {
-          x: placement.positionX,
-          y: placement.positionY,
-          z: placement.positionZ
-        },
-        rotation: {
-          x: placement.rotationX,
-          y: placement.rotationY,
-          z: placement.rotationZ
-        },
-        scale: {
-          x: placement.scaleX,
-          y: placement.scaleY,
-          z: placement.scaleZ
-        },
-        createdAt: placement.createdAt.toISOString(),
-        updatedAt: placement.updatedAt.toISOString()
-      })),
-      posts: posts.map((post) => ({
-        id: post.id,
-        imageUrl: post.imageUrl,
-        message: post.message,
-        position: {
-          x: post.positionX,
-          y: post.positionY,
-          z: post.positionZ
-        },
-        isMinimized: post.isMinimized,
-        commentCount: post._count.comments,
-        commentPreview: [...post.comments].reverse().map((comment) => ({
-          id: comment.id,
-          postId: comment.postId,
-          message: comment.message,
-          author: {
-            id: comment.createdBy.id,
-            name: comment.createdBy.name ?? "User",
-            avatarUrl: comment.createdBy.avatarUrl
-          },
-          createdAt: comment.createdAt.toISOString(),
-          updatedAt: comment.updatedAt.toISOString()
-        })),
-        author: {
-          id: post.createdBy.id,
-          name: post.createdBy.name ?? "User",
-          avatarUrl: post.createdBy.avatarUrl
-        },
-        createdAt: post.createdAt.toISOString(),
-        updatedAt: post.updatedAt.toISOString()
-      })),
-      photoWalls: photoWalls.map((photoWall) => ({
-        id: photoWall.id,
-        imageUrl: photoWall.imageUrl,
-        position: {
-          x: photoWall.positionX,
-          y: photoWall.positionY,
-          z: photoWall.positionZ
-        },
-        rotation: {
-          x: photoWall.rotationX,
-          y: photoWall.rotationY,
-          z: photoWall.rotationZ
-        },
-        scale: {
-          x: photoWall.scaleX,
-          y: photoWall.scaleY,
-          z: photoWall.scaleZ
-        },
-        createdAt: photoWall.createdAt.toISOString(),
-        updatedAt: photoWall.updatedAt.toISOString()
-      })),
-      cameras: cameras.map((camera) => ({
-        id: camera.id,
-        name: camera.name,
-        position: {
-          x: camera.positionX,
-          y: camera.positionY,
-          z: camera.positionZ
-        },
-        lookAt: {
-          x: camera.lookAtX,
-          y: camera.lookAtY,
-          z: camera.lookAtZ
-        },
-        createdAt: camera.createdAt.toISOString(),
-        updatedAt: camera.updatedAt.toISOString()
-      }))
-    });
+    );
   })
   .patch("/world/settings", async ({ request }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
@@ -5335,10 +5402,6 @@ const api = new Elysia({ prefix: "/api/v1" })
   })
   .get("/world/posts/:postId/image", async ({ request, params }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
-    if (!user) {
-      return new Response("Auth required", { status: 401 });
-    }
-
     const postId = String((params as Record<string, unknown>).postId ?? "");
     const post = await prisma.worldPost.findUnique({
       where: { id: postId },
@@ -5354,8 +5417,10 @@ const api = new Elysia({ prefix: "/api/v1" })
       return new Response("Not found", { status: 404 });
     }
 
-    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
-    if (activeWorldOwnerId !== post.worldOwnerId) {
+    const canAccess = user
+      ? (await resolveActiveWorldOwnerId(user.id)) === post.worldOwnerId
+      : await isPublicWorldOwnerContentAccessible(post.worldOwnerId);
+    if (!canAccess) {
       return new Response("Forbidden", { status: 403 });
     }
 
@@ -5380,10 +5445,6 @@ const api = new Elysia({ prefix: "/api/v1" })
   })
   .get("/world/photo-walls/:photoWallId/image", async ({ request, params }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
-    if (!user) {
-      return new Response("Auth required", { status: 401 });
-    }
-
     const photoWallId = String((params as Record<string, unknown>).photoWallId ?? "");
     const wall = await prisma.worldPhotoWall.findUnique({
       where: { id: photoWallId },
@@ -5398,8 +5459,10 @@ const api = new Elysia({ prefix: "/api/v1" })
       return new Response("Not found", { status: 404 });
     }
 
-    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
-    if (activeWorldOwnerId !== wall.worldOwnerId) {
+    const canAccess = user
+      ? (await resolveActiveWorldOwnerId(user.id)) === wall.worldOwnerId
+      : await isPublicWorldOwnerContentAccessible(wall.worldOwnerId);
+    if (!canAccess) {
       return new Response("Forbidden", { status: 403 });
     }
 
@@ -5424,10 +5487,6 @@ const api = new Elysia({ prefix: "/api/v1" })
   })
   .get("/world/assets/version/:versionId/file", async ({ request, params }) => {
     const user = await resolveSessionUser(prisma, request, SESSION_COOKIE_NAME);
-    if (!user) {
-      return new Response("Auth required", { status: 401 });
-    }
-
     const versionId = String((params as Record<string, unknown>).versionId ?? "");
     const version = await prisma.worldAssetVersion.findUnique({
       where: { id: versionId },
@@ -5445,10 +5504,11 @@ const api = new Elysia({ prefix: "/api/v1" })
       return new Response("Not found", { status: 404 });
     }
 
-    const activeWorldOwnerId = await resolveActiveWorldOwnerId(user.id);
-    const canAccess =
-      version.asset.visibility === WorldAssetVisibility.PUBLIC ||
-      activeWorldOwnerId === version.asset.worldOwnerId;
+    const canAccess = user
+      ? version.asset.visibility === WorldAssetVisibility.PUBLIC ||
+        (await resolveActiveWorldOwnerId(user.id)) === version.asset.worldOwnerId
+      : version.asset.visibility === WorldAssetVisibility.PUBLIC &&
+        (await isPublicWorldOwnerContentAccessible(version.asset.worldOwnerId));
     if (!canAccess) {
       return new Response("Forbidden", { status: 403 });
     }

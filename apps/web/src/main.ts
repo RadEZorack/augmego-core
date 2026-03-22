@@ -1574,10 +1574,12 @@ function renderHomeListing() {
     const enterWorldButton = document.createElement("button");
     enterWorldButton.className = "home-primary-button";
     enterWorldButton.type = "button";
-    const canEnter = Boolean(auth.getCurrentUser()) && portal.canJoin;
+    const canEnter = portal.canJoin;
     enterWorldButton.disabled = !canEnter;
     enterWorldButton.textContent = !auth.getCurrentUser()
-      ? "Sign in to Enter"
+      ? portal.canJoin
+        ? "Preview World"
+        : "World Not Joinable"
       : portal.canJoin
         ? "Enter World"
         : "World Not Joinable";
@@ -1601,12 +1603,10 @@ function buildShareWorldLink(worldId: string) {
 
 function syncShareWorldLinkButton() {
   if (!shareWorldLinkButton) return;
-  const canShare = Boolean(auth.getCurrentUser() && worldState?.worldId && currentRouteMode === "world");
+  const canShare = Boolean(worldState?.worldId && currentRouteMode === "world");
   shareWorldLinkButton.hidden = !canShare;
   shareWorldLinkButton.disabled = !canShare;
-  shareWorldLinkButton.title = canShare
-    ? "Copy world link"
-    : "Sign in and load a world to share";
+  shareWorldLinkButton.title = canShare ? "Copy world link" : "Load a world to share";
 }
 
 async function copyCurrentWorldLink() {
@@ -2088,7 +2088,7 @@ function renderWorldPostComments() {
   if (worldPostCommentsForPostId !== selectedPost.id && !worldPostCommentsLoading) {
     const empty = document.createElement("div");
     empty.className = "party-empty";
-    empty.textContent = "Comments not loaded";
+    empty.textContent = canComment ? "Comments not loaded" : "Sign in to view full comments";
     worldPostCommentsContainer.appendChild(empty);
     return;
   }
@@ -5459,7 +5459,9 @@ async function loadWorldState() {
     return;
   }
 
-  if (!auth.getCurrentUser()) {
+  const currentUser = auth.getCurrentUser();
+  const publicWorldId = pendingAutoJoinWorldId?.trim() ?? "";
+  if (!currentUser && !publicWorldId) {
     stopTimelinePlayback();
     worldState = null;
     worldGenerationTasks = [];
@@ -5541,13 +5543,23 @@ async function loadWorldState() {
     return;
   }
 
-  const response = await fetch(apiUrl("/api/v1/world"), {
-    credentials: "include"
-  });
+  const response = currentUser
+    ? await fetch(apiUrl("/api/v1/world"), {
+        credentials: "include"
+      })
+    : await fetch(apiUrl(`/api/v1/world/public/${encodeURIComponent(publicWorldId)}`), {
+        credentials: "include"
+      });
 
   if (!response.ok) {
+    worldState = null;
+    game.setWorldData(null);
+    game.setWorldPlacementTransformEnabled(false);
     game.setPendingWorldPostPlacement(null);
-    setWorldNotice("Failed to load world");
+    syncTransformToolbar();
+    setWorldNotice(
+      !currentUser && response.status === 404 ? "Public world not found" : "Failed to load world"
+    );
     syncShareWorldLinkButton();
     return;
   }
@@ -5597,7 +5609,7 @@ async function loadWorldState() {
   if (editingWorldPostId && !payload.posts.some((post) => post.id === editingWorldPostId)) {
     editingWorldPostId = null;
   }
-  if (partyState.party) {
+  if (partyState.party && currentUser) {
     partyState = {
       ...partyState,
       party: {
@@ -5639,9 +5651,15 @@ async function loadWorldState() {
   if (worldPostImageUrlInput) worldPostImageUrlInput.disabled = !payload.canManage;
   if (worldPostImageFileInput) worldPostImageFileInput.disabled = !payload.canManage;
   if (worldPostMessageInput) worldPostMessageInput.disabled = !payload.canManage;
+  if (worldPostCommentInput) worldPostCommentInput.disabled = !currentUser;
+  if (worldPostCommentSendButton) worldPostCommentSendButton.disabled = !currentUser;
 
   const worldOwnerLabel =
-    payload.worldOwnerId === auth.getCurrentUser()?.id ? "Your world" : "Visited world";
+    payload.worldOwnerId === currentUser?.id
+      ? "Your world"
+      : currentUser
+        ? "Visited world"
+        : "Public preview";
   setWorldNotice(
     `${payload.worldName} • ${worldOwnerLabel} • ${payload.isPublic ? "Public" : "Private"} • ${
       payload.assets.length
@@ -5649,8 +5667,15 @@ async function loadWorldState() {
   );
 
   syncWorldVisibilityControls();
-  startWorldGenerationPolling();
-  void loadWorldGenerationTasks();
+  if (payload.canManage) {
+    startWorldGenerationPolling();
+    void loadWorldGenerationTasks();
+  } else {
+    stopWorldGenerationPolling();
+    worldGenerationTasks = [];
+    worldTimelineExportTasks = [];
+    renderWorldGenerationStatus();
+  }
   renderWorldAssets();
   renderWorldPlacements();
   renderWorldPhotoWalls();
@@ -5662,7 +5687,14 @@ async function loadWorldState() {
   syncWorldPostFormMode();
   renderTimelineEditor();
   syncTimelinePreviewWindow();
-  void loadCommentsForSelectedPost(true);
+  if (currentUser) {
+    void loadCommentsForSelectedPost(true);
+  } else {
+    worldPostComments = [];
+    worldPostCommentsForPostId = null;
+    worldPostCommentsLoading = false;
+    renderWorldPostComments();
+  }
 }
 
 function renderWorldAssets() {
@@ -6223,9 +6255,7 @@ function activateWorldViewForWorld(worldId: string) {
   } else {
     tryAutoJoinLinkedWorld();
   }
-  if (auth.getCurrentUser()) {
-    void loadWorldState();
-  }
+  void loadWorldState();
 }
 
 async function loadWorldPortalPins() {
@@ -6409,10 +6439,6 @@ const worldMap = createWorldMapController({
     }
   },
   onJoinWorld(worldId) {
-    if (!auth.getCurrentUser()) {
-      worldMap.setStatus("Sign in to join worlds");
-      return;
-    }
     const selectedPortal = knownWorldPortals.find((portal) => portal.worldId === worldId);
     if (selectedPortal && !selectedPortal.canJoin) {
       worldMap.setStatus("This world is private");
@@ -6826,7 +6852,7 @@ const auth = createAuthController({
       game.setWorldPlacementTransformEnabled(false);
       game.setPendingWorldPostPlacement(null);
       syncTransformToolbar();
-      setWorldNotice("Sign in to load world");
+      setWorldNotice(worldViewActive ? "Loading public world preview..." : "Sign in to load world");
       if (worldAssetsContainer) worldAssetsContainer.innerHTML = "";
       if (worldGenerationStatusList) worldGenerationStatusList.innerHTML = "";
       if (worldPlacementsContainer) worldPlacementsContainer.innerHTML = "";
@@ -6863,6 +6889,9 @@ const auth = createAuthController({
       setWorldMapHomeAddress(null);
       syncWorldMapControlState();
       void loadWorldPortalPins();
+      if (worldViewActive) {
+        void loadWorldState();
+      }
       return;
     }
 
@@ -7224,9 +7253,7 @@ window.addEventListener("popstate", () => {
     autoJoinWorldIdSent = null;
     setWorldViewMode(true);
     tryAutoJoinLinkedWorld();
-    if (auth.getCurrentUser()) {
-      void loadWorldState();
-    }
+    void loadWorldState();
     return;
   }
   pendingAutoJoinWorldId = null;
@@ -7574,6 +7601,10 @@ worldPostCommentForm?.addEventListener("submit", (event) => {
   const message = worldPostCommentInput?.value.trim() ?? "";
   if (!post) {
     setWorldNotice("Select a post first");
+    return;
+  }
+  if (!auth.getCurrentUser()) {
+    setWorldNotice("Sign in to comment");
     return;
   }
   if (!message) {

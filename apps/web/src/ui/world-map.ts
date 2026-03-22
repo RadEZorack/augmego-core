@@ -164,7 +164,11 @@ export function createWorldMapController(options: WorldMapControllerOptions) {
       worldAddressEl.textContent = "Fictional address available after assignment.";
     }
     joinButton.disabled = !portal.canJoin;
-    joinButton.textContent = portal.canJoin ? "Join World" : "World Not Joinable";
+    joinButton.textContent = portal.canJoin
+      ? currentUser
+        ? "Join World"
+        : "Preview World"
+      : "World Not Joinable";
   }
 
   function hideCard() {
