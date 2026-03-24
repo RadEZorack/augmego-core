@@ -2,7 +2,7 @@
 
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
 import { Canvas, ThreeEvent } from "@react-three/fiber";
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 type BlockColor = "grass" | "stone" | "sand" | "coral" | "sky";
@@ -13,6 +13,7 @@ type VoxelBlock = {
 };
 
 type VoxelMap = Record<string, VoxelBlock>;
+type BlocksByColor = Record<BlockColor, VoxelBlock[]>;
 
 const BLOCK_COLORS: Record<BlockColor, string> = {
   grass: "#7fb069",
@@ -23,108 +24,203 @@ const BLOCK_COLORS: Record<BlockColor, string> = {
 };
 
 const PALETTE: BlockColor[] = ["grass", "stone", "sand", "coral", "sky"];
+const WORLD_RADIUS = 22;
+const GROUND_SIZE = WORLD_RADIUS * 3;
+const GRID_SIZE = WORLD_RADIUS * 4;
+const tempObject = new THREE.Object3D();
 
 function toKey([x, y, z]: [number, number, number]) {
   return `${x},${y},${z}`;
 }
 
-function createInitialWorld() {
-  const blocks: VoxelMap = {};
+function hasNeighbor(map: VoxelMap, x: number, y: number, z: number) {
+  return Boolean(map[`${x},${y},${z}`]);
+}
 
-  for (let x = -8; x <= 8; x += 1) {
-    for (let z = -8; z <= 8; z += 1) {
+function createInitialWorld() {
+  const fullMap: VoxelMap = {};
+
+  for (let x = -WORLD_RADIUS; x <= WORLD_RADIUS; x += 1) {
+    for (let z = -WORLD_RADIUS; z <= WORLD_RADIUS; z += 1) {
       const distance = Math.sqrt(x * x + z * z);
-      const wave = Math.sin(x * 0.8) + Math.cos(z * 0.65);
-      const height = Math.max(1, Math.round(3.5 - distance * 0.22 + wave * 0.45));
+      const ridge = Math.sin(x * 0.28) * 1.8 + Math.cos(z * 0.24) * 1.4;
+      const dunes = Math.sin((x + z) * 0.16) * 1.2 + Math.cos((x - z) * 0.12) * 0.8;
+      const plateau = Math.max(0, 8.5 - distance * 0.2);
+      const height = Math.max(1, Math.round(plateau + ridge + dunes));
 
       for (let y = 0; y < height; y += 1) {
         const isTop = y === height - 1;
-        const color: BlockColor = isTop ? (height <= 2 ? "sand" : "grass") : "stone";
+        const nearEdge = distance > WORLD_RADIUS - 5;
+        const color: BlockColor = isTop ? (nearEdge || height <= 3 ? "sand" : "grass") : "stone";
         const position: [number, number, number] = [x, y, z];
-        blocks[toKey(position)] = { color, position };
+        fullMap[toKey(position)] = { color, position };
       }
     }
   }
 
-  const pillars: Array<[number, number, number, BlockColor]> = [
-    [-4, 4, -2, "coral"],
-    [-4, 5, -2, "coral"],
-    [3, 4, 4, "sky"],
-    [3, 5, 4, "sky"],
-    [0, 4, -5, "sand"],
-    [0, 5, -5, "sand"],
-  ];
-
-  for (const [x, y, z, color] of pillars) {
-    const position: [number, number, number] = [x, y, z];
-    blocks[toKey(position)] = { color, position };
+  for (let x = -WORLD_RADIUS + 4; x <= WORLD_RADIUS - 4; x += 9) {
+    for (let z = -WORLD_RADIUS + 4; z <= WORLD_RADIUS - 4; z += 9) {
+      const baseHeight = 8 + Math.round(Math.sin(x * 0.21 + z * 0.17) * 2);
+      const accentColor: BlockColor = (x + z) % 18 === 0 ? "coral" : "sky";
+      for (let y = baseHeight; y < baseHeight + 3; y += 1) {
+        const position: [number, number, number] = [x, y, z];
+        fullMap[toKey(position)] = { color: accentColor, position };
+      }
+    }
   }
 
-  return blocks;
+  const visibleMap: VoxelMap = {};
+  for (const block of Object.values(fullMap)) {
+    const [x, y, z] = block.position;
+    const hidden =
+      hasNeighbor(fullMap, x + 1, y, z) &&
+      hasNeighbor(fullMap, x - 1, y, z) &&
+      hasNeighbor(fullMap, x, y + 1, z) &&
+      hasNeighbor(fullMap, x, y - 1, z) &&
+      hasNeighbor(fullMap, x, y, z + 1) &&
+      hasNeighbor(fullMap, x, y, z - 1);
+
+    if (!hidden) {
+      visibleMap[toKey(block.position)] = block;
+    }
+  }
+
+  return visibleMap;
 }
 
-function Block({
-  block,
-  selected,
-  onInteract,
-}: {
-  block: VoxelBlock;
-  selected: boolean;
-  onInteract: (event: ThreeEvent<MouseEvent>, block: VoxelBlock) => void;
-}) {
-  return (
-    <mesh position={block.position} castShadow receiveShadow onClick={(event) => onInteract(event, block)}>
-      <boxGeometry args={[1, 1, 1]} />
-      <meshStandardMaterial color={BLOCK_COLORS[block.color]} />
-      {selected ? (
-        <lineSegments>
-          <edgesGeometry args={[new THREE.BoxGeometry(1.04, 1.04, 1.04)]} />
-          <lineBasicMaterial color="#fff8e7" />
-        </lineSegments>
-      ) : null}
-    </mesh>
-  );
+function groupBlocksByColor(blocks: VoxelBlock[]) {
+  const grouped: BlocksByColor = {
+    grass: [],
+    stone: [],
+    sand: [],
+    coral: [],
+    sky: [],
+  };
+
+  for (const block of blocks) {
+    grouped[block.color].push(block);
+  }
+
+  return grouped;
 }
 
-function Scene({
+function InstancedBlockLayer({
+  color,
   blocks,
-  activeColor,
   hoveredKey,
   onHover,
   onInteract,
 }: {
+  color: BlockColor;
   blocks: VoxelBlock[];
-  activeColor: BlockColor;
   hoveredKey: string | null;
   onHover: (key: string | null) => void;
-  onInteract: (event: ThreeEvent<MouseEvent>, block: VoxelBlock, activeColor: BlockColor) => void;
+  onInteract: (event: ThreeEvent<MouseEvent>, block: VoxelBlock) => void;
+}) {
+  const meshRef = useRef<THREE.InstancedMesh>(null);
+
+  useLayoutEffect(() => {
+    if (!meshRef.current) {
+      return;
+    }
+
+    for (let index = 0; index < blocks.length; index += 1) {
+      tempObject.position.set(...blocks[index].position);
+      tempObject.updateMatrix();
+      meshRef.current.setMatrixAt(index, tempObject.matrix);
+    }
+
+    meshRef.current.count = blocks.length;
+    meshRef.current.instanceMatrix.needsUpdate = true;
+    meshRef.current.computeBoundingSphere();
+  }, [blocks]);
+
+  if (blocks.length === 0) {
+    return null;
+  }
+
+  const hoveredBlock = hoveredKey ? blocks.find((block) => toKey(block.position) === hoveredKey) : null;
+
+  return (
+    <>
+      <instancedMesh
+        ref={meshRef}
+        args={[undefined, undefined, blocks.length]}
+        castShadow
+        receiveShadow
+        onPointerMove={(event) => {
+          event.stopPropagation();
+          const instanceId = event.instanceId;
+          if (instanceId === undefined) {
+            return;
+          }
+
+          onHover(toKey(blocks[instanceId].position));
+        }}
+        onPointerOut={() => onHover(null)}
+        onClick={(event) => {
+          event.stopPropagation();
+          const instanceId = event.instanceId;
+          if (instanceId === undefined) {
+            return;
+          }
+
+          onInteract(event, blocks[instanceId]);
+        }}
+      >
+        <boxGeometry args={[1, 1, 1]} />
+        <meshStandardMaterial color={BLOCK_COLORS[color]} />
+      </instancedMesh>
+
+      {hoveredBlock ? (
+        <lineSegments position={hoveredBlock.position}>
+          <edgesGeometry args={[new THREE.BoxGeometry(1.04, 1.04, 1.04)]} />
+          <lineBasicMaterial color="#fff8e7" />
+        </lineSegments>
+      ) : null}
+    </>
+  );
+}
+
+function Scene({
+  groupedBlocks,
+  hoveredKey,
+  onHover,
+  onInteract,
+}: {
+  groupedBlocks: BlocksByColor;
+  hoveredKey: string | null;
+  onHover: (key: string | null) => void;
+  onInteract: (event: ThreeEvent<MouseEvent>, block: VoxelBlock) => void;
 }) {
   return (
     <>
       <color attach="background" args={["#07111f"]} />
-      <fog attach="fog" args={["#07111f", 12, 34]} />
-      <ambientLight intensity={1.7} />
-      <directionalLight position={[10, 18, 6]} intensity={2.4} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
-      <hemisphereLight args={["#d9f0ff", "#16212d", 0.7]} />
+      <fog attach="fog" args={["#07111f", 22, 70]} />
+      <ambientLight intensity={1.35} />
+      <directionalLight position={[18, 28, 12]} intensity={2.2} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
+      <hemisphereLight args={["#d9f0ff", "#16212d", 0.75]} />
 
       <group position={[0, -0.5, 0]}>
-        {blocks.map((block) => {
-          const key = toKey(block.position);
-          return (
-            <group key={key} onPointerOver={() => onHover(key)} onPointerOut={() => onHover(null)}>
-              <Block block={block} selected={hoveredKey === key} onInteract={(event, currentBlock) => onInteract(event, currentBlock, activeColor)} />
-            </group>
-          );
-        })}
+        {PALETTE.map((color) => (
+          <InstancedBlockLayer
+            key={color}
+            color={color}
+            blocks={groupedBlocks[color]}
+            hoveredKey={hoveredKey}
+            onHover={onHover}
+            onInteract={onInteract}
+          />
+        ))}
       </group>
 
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.55, 0]} receiveShadow>
-        <circleGeometry args={[20, 48]} />
+        <circleGeometry args={[GROUND_SIZE, 72]} />
         <meshStandardMaterial color="#0f1b2d" />
       </mesh>
-      <gridHelper args={[40, 40, "#42617e", "#1b3147"]} position={[0, -0.49, 0]} />
-      <PerspectiveCamera makeDefault position={[13, 13, 13]} fov={50} />
-      <OrbitControls enablePan={false} minDistance={8} maxDistance={28} maxPolarAngle={Math.PI / 2.05} />
+      <gridHelper args={[GRID_SIZE, GRID_SIZE, "#42617e", "#1b3147"]} position={[0, -0.49, 0]} />
+      <PerspectiveCamera makeDefault position={[26, 24, 26]} fov={48} />
+      <OrbitControls enablePan={false} minDistance={12} maxDistance={64} maxPolarAngle={Math.PI / 2.03} />
     </>
   );
 }
@@ -135,6 +231,7 @@ export function VoxelGame() {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
   const blockList = useMemo(() => Object.values(blocks), [blocks]);
+  const groupedBlocks = useMemo(() => groupBlocksByColor(blockList), [blockList]);
   const blockCount = blockList.length;
 
   const resetWorld = () => {
@@ -142,7 +239,7 @@ export function VoxelGame() {
     setHoveredKey(null);
   };
 
-  const handleInteract = (event: ThreeEvent<MouseEvent>, block: VoxelBlock, nextColor: BlockColor) => {
+  const handleInteract = (event: ThreeEvent<MouseEvent>, block: VoxelBlock) => {
     event.stopPropagation();
 
     const normal = event.face?.normal;
@@ -162,7 +259,7 @@ export function VoxelGame() {
         return {
           ...current,
           [key]: {
-            color: nextColor,
+            color: activeColor,
             position,
           },
         };
@@ -184,14 +281,15 @@ export function VoxelGame() {
     <main className="voxel-page">
       <section className="voxel-copy">
         <p className="eyebrow">Voxel Sandbox</p>
-        <h1>Build a tiny world from solid-color cubes.</h1>
+        <h1>Build across a much larger world.</h1>
         <p className="lede">
-          Click any block to remove it. Hold <code>Shift</code> while clicking a face to place a new cube using the selected color.
+          The terrain now spans thousands of visible cubes and still renders efficiently by batching blocks into instanced draws per color.
+          Click any block to remove it, or hold <code>Shift</code> while clicking a face to place a new one.
         </p>
 
         <div className="hud-card">
           <div>
-            <span className="hud-label">Blocks</span>
+            <span className="hud-label">Visible blocks</span>
             <strong>{blockCount}</strong>
           </div>
           <button className="reset-button" type="button" onClick={resetWorld}>
@@ -215,14 +313,8 @@ export function VoxelGame() {
       </section>
 
       <section className="canvas-shell" aria-label="3D voxel scene">
-        <Canvas shadows dpr={[1, 2]}>
-          <Scene
-            blocks={blockList}
-            activeColor={activeColor}
-            hoveredKey={hoveredKey}
-            onHover={setHoveredKey}
-            onInteract={handleInteract}
-          />
+        <Canvas shadows dpr={[1, 1.75]} gl={{ antialias: false, powerPreference: "high-performance" }}>
+          <Scene groupedBlocks={groupedBlocks} hoveredKey={hoveredKey} onHover={setHoveredKey} onInteract={handleInteract} />
         </Canvas>
       </section>
     </main>
