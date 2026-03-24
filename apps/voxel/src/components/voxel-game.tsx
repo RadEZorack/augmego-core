@@ -24,9 +24,15 @@ const BLOCK_COLORS: Record<BlockColor, string> = {
 };
 
 const PALETTE: BlockColor[] = ["grass", "stone", "sand", "coral", "sky"];
-const WORLD_RADIUS = 22;
+const WORLD_RADIUS = 222;
 const GROUND_SIZE = WORLD_RADIUS * 3;
 const GRID_SIZE = WORLD_RADIUS * 4;
+const FOG_NEAR = Math.max(48, WORLD_RADIUS * 0.7);
+const FOG_FAR = Math.max(180, WORLD_RADIUS * 2.4);
+const CAMERA_DISTANCE = Math.max(26, WORLD_RADIUS * 0.95);
+const CAMERA_HEIGHT = Math.max(24, WORLD_RADIUS * 0.7);
+const MIN_ZOOM_DISTANCE = Math.max(12, WORLD_RADIUS * 0.08);
+const MAX_ZOOM_DISTANCE = Math.max(64, WORLD_RADIUS * 3);
 const tempObject = new THREE.Object3D();
 
 function toKey([x, y, z]: [number, number, number]) {
@@ -196,7 +202,7 @@ function Scene({
   return (
     <>
       <color attach="background" args={["#07111f"]} />
-      <fog attach="fog" args={["#07111f", 22, 70]} />
+      <fog attach="fog" args={["#07111f", FOG_NEAR, FOG_FAR]} />
       <ambientLight intensity={1.35} />
       <directionalLight position={[18, 28, 12]} intensity={2.2} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
       <hemisphereLight args={["#d9f0ff", "#16212d", 0.75]} />
@@ -219,8 +225,8 @@ function Scene({
         <meshStandardMaterial color="#0f1b2d" />
       </mesh>
       <gridHelper args={[GRID_SIZE, GRID_SIZE, "#42617e", "#1b3147"]} position={[0, -0.49, 0]} />
-      <PerspectiveCamera makeDefault position={[26, 24, 26]} fov={48} />
-      <OrbitControls enablePan={false} minDistance={12} maxDistance={64} maxPolarAngle={Math.PI / 2.03} />
+      <PerspectiveCamera makeDefault position={[CAMERA_DISTANCE, CAMERA_HEIGHT, CAMERA_DISTANCE]} fov={54} far={FOG_FAR * 1.8} />
+      <OrbitControls enablePan={false} minDistance={MIN_ZOOM_DISTANCE} maxDistance={MAX_ZOOM_DISTANCE} maxPolarAngle={Math.PI / 2.03} />
     </>
   );
 }
