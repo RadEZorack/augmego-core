@@ -2,7 +2,7 @@
 
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
 import { Canvas, ThreeEvent } from "@react-three/fiber";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
 
 type BlockColor = "grass" | "stone" | "sand" | "coral" | "sky";
@@ -35,6 +35,7 @@ type ChunkMesh = {
 
 type WorldState = {
   blocks: VoxelMap;
+  chunkKeys: string[];
   chunks: Record<string, ChunkMesh>;
   blockCount: number;
   quadCount: number;
@@ -64,8 +65,10 @@ const FACE_DIRECTIONS: Array<{
   { name: "pz", normal: [0, 0, 1], rotation: [0, 0, 0], sweepAxis: "z", axisA: "x", axisB: "y" },
   { name: "nz", normal: [0, 0, -1], rotation: [0, Math.PI, 0], sweepAxis: "z", axisA: "x", axisB: "y" },
 ];
-const WORLD_RADIUS = 444;
+const WORLD_RADIUS = 222;
 const CHUNK_SIZE = 32;
+const INITIAL_CHUNK_RADIUS = 2;
+const LAZY_MESH_BATCH_SIZE = 8;
 const GROUND_SIZE = WORLD_RADIUS * 3;
 const GRID_SIZE = WORLD_RADIUS * 4;
 const GRID_DIVISIONS = Math.min(GRID_SIZE, 320);
@@ -300,28 +303,68 @@ function collectChunkCoords(blocks: VoxelMap) {
   return [...keys].map((key) => key.split(",").map(Number) as ChunkCoords);
 }
 
-function buildWorldState(blocks: VoxelMap): WorldState {
-  const chunks: Record<string, ChunkMesh> = {};
-  let quadCount = 0;
+function chunkDistanceToFocus(coords: ChunkCoords, focus: ChunkCoords) {
+  const dx = coords[0] - focus[0];
+  const dy = coords[1] - focus[1];
+  const dz = coords[2] - focus[2];
+  return dx * dx + dy * dy + dz * dz;
+}
 
-  for (const coords of collectChunkCoords(blocks)) {
-    const key = toChunkKey(coords);
-    const { quadsByColor, quadCount: chunkQuadCount } = buildChunkGreedyQuads(blocks, coords);
-    if (chunkQuadCount === 0) {
+function prioritizeChunkKeys(chunkKeys: string[], focus: ChunkCoords) {
+  return [...chunkKeys].sort((left, right) => {
+    const leftCoords = left.split(",").map(Number) as ChunkCoords;
+    const rightCoords = right.split(",").map(Number) as ChunkCoords;
+    return chunkDistanceToFocus(leftCoords, focus) - chunkDistanceToFocus(rightCoords, focus);
+  });
+}
+
+function meshChunkKeys(
+  blocks: VoxelMap,
+  currentChunks: Record<string, ChunkMesh>,
+  currentQuadCount: number,
+  chunkKeys: string[],
+) {
+  const chunks = { ...currentChunks };
+  let quadCount = currentQuadCount;
+
+  for (const chunkKey of chunkKeys) {
+    const existingChunk = chunks[chunkKey];
+    if (existingChunk) {
+      quadCount -= existingChunk.quadCount;
+    }
+
+    const coords = chunkKey.split(",").map(Number) as ChunkCoords;
+    const { quadsByColor, quadCount: nextQuadCount } = buildChunkGreedyQuads(blocks, coords);
+
+    if (nextQuadCount === 0) {
+      delete chunks[chunkKey];
       continue;
     }
 
-    chunks[key] = {
-      key,
+    chunks[chunkKey] = {
+      key: chunkKey,
       coords,
       quadsByColor,
-      quadCount: chunkQuadCount,
+      quadCount: nextQuadCount,
     };
-    quadCount += chunkQuadCount;
+    quadCount += nextQuadCount;
   }
+
+  return { chunks, quadCount };
+}
+
+function buildWorldState(blocks: VoxelMap): WorldState {
+  const allChunkKeys = collectChunkCoords(blocks).map(toChunkKey);
+  const prioritizedChunkKeys = prioritizeChunkKeys(allChunkKeys, [0, 0, 0]);
+  const initialChunkKeys = prioritizedChunkKeys.filter((chunkKey) => {
+    const [x, y, z] = chunkKey.split(",").map(Number);
+    return Math.abs(x) <= INITIAL_CHUNK_RADIUS && Math.abs(y) <= INITIAL_CHUNK_RADIUS && Math.abs(z) <= INITIAL_CHUNK_RADIUS;
+  });
+  const { chunks, quadCount } = meshChunkKeys(blocks, {}, 0, initialChunkKeys);
 
   return {
     blocks,
+    chunkKeys: prioritizedChunkKeys,
     chunks,
     blockCount: Object.keys(blocks).length,
     quadCount,
@@ -386,36 +429,19 @@ function updateWorldState(
   }
 
   const chunks = { ...current.chunks };
-  let quadCount = current.quadCount;
-
-  for (const chunkKey of affectedChunkKeys) {
-    const existingChunk = chunks[chunkKey];
-    if (existingChunk) {
-      quadCount -= existingChunk.quadCount;
-    }
-
-    const coords = chunkKey.split(",").map(Number) as ChunkCoords;
-    const { quadsByColor, quadCount: nextQuadCount } = buildChunkGreedyQuads(blocks, coords);
-
-    if (nextQuadCount === 0) {
-      delete chunks[chunkKey];
-      continue;
-    }
-
-    chunks[chunkKey] = {
-      key: chunkKey,
-      coords,
-      quadsByColor,
-      quadCount: nextQuadCount,
-    };
-    quadCount += nextQuadCount;
+  const knownChunkKeys = new Set(current.chunkKeys);
+  for (const key of affectedChunkKeys) {
+    knownChunkKeys.add(key);
   }
+  const prioritizedChunkKeys = prioritizeChunkKeys([...knownChunkKeys], [0, 0, 0]);
+  const remeshed = meshChunkKeys(blocks, chunks, current.quadCount, [...affectedChunkKeys]);
 
   return {
     blocks,
-    chunks,
+    chunkKeys: prioritizedChunkKeys,
+    chunks: remeshed.chunks,
     blockCount: Object.keys(blocks).length,
-    quadCount,
+    quadCount: remeshed.quadCount,
   };
 }
 
@@ -553,7 +579,44 @@ export function VoxelGame() {
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
   const hoveredBlock = hoveredKey ? world.blocks[hoveredKey] ?? null : null;
-  const chunkList = Object.values(world.chunks);
+  const chunkList = useMemo(() => Object.values(world.chunks), [world.chunks]);
+  const remainingChunkKeys = useMemo(
+    () => world.chunkKeys.filter((chunkKey) => !world.chunks[chunkKey]),
+    [world.chunkKeys, world.chunks],
+  );
+
+  useEffect(() => {
+    if (remainingChunkKeys.length === 0) {
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      if (cancelled) {
+        return;
+      }
+
+      const batch = remainingChunkKeys.slice(0, LAZY_MESH_BATCH_SIZE);
+      setWorld((current) => {
+        const pending = batch.filter((chunkKey) => !current.chunks[chunkKey]);
+        if (pending.length === 0) {
+          return current;
+        }
+
+        const meshed = meshChunkKeys(current.blocks, current.chunks, current.quadCount, pending);
+        return {
+          ...current,
+          chunks: meshed.chunks,
+          quadCount: meshed.quadCount,
+        };
+      });
+    }, 16);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [remainingChunkKeys]);
 
   const resetWorld = () => {
     setWorld(createInitialWorldState());
@@ -611,7 +674,9 @@ export function VoxelGame() {
           </div>
           <div>
             <span className="hud-label">Chunks</span>
-            <strong>{chunkList.length}</strong>
+            <strong>
+              {chunkList.length}/{world.chunkKeys.length}
+            </strong>
           </div>
           <button className="reset-button" type="button" onClick={resetWorld}>
             Reset world
