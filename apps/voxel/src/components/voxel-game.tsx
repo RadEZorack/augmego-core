@@ -2,11 +2,12 @@
 
 import { OrbitControls, PerspectiveCamera } from "@react-three/drei";
 import { Canvas, ThreeEvent } from "@react-three/fiber";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import * as THREE from "three";
 
 type BlockColor = "grass" | "stone" | "sand" | "coral" | "sky";
 type FaceDirectionName = "px" | "nx" | "py" | "ny" | "pz" | "nz";
+type Axis = "x" | "y" | "z";
 
 type VoxelBlock = {
   color: BlockColor;
@@ -15,14 +16,29 @@ type VoxelBlock = {
 
 type VoxelMap = Record<string, VoxelBlock>;
 
-type FaceInstance = {
-  block: VoxelBlock;
-  key: string;
-  normal: [number, number, number];
+type GreedyQuad = {
+  center: [number, number, number];
+  size: [number, number];
 };
 
-type FacesByDirection = Record<FaceDirectionName, FaceInstance[]>;
-type FacesByColor = Record<BlockColor, FacesByDirection>;
+type QuadsByDirection = Record<FaceDirectionName, GreedyQuad[]>;
+type QuadsByColor = Record<BlockColor, QuadsByDirection>;
+
+type ChunkCoords = [number, number, number];
+
+type ChunkMesh = {
+  key: string;
+  coords: ChunkCoords;
+  quadsByColor: QuadsByColor;
+  quadCount: number;
+};
+
+type WorldState = {
+  blocks: VoxelMap;
+  chunks: Record<string, ChunkMesh>;
+  blockCount: number;
+  quadCount: number;
+};
 
 const BLOCK_COLORS: Record<BlockColor, string> = {
   grass: "#7fb069",
@@ -36,19 +52,23 @@ const PALETTE: BlockColor[] = ["grass", "stone", "sand", "coral", "sky"];
 const FACE_DIRECTIONS: Array<{
   name: FaceDirectionName;
   normal: [number, number, number];
-  positionOffset: [number, number, number];
   rotation: [number, number, number];
+  sweepAxis: Axis;
+  axisA: Axis;
+  axisB: Axis;
 }> = [
-  { name: "px", normal: [1, 0, 0], positionOffset: [0.5, 0, 0], rotation: [0, Math.PI / 2, 0] },
-  { name: "nx", normal: [-1, 0, 0], positionOffset: [-0.5, 0, 0], rotation: [0, -Math.PI / 2, 0] },
-  { name: "py", normal: [0, 1, 0], positionOffset: [0, 0.5, 0], rotation: [-Math.PI / 2, 0, 0] },
-  { name: "ny", normal: [0, -1, 0], positionOffset: [0, -0.5, 0], rotation: [Math.PI / 2, 0, 0] },
-  { name: "pz", normal: [0, 0, 1], positionOffset: [0, 0, 0.5], rotation: [0, 0, 0] },
-  { name: "nz", normal: [0, 0, -1], positionOffset: [0, 0, -0.5], rotation: [0, Math.PI, 0] },
+  { name: "px", normal: [1, 0, 0], rotation: [0, Math.PI / 2, 0], sweepAxis: "x", axisA: "z", axisB: "y" },
+  { name: "nx", normal: [-1, 0, 0], rotation: [0, -Math.PI / 2, 0], sweepAxis: "x", axisA: "z", axisB: "y" },
+  { name: "py", normal: [0, 1, 0], rotation: [-Math.PI / 2, 0, 0], sweepAxis: "y", axisA: "x", axisB: "z" },
+  { name: "ny", normal: [0, -1, 0], rotation: [Math.PI / 2, 0, 0], sweepAxis: "y", axisA: "x", axisB: "z" },
+  { name: "pz", normal: [0, 0, 1], rotation: [0, 0, 0], sweepAxis: "z", axisA: "x", axisB: "y" },
+  { name: "nz", normal: [0, 0, -1], rotation: [0, Math.PI, 0], sweepAxis: "z", axisA: "x", axisB: "y" },
 ];
 const WORLD_RADIUS = 444;
+const CHUNK_SIZE = 32;
 const GROUND_SIZE = WORLD_RADIUS * 3;
 const GRID_SIZE = WORLD_RADIUS * 4;
+const GRID_DIVISIONS = Math.min(GRID_SIZE, 320);
 const FOG_NEAR = Math.max(48, WORLD_RADIUS * 0.7);
 const FOG_FAR = Math.max(180, WORLD_RADIUS * 2.4);
 const CAMERA_DISTANCE = Math.max(26, WORLD_RADIUS * 0.95);
@@ -57,12 +77,42 @@ const MIN_ZOOM_DISTANCE = Math.max(12, WORLD_RADIUS * 0.08);
 const MAX_ZOOM_DISTANCE = Math.max(64, WORLD_RADIUS * 3);
 
 const tempObject = new THREE.Object3D();
+const HALF_BLOCK_NUDGE = 0.01;
+const PLACE_BLOCK_NUDGE = 0.51;
 
 function toKey([x, y, z]: [number, number, number]) {
   return `${x},${y},${z}`;
 }
 
-function createEmptyFacesByColor(): FacesByColor {
+function toChunkKey([x, y, z]: ChunkCoords) {
+  return `${x},${y},${z}`;
+}
+
+function getChunkCoord(value: number) {
+  return Math.floor(value / CHUNK_SIZE);
+}
+
+function getChunkCoords(position: [number, number, number]): ChunkCoords {
+  return [getChunkCoord(position[0]), getChunkCoord(position[1]), getChunkCoord(position[2])];
+}
+
+function fromPoint(point: THREE.Vector3, normal: [number, number, number], nudge: number): [number, number, number] {
+  return [
+    Math.floor(point.x + normal[0] * nudge + 0.5),
+    Math.floor(point.y + normal[1] * nudge + 0.5),
+    Math.floor(point.z + normal[2] * nudge + 0.5),
+  ];
+}
+
+function makePosition(sweepAxis: Axis, sweepValue: number, axisA: Axis, valueA: number, axisB: Axis, valueB: number): [number, number, number] {
+  const result: Record<Axis, number> = { x: 0, y: 0, z: 0 };
+  result[sweepAxis] = sweepValue;
+  result[axisA] = valueA;
+  result[axisB] = valueB;
+  return [result.x, result.y, result.z];
+}
+
+function createEmptyQuadsByColor(): QuadsByColor {
   return {
     grass: { px: [], nx: [], py: [], ny: [], pz: [], nz: [] },
     stone: { px: [], nx: [], py: [], ny: [], pz: [], nz: [] },
@@ -72,7 +122,7 @@ function createEmptyFacesByColor(): FacesByColor {
   };
 }
 
-function createInitialWorld() {
+function createInitialBlocks() {
   const blocks: VoxelMap = {};
 
   for (let x = -WORLD_RADIUS; x <= WORLD_RADIUS; x += 1) {
@@ -108,56 +158,279 @@ function createInitialWorld() {
   return blocks;
 }
 
-function buildFacesByColor(blocks: VoxelMap) {
-  const facesByColor = createEmptyFacesByColor();
+function buildChunkGreedyQuads(blocks: VoxelMap, coords: ChunkCoords) {
+  const quadsByColor = createEmptyQuadsByColor();
+  const [chunkX, chunkY, chunkZ] = coords;
+  const minX = chunkX * CHUNK_SIZE;
+  const maxX = minX + CHUNK_SIZE - 1;
+  const minY = chunkY * CHUNK_SIZE;
+  const maxY = minY + CHUNK_SIZE - 1;
+  const minZ = chunkZ * CHUNK_SIZE;
+  const maxZ = minZ + CHUNK_SIZE - 1;
 
-  for (const block of Object.values(blocks)) {
-    const [x, y, z] = block.position;
-    const key = toKey(block.position);
+  let hasAnyBlock = false;
+  for (let x = minX; x <= maxX && !hasAnyBlock; x += 1) {
+    for (let y = minY; y <= maxY && !hasAnyBlock; y += 1) {
+      for (let z = minZ; z <= maxZ; z += 1) {
+        if (blocks[`${x},${y},${z}`]) {
+          hasAnyBlock = true;
+          break;
+        }
+      }
+    }
+  }
 
-    for (const direction of FACE_DIRECTIONS) {
-      const [nx, ny, nz] = direction.normal;
-      if (blocks[`${x + nx},${y + ny},${z + nz}`]) {
-        continue;
+  if (!hasAnyBlock) {
+    return { quadsByColor, quadCount: 0 };
+  }
+
+  const bounds = { x: [minX, maxX] as const, y: [minY, maxY] as const, z: [minZ, maxZ] as const };
+
+  for (const direction of FACE_DIRECTIONS) {
+    const [normalX, normalY, normalZ] = direction.normal;
+    const [minSweep, maxSweep] = bounds[direction.sweepAxis];
+    const [minA, maxA] = bounds[direction.axisA];
+    const [minB, maxB] = bounds[direction.axisB];
+    const sizeA = maxA - minA + 1;
+    const sizeB = maxB - minB + 1;
+
+    for (let sweep = minSweep; sweep <= maxSweep; sweep += 1) {
+      const mask: Array<BlockColor | null> = new Array(sizeA * sizeB).fill(null);
+
+      for (let a = 0; a < sizeA; a += 1) {
+        const valueA = minA + a;
+        for (let b = 0; b < sizeB; b += 1) {
+          const valueB = minB + b;
+          const currentPosition = makePosition(direction.sweepAxis, sweep, direction.axisA, valueA, direction.axisB, valueB);
+          const block = blocks[toKey(currentPosition)];
+
+          if (!block) {
+            continue;
+          }
+
+          const neighborPosition: [number, number, number] = [
+            currentPosition[0] + normalX,
+            currentPosition[1] + normalY,
+            currentPosition[2] + normalZ,
+          ];
+
+          if (blocks[toKey(neighborPosition)]) {
+            continue;
+          }
+
+          mask[a + b * sizeA] = block.color;
+        }
       }
 
-      facesByColor[block.color][direction.name].push({
-        block,
-        key,
-        normal: direction.normal,
-      });
+      const used = new Uint8Array(sizeA * sizeB);
+
+      for (let b = 0; b < sizeB; b += 1) {
+        for (let a = 0; a < sizeA; a += 1) {
+          const index = a + b * sizeA;
+          const color = mask[index];
+
+          if (!color || used[index]) {
+            continue;
+          }
+
+          let width = 1;
+          while (a + width < sizeA) {
+            const nextIndex = a + width + b * sizeA;
+            if (used[nextIndex] || mask[nextIndex] !== color) {
+              break;
+            }
+            width += 1;
+          }
+
+          let height = 1;
+          let canGrow = true;
+          while (b + height < sizeB && canGrow) {
+            for (let w = 0; w < width; w += 1) {
+              const nextIndex = a + w + (b + height) * sizeA;
+              if (used[nextIndex] || mask[nextIndex] !== color) {
+                canGrow = false;
+                break;
+              }
+            }
+
+            if (canGrow) {
+              height += 1;
+            }
+          }
+
+          for (let dy = 0; dy < height; dy += 1) {
+            for (let dx = 0; dx < width; dx += 1) {
+              used[a + dx + (b + dy) * sizeA] = 1;
+            }
+          }
+
+          const startA = minA + a;
+          const startB = minB + b;
+          const centerA = startA + width / 2 - 0.5;
+          const centerB = startB + height / 2 - 0.5;
+          const centerSweep = sweep + (direction.normal[0] + direction.normal[1] + direction.normal[2]) * 0.5;
+          const center = makePosition(direction.sweepAxis, centerSweep, direction.axisA, centerA, direction.axisB, centerB);
+
+          quadsByColor[color][direction.name].push({
+            center,
+            size: [width, height],
+          });
+        }
+      }
     }
   }
 
-  return facesByColor;
-}
-
-function countVisibleFaces(facesByColor: FacesByColor) {
-  let total = 0;
-
+  let quadCount = 0;
   for (const color of PALETTE) {
     for (const direction of FACE_DIRECTIONS) {
-      total += facesByColor[color][direction.name].length;
+      quadCount += quadsByColor[color][direction.name].length;
     }
   }
 
-  return total;
+  return { quadsByColor, quadCount };
 }
 
-function FaceLayer({
+function collectChunkCoords(blocks: VoxelMap) {
+  const keys = new Set<string>();
+
+  for (const block of Object.values(blocks)) {
+    keys.add(toChunkKey(getChunkCoords(block.position)));
+  }
+
+  return [...keys].map((key) => key.split(",").map(Number) as ChunkCoords);
+}
+
+function buildWorldState(blocks: VoxelMap): WorldState {
+  const chunks: Record<string, ChunkMesh> = {};
+  let quadCount = 0;
+
+  for (const coords of collectChunkCoords(blocks)) {
+    const key = toChunkKey(coords);
+    const { quadsByColor, quadCount: chunkQuadCount } = buildChunkGreedyQuads(blocks, coords);
+    if (chunkQuadCount === 0) {
+      continue;
+    }
+
+    chunks[key] = {
+      key,
+      coords,
+      quadsByColor,
+      quadCount: chunkQuadCount,
+    };
+    quadCount += chunkQuadCount;
+  }
+
+  return {
+    blocks,
+    chunks,
+    blockCount: Object.keys(blocks).length,
+    quadCount,
+  };
+}
+
+function createInitialWorldState() {
+  return buildWorldState(createInitialBlocks());
+}
+
+function getAffectedChunkKeys(position: [number, number, number]) {
+  const keys = new Set<string>();
+
+  for (const direction of FACE_DIRECTIONS) {
+    const neighbor: [number, number, number] = [
+      position[0] + direction.normal[0],
+      position[1] + direction.normal[1],
+      position[2] + direction.normal[2],
+    ];
+    keys.add(toChunkKey(getChunkCoords(neighbor)));
+  }
+
+  keys.add(toChunkKey(getChunkCoords(position)));
+  return [...keys];
+}
+
+function updateWorldState(
+  current: WorldState,
+  changes: Array<
+    | { type: "remove"; position: [number, number, number] }
+    | { type: "place"; position: [number, number, number]; color: BlockColor }
+  >,
+) {
+  const blocks = { ...current.blocks };
+  const affectedChunkKeys = new Set<string>();
+  let changed = false;
+
+  for (const change of changes) {
+    const key = toKey(change.position);
+    if (change.type === "remove") {
+      if (!blocks[key]) {
+        continue;
+      }
+      delete blocks[key];
+      changed = true;
+    } else {
+      const existing = blocks[key];
+      if (existing && existing.color === change.color) {
+        continue;
+      }
+      blocks[key] = { color: change.color, position: change.position };
+      changed = true;
+    }
+
+    for (const chunkKey of getAffectedChunkKeys(change.position)) {
+      affectedChunkKeys.add(chunkKey);
+    }
+  }
+
+  if (!changed) {
+    return current;
+  }
+
+  const chunks = { ...current.chunks };
+  let quadCount = current.quadCount;
+
+  for (const chunkKey of affectedChunkKeys) {
+    const existingChunk = chunks[chunkKey];
+    if (existingChunk) {
+      quadCount -= existingChunk.quadCount;
+    }
+
+    const coords = chunkKey.split(",").map(Number) as ChunkCoords;
+    const { quadsByColor, quadCount: nextQuadCount } = buildChunkGreedyQuads(blocks, coords);
+
+    if (nextQuadCount === 0) {
+      delete chunks[chunkKey];
+      continue;
+    }
+
+    chunks[chunkKey] = {
+      key: chunkKey,
+      coords,
+      quadsByColor,
+      quadCount: nextQuadCount,
+    };
+    quadCount += nextQuadCount;
+  }
+
+  return {
+    blocks,
+    chunks,
+    blockCount: Object.keys(blocks).length,
+    quadCount,
+  };
+}
+
+function ChunkQuadLayer({
   color,
   direction,
-  faces,
-  hoveredKey,
+  quads,
   onHover,
   onInteract,
 }: {
   color: BlockColor;
   direction: (typeof FACE_DIRECTIONS)[number];
-  faces: FaceInstance[];
-  hoveredKey: string | null;
+  quads: GreedyQuad[];
   onHover: (key: string | null) => void;
-  onInteract: (event: ThreeEvent<MouseEvent>, face: FaceInstance) => void;
+  onInteract: (event: ThreeEvent<MouseEvent>, normal: [number, number, number]) => void;
 }) {
   const meshRef = useRef<THREE.InstancedMesh>(null);
 
@@ -166,107 +439,108 @@ function FaceLayer({
       return;
     }
 
-    for (let index = 0; index < faces.length; index += 1) {
-      const [x, y, z] = faces[index].block.position;
-      const [ox, oy, oz] = direction.positionOffset;
-      tempObject.position.set(x + ox, y + oy, z + oz);
+    for (let index = 0; index < quads.length; index += 1) {
+      const quad = quads[index];
+      tempObject.position.set(...quad.center);
       tempObject.rotation.set(...direction.rotation);
+      tempObject.scale.set(quad.size[0], quad.size[1], 1);
       tempObject.updateMatrix();
       meshRef.current.setMatrixAt(index, tempObject.matrix);
     }
 
-    meshRef.current.count = faces.length;
+    meshRef.current.count = quads.length;
     meshRef.current.instanceMatrix.needsUpdate = true;
     meshRef.current.computeBoundingSphere();
-  }, [direction.positionOffset, direction.rotation, faces]);
+  }, [direction.rotation, quads]);
 
-  if (faces.length === 0) {
+  if (quads.length === 0) {
     return null;
   }
 
-  const hoveredFace = hoveredKey ? faces.find((face) => face.key === hoveredKey) : null;
+  return (
+    <instancedMesh
+      ref={meshRef}
+      args={[undefined, undefined, quads.length]}
+      frustumCulled
+      onPointerMove={(event) => {
+        event.stopPropagation();
+        const hoveredPosition = fromPoint(event.point, direction.normal, -HALF_BLOCK_NUDGE);
+        onHover(toKey(hoveredPosition));
+      }}
+      onPointerOut={() => onHover(null)}
+      onClick={(event) => {
+        event.stopPropagation();
+        onInteract(event, direction.normal);
+      }}
+    >
+      <planeGeometry args={[1, 1]} />
+      <meshLambertMaterial color={BLOCK_COLORS[color]} side={THREE.FrontSide} />
+    </instancedMesh>
+  );
+}
 
+function ChunkMeshView({
+  chunk,
+  onHover,
+  onInteract,
+}: {
+  chunk: ChunkMesh;
+  onHover: (key: string | null) => void;
+  onInteract: (event: ThreeEvent<MouseEvent>, normal: [number, number, number]) => void;
+}) {
   return (
     <>
-      <instancedMesh
-        ref={meshRef}
-        args={[undefined, undefined, faces.length]}
-        castShadow
-        receiveShadow
-        onPointerMove={(event) => {
-          event.stopPropagation();
-          const instanceId = event.instanceId;
-          if (instanceId === undefined) {
-            return;
-          }
-
-          onHover(faces[instanceId].key);
-        }}
-        onPointerOut={() => onHover(null)}
-        onClick={(event) => {
-          event.stopPropagation();
-          const instanceId = event.instanceId;
-          if (instanceId === undefined) {
-            return;
-          }
-
-          onInteract(event, faces[instanceId]);
-        }}
-      >
-        <planeGeometry args={[1, 1]} />
-        <meshStandardMaterial color={BLOCK_COLORS[color]} side={THREE.FrontSide} />
-      </instancedMesh>
-
-      {hoveredFace ? (
-        <lineSegments position={hoveredFace.block.position}>
-          <edgesGeometry args={[new THREE.BoxGeometry(1.04, 1.04, 1.04)]} />
-          <lineBasicMaterial color="#fff8e7" />
-        </lineSegments>
-      ) : null}
+      {PALETTE.flatMap((color) =>
+        FACE_DIRECTIONS.map((direction) => (
+          <ChunkQuadLayer
+            key={`${chunk.key}-${color}-${direction.name}`}
+            color={color}
+            direction={direction}
+            quads={chunk.quadsByColor[color][direction.name]}
+            onHover={onHover}
+            onInteract={onInteract}
+          />
+        )),
+      )}
     </>
   );
 }
 
 function Scene({
-  facesByColor,
-  hoveredKey,
+  chunks,
+  hoveredBlock,
   onHover,
   onInteract,
 }: {
-  facesByColor: FacesByColor;
-  hoveredKey: string | null;
+  chunks: ChunkMesh[];
+  hoveredBlock: VoxelBlock | null;
   onHover: (key: string | null) => void;
-  onInteract: (event: ThreeEvent<MouseEvent>, face: FaceInstance) => void;
+  onInteract: (event: ThreeEvent<MouseEvent>, normal: [number, number, number]) => void;
 }) {
   return (
     <>
       <color attach="background" args={["#07111f"]} />
       <fog attach="fog" args={["#07111f", FOG_NEAR, FOG_FAR]} />
       <ambientLight intensity={1.35} />
-      <directionalLight position={[18, 28, 12]} intensity={2.2} castShadow shadow-mapSize-width={1024} shadow-mapSize-height={1024} />
+      <directionalLight position={[18, 28, 12]} intensity={1.9} />
       <hemisphereLight args={["#d9f0ff", "#16212d", 0.75]} />
 
-      <group position={[0, -0.5, 0]}>
-        {PALETTE.flatMap((color) =>
-          FACE_DIRECTIONS.map((direction) => (
-            <FaceLayer
-              key={`${color}-${direction.name}`}
-              color={color}
-              direction={direction}
-              faces={facesByColor[color][direction.name]}
-              hoveredKey={hoveredKey}
-              onHover={onHover}
-              onInteract={onInteract}
-            />
-          )),
-        )}
-      </group>
+      {chunks.map((chunk) => (
+        <ChunkMeshView key={chunk.key} chunk={chunk} onHover={onHover} onInteract={onInteract} />
+      ))}
 
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.55, 0]} receiveShadow>
+      {hoveredBlock ? (
+        <lineSegments position={hoveredBlock.position}>
+          <edgesGeometry args={[new THREE.BoxGeometry(1.04, 1.04, 1.04)]} />
+          <lineBasicMaterial color="#fff8e7" />
+        </lineSegments>
+      ) : null}
+
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.55, 0]}>
         <circleGeometry args={[GROUND_SIZE, 72]} />
-        <meshStandardMaterial color="#0f1b2d" />
+        <meshLambertMaterial color="#0f1b2d" />
       </mesh>
-      <gridHelper args={[GRID_SIZE, GRID_SIZE, "#42617e", "#1b3147"]} position={[0, -0.49, 0]} />
+      <gridHelper args={[GRID_SIZE, GRID_DIVISIONS, "#42617e", "#1b3147"]} position={[0, -0.49, 0]} />
       <PerspectiveCamera makeDefault position={[CAMERA_DISTANCE, CAMERA_HEIGHT, CAMERA_DISTANCE]} fov={54} far={FOG_FAR * 1.8} />
       <OrbitControls enablePan={false} minDistance={MIN_ZOOM_DISTANCE} maxDistance={MAX_ZOOM_DISTANCE} maxPolarAngle={Math.PI / 2.03} />
     </>
@@ -274,53 +548,45 @@ function Scene({
 }
 
 export function VoxelGame() {
-  const [blocks, setBlocks] = useState<VoxelMap>(() => createInitialWorld());
+  const [world, setWorld] = useState<WorldState>(() => createInitialWorldState());
   const [activeColor, setActiveColor] = useState<BlockColor>("grass");
   const [hoveredKey, setHoveredKey] = useState<string | null>(null);
 
-  const facesByColor = useMemo(() => buildFacesByColor(blocks), [blocks]);
-  const blockCount = useMemo(() => Object.keys(blocks).length, [blocks]);
-  const visibleFaceCount = useMemo(() => countVisibleFaces(facesByColor), [facesByColor]);
+  const hoveredBlock = hoveredKey ? world.blocks[hoveredKey] ?? null : null;
+  const chunkList = Object.values(world.chunks);
 
   const resetWorld = () => {
-    setBlocks(createInitialWorld());
+    setWorld(createInitialWorldState());
     setHoveredKey(null);
   };
 
-  const handleInteract = (event: ThreeEvent<MouseEvent>, face: FaceInstance) => {
+  const handleInteract = (event: ThreeEvent<MouseEvent>, normal: [number, number, number]) => {
     event.stopPropagation();
 
+    const removePosition = fromPoint(event.point, normal, -HALF_BLOCK_NUDGE);
+
     if (event.nativeEvent.shiftKey) {
-      const [nx, ny, nz] = face.normal;
-      const position: [number, number, number] = [
-        face.block.position[0] + nx,
-        face.block.position[1] + ny,
-        face.block.position[2] + nz,
-      ];
-      const key = toKey(position);
-
-      setBlocks((current) => {
-        if (current[key]) {
-          return current;
-        }
-
-        return {
-          ...current,
-          [key]: {
+      const placePosition = fromPoint(event.point, normal, PLACE_BLOCK_NUDGE);
+      setWorld((current) =>
+        updateWorldState(current, [
+          {
+            type: "place",
+            position: placePosition,
             color: activeColor,
-            position,
           },
-        };
-      });
-
+        ]),
+      );
       return;
     }
 
-    setBlocks((current) => {
-      const next = { ...current };
-      delete next[face.key];
-      return next;
-    });
+    setWorld((current) =>
+      updateWorldState(current, [
+        {
+          type: "remove",
+          position: removePosition,
+        },
+      ]),
+    );
     setHoveredKey(null);
   };
 
@@ -330,18 +596,22 @@ export function VoxelGame() {
         <p className="eyebrow">Voxel Sandbox</p>
         <h1>Build across a much larger world.</h1>
         <p className="lede">
-          The renderer now draws only exposed voxel faces instead of full cubes, which cuts hidden geometry and improves long-distance rendering.
+          The world now uses chunked greedy meshing, so edits rebuild only the touched chunk neighborhood instead of remeshing the whole terrain.
           Click a face to remove its block, or hold <code>Shift</code> while clicking to place a new one on that side.
         </p>
 
         <div className="hud-card">
           <div>
             <span className="hud-label">Blocks</span>
-            <strong>{blockCount}</strong>
+            <strong>{world.blockCount}</strong>
           </div>
           <div>
-            <span className="hud-label">Visible faces</span>
-            <strong>{visibleFaceCount}</strong>
+            <span className="hud-label">Greedy quads</span>
+            <strong>{world.quadCount}</strong>
+          </div>
+          <div>
+            <span className="hud-label">Chunks</span>
+            <strong>{chunkList.length}</strong>
           </div>
           <button className="reset-button" type="button" onClick={resetWorld}>
             Reset world
@@ -364,8 +634,13 @@ export function VoxelGame() {
       </section>
 
       <section className="canvas-shell" aria-label="3D voxel scene">
-        <Canvas shadows dpr={[1, 1.75]} gl={{ antialias: false, powerPreference: "high-performance" }}>
-          <Scene facesByColor={facesByColor} hoveredKey={hoveredKey} onHover={setHoveredKey} onInteract={handleInteract} />
+        <Canvas
+          frameloop="demand"
+          dpr={[0.75, 1.25]}
+          gl={{ antialias: false, powerPreference: "high-performance" }}
+          performance={{ min: 0.5 }}
+        >
+          <Scene chunks={chunkList} hoveredBlock={hoveredBlock} onHover={setHoveredKey} onInteract={handleInteract} />
         </Canvas>
       </section>
     </main>
